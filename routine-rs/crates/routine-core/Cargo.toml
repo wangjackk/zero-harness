@@ -1,0 +1,17 @@
+[package]
+name = "routine-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core routine abstractions and runtime helpers for routine."
+
+[dependencies]
+routine-protocol = { path = "../routine-protocol" }
+async-trait = { workspace = true }
+futures = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }

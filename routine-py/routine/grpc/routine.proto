@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package routine;
+
+import "google/protobuf/struct.proto";
+
+// RoutineService 调度器核心（kernel）与远端 routine server 之间的 gRPC 契约。
+// 通用 Req + 双向 Stream
+service RoutineService {
+  rpc Req(google.protobuf.Struct) returns (google.protobuf.Struct);
+  rpc Stream(stream google.protobuf.Struct) returns (stream google.protobuf.Struct);
+}

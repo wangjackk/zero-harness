@@ -1,0 +1,27 @@
+# secrets (真实密钥文件, 只提交 models.yaml.example)
+zero/models.yaml
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# node
+node_modules/
+dist/
+
+# rust
+target/
+.codegraph/
+
+# go / build
+build/
+*.exe
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

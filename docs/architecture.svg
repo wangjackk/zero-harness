@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 680" font-family="'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif">
+  <rect width="1000" height="680" fill="#FFFFFF"/>
+
+  <!-- 设备 A · Python hub -->
+  <rect x="55" y="60" width="280" height="170" rx="14" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="70" y="84" font-size="11" fill="#94A3B8">设备 A</text>
+  <rect x="85" y="100" width="220" height="105" rx="10" fill="#FFFFFF" stroke="#10B981" stroke-width="2.5"/>
+  <text x="195" y="145" text-anchor="middle" font-size="15.5" font-weight="700" fill="#1E293B">routine hub</text>
+  <text x="195" y="170" text-anchor="middle" font-size="12" fill="#64748B">Python · zero</text>
+
+  <!-- 设备 B · Rust hub -->
+  <rect x="665" y="60" width="280" height="170" rx="14" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="680" y="84" font-size="11" fill="#94A3B8">设备 B</text>
+  <rect x="695" y="100" width="220" height="105" rx="10" fill="#FFFFFF" stroke="#F97316" stroke-width="2.5"/>
+  <text x="805" y="145" text-anchor="middle" font-size="15.5" font-weight="700" fill="#1E293B">routine hub</text>
+  <text x="805" y="170" text-anchor="middle" font-size="12" fill="#64748B">Rust · zero-rs</text>
+
+  <!-- 设备 C · Go hub -->
+  <rect x="360" y="470" width="280" height="170" rx="14" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="375" y="494" font-size="11" fill="#94A3B8">设备 C</text>
+  <rect x="390" y="510" width="220" height="105" rx="10" fill="#FFFFFF" stroke="#0891B2" stroke-width="2.5"/>
+  <text x="500" y="555" text-anchor="middle" font-size="15.5" font-weight="700" fill="#1E293B">routine hub</text>
+  <text x="500" y="580" text-anchor="middle" font-size="12" fill="#64748B">Go</text>
+
+  <!-- 更多 hub -->
+  <rect x="60" y="510" width="220" height="105" rx="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="170" y="555" text-anchor="middle" font-size="13" fill="#94A3B8">… 更多 hub</text>
+  <text x="170" y="578" text-anchor="middle" font-size="11" fill="#B0BCCB">任意语言 · 任意设备</text>
+  <line x1="280" y1="540" x2="400" y2="372" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="3 5"/>
+
+  <!-- kernel -->
+  <rect x="400" y="250" width="200" height="130" rx="14" fill="#FFFFFF" stroke="#4F46E5" stroke-width="3"/>
+  <text x="500" y="305" text-anchor="middle" font-size="18" font-weight="700" fill="#1E293B">kernel</text>
+  <text x="500" y="330" text-anchor="middle" font-size="12.5" fill="#64748B">Go</text>
+
+  <!-- 连接 -->
+  <line x1="305" y1="152" x2="400" y2="290" stroke="#CBD5E1" stroke-width="2"/>
+  <line x1="695" y1="152" x2="600" y2="290" stroke="#CBD5E1" stroke-width="2"/>
+  <line x1="500" y1="510" x2="500" y2="380" stroke="#CBD5E1" stroke-width="2"/>
+</svg>
