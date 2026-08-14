@@ -23,6 +23,35 @@
 
 浏览器打开 <http://localhost:5173>。
 
+## 示例：Hello Routine
+
+创建 `zero/routines/user/hello.py`：
+
+```python
+from typing import Any, Dict
+from routine import Routine
+
+class Hello(Routine):
+    name = 'hello'
+    meta = {'description': '向某人打招呼'}
+
+    async def run(self, kwargs: Dict[str, Any]):
+        return f"Hello, {kwargs.get('name', 'World')}!"
+```
+
+在 `zero/routines.yaml` 加一行（热重载自动生效）：
+
+```yaml
+- routines/user/hello.py
+```
+
+调用：
+
+```bash
+curl -X POST http://localhost:7781/run/hello -H "Content-Type: application/json" -d '{"name":"World"}'
+# {"ok":true,"result":"Hello, World!"}
+```
+
 ## 更多
 
 - [routine-py/docs/](routine-py/docs/) — 框架 API 与概念详解

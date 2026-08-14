@@ -24,6 +24,35 @@ Prerequisites: [Go](https://golang.google.cn/dl/), [uv](https://docs.astral.sh/u
 
 Open <http://localhost:5173> in your browser.
 
+## Example: Hello Routine
+
+Create `zero/routines/user/hello.py`:
+
+```python
+from typing import Any, Dict
+from routine import Routine
+
+class Hello(Routine):
+    name = 'hello'
+    meta = {'description': 'Say hello to someone'}
+
+    async def run(self, kwargs: Dict[str, Any]):
+        return f"Hello, {kwargs.get('name', 'World')}!"
+```
+
+Add one line to `zero/routines.yaml` (hot reload applies it automatically):
+
+```yaml
+- routines/user/hello.py
+```
+
+Call it:
+
+```bash
+curl -X POST http://localhost:7781/run/hello -H "Content-Type: application/json" -d '{"name":"World"}'
+# {"ok":true,"result":"Hello, World!"}
+```
+
 ## More
 
 - [routine-py/docs/](routine-py/docs/) — framework API and concepts
