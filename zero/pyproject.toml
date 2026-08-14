@@ -1,7 +1,7 @@
 [project]
 name = "zero"
 version = "0.1.0"
-description = "kshell zero：routine 应用骨架（参考 shell/zero，基于 kshell routine SDK）"
+description = "zero：routine 应用骨架（基于 routine SDK）"
 requires-python = ">=3.10"
 dependencies = [
     "routine",

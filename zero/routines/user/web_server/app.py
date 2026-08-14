@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def build_app(server_cls) -> FastAPI:
     """构造 FastAPI app.``server_cls`` 是 WebServer 类(用其类级 _active/_handles)."""
 
-    app = FastAPI(title='kshell', docs_url='/docs', redoc_url=None)
+    app = FastAPI(title='zero', docs_url='/docs', redoc_url=None)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=['*'],

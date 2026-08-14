@@ -179,7 +179,7 @@ func TestPythonDialInExecute(t *testing.T) {
 }
 
 // findPythonAndFixture 定位 demo/.venv 的 python + dialin fixture.
-// go test cwd = kernel/grpc,repo root = ../..(D:/kshell).缺则 t.Skip.
+// go test cwd = kernel/grpc,repo root = ../.. .缺则 t.Skip.
 func findPythonAndFixture(t *testing.T, fixtureName string) (string, string) {
 	t.Helper()
 	cwd, err := os.Getwd()

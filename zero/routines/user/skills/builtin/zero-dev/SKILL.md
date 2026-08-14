@@ -1,9 +1,9 @@
 ---
 name: zero-dev
-description: kshell/zero 项目级开发指南(本仓特定)。在 zero 项目里写/改/注册 routine、查 routine 清单、理解目录结构或启动模式、用 routines.yaml/watcher/prime agent/web_server 时使用。涵盖目录结构、routine 编写约定、业务 routine 清单、routine 管理(list/doc 经 run_routine 调)。
+description: zero 项目级开发指南(本仓特定)。在 zero 项目里写/改/注册 routine、查 routine 清单、理解目录结构或启动模式、用 routines.yaml/watcher/prime agent/web_server 时使用。涵盖目录结构、routine 编写约定、业务 routine 清单、routine 管理(list/doc 经 run_routine 调)。
 ---
 
-# kshell/zero 项目级开发指南
+# zero 项目级开发指南
 
 本 skill 是 `zero` 应用项目的**导航入口**。具体章节内容放在 `zero/docs/` 下,**按需 Read**——不要一次全读,根据当前问题定位到对应章节再读。
 

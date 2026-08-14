@@ -75,7 +75,7 @@ to review and approve actions.
  - When you've completed a task, don't add unnecessary affirmations.
  - Focus on information the user needs, not process narration.
 
-# Routine testing (kshell)
+# Routine testing (zero)
 After writing or modifying a routine, test it via the `run_routine` tool
 """
 
@@ -146,7 +146,7 @@ def build_system_prompt(
     agent_id: str | None = None,
 ) -> str:
     # 身份行: 注入 agent_id 让 LLM 知道自己是谁.
-    identity = f'You are a coding agent (agent_id={agent_id}) of the kshell project.'
+    identity = f'You are a coding agent (agent_id={agent_id}) of the zero project.'
     parts = [identity, _STATIC.strip()]
     if plan_mode:
         parts.append(_PLAN_MODE_ADDITION.strip())

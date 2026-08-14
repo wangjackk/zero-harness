@@ -1,7 +1,7 @@
 [project]
 name = "routine_bridge"
 version = "0.1.0"
-description = "Kshell routine skill: run_routine HTTP bridge for IPython kernel"
+description = "zero routine skill: run_routine HTTP bridge for IPython kernel"
 requires-python = ">=3.11"
 dependencies = ["httpx"]
 

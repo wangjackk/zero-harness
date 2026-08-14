@@ -1,7 +1,7 @@
 [project]
 name = "hub_routine"
 version = "0.1.0"
-description = "Kshell routine skill: IPython 里一键启动 routine hub + passive routine"
+description = "zero routine skill: IPython 里一键启动 routine hub + passive routine"
 requires-python = ">=3.11"
 dependencies = ["routine"]
 

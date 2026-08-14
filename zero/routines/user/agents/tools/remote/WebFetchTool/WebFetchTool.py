@@ -102,7 +102,7 @@ class WebFetch(Routine):
             follow_redirects=True,
             max_redirects=5,
             headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; kshell-fetch-url/1.0)',
+                'User-Agent': 'Mozilla/5.0 (compatible; zero-fetch-url/1.0)',
                 'Accept': 'text/html,application/xhtml+xml',
             },
         ) as client:

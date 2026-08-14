@@ -1,4 +1,4 @@
-// Package routine 是 kshell routine SDK 的 Go 版本.
+// Package routine 是 routine SDK 的 Go 版本.
 //
 // 对标 Python routine SDK:routine 体由本 SDK 的 server 实例化运行;调度器(kernel)
 // 通过 gRPC lifecycle 事件驱动 create/start/stop,并 dumb-forward p2p 帧.

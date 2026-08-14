@@ -1,4 +1,4 @@
-// Command kernel 是 kshell 调度器常驻进程入口.
+// Command kernel 是调度器常驻进程入口.
 //
 // 流程:加载模块树 → 加载 config.yaml → 按 config 起 as_grpc_server(kernel 当
 // server,bind+accept routine 拨入)和/或 as_grpc_client(kernel 当 client,connect

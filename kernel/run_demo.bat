@@ -1,5 +1,5 @@
 @echo off
-REM run_demo.bat - run the kshell go kernel demo (16-step scenario).
+REM run_demo.bat - run the go kernel demo (16-step scenario).
 REM
 REM Usage:
 REM   run_demo.bat                  demo against 127.0.0.1:50051 (default)

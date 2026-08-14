@@ -461,7 +461,7 @@ def _http_get_text(url: str, timeout: int = 30) -> str:
     """GET URL 返回 text."""
     import urllib.request
     req = urllib.request.Request(url, headers={
-        'User-Agent': 'kshell-install_skill/1.0',
+        'User-Agent': 'zero-install_skill/1.0',
         'Accept': 'text/markdown, text/plain, text/html;q=0.9, */*;q=0.1',
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -476,7 +476,7 @@ def _gh_api_get(path: str, timeout: int = 30):
     import urllib.request
     url = f'https://api.github.com{path}'
     headers = {
-        'User-Agent': 'kshell-install_skill/1.0',
+        'User-Agent': 'zero-install_skill/1.0',
         'Accept': 'application/vnd.github+json',
     }
     token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
@@ -503,7 +503,7 @@ def _gh_get_raw(owner: str, repo: str, branch: str, path: str, timeout: int = 30
     for attempt, backoff in enumerate([0.5, 1.0, 2.0], start=1):
         try:
             req = urllib.request.Request(raw_url, headers={
-                'User-Agent': 'kshell-install_skill/1.0',
+                'User-Agent': 'zero-install_skill/1.0',
             })
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = resp.read()
