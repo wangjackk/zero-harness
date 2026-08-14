@@ -1,24 +1,31 @@
 # zero-harness
 
-![架构总览](docs/architecture.svg)
+Multi-language routine orchestration framework + LLM agent application skeleton.
 
-## 设计哲学
+![Architecture](docs/architecture.svg)
 
-**万物皆 routine**——agent 是 routine，工具是 routine，Web server 是 routine，连 loader
-和 watcher 也是 routine。任何 routine 用任意语言编写。
-每个 hub 独立进程、任意语言、任意设备.
+[中文说明](README.zh.md)
 
-## 快速开始（Windows）
+## Design Philosophy
 
-前置：[Go](https://golang.google.cn/dl/)、[uv](https://docs.astral.sh/uv/getting-started/installation/)、bun 或 node（任一）。
+**Everything is a routine** — an agent is a routine, a tool is a routine, the web server
+is a routine, even the loader and the watcher are routines. Routines can be written in
+any language. Each hub is an independent process — any language, any device.
 
-1. 复制 `zero/models.yaml.example` 为 `zero/models.yaml`，填入你的 api_key。
-2. 双击根目录 `start.bat`。
+Routines are enabled/disabled via `zero/routines.yaml` (comment out an entry to disable);
+hot reload applies automatically.
 
-浏览器打开 <http://localhost:5173>。
+## Quick Start (Windows)
 
-## 更多
+Prerequisites: [Go](https://golang.google.cn/dl/), [uv](https://docs.astral.sh/uv/getting-started/installation/), bun or node.
 
-- [routine-py/docs/](routine-py/docs/) — 框架 API 与概念详解
-- [zero/docs/](zero/docs/) — zero 项目约定、模块清单、端到端案例
-- [routine-rs/examples/](routine-rs/examples/) — Rust SDK 示例
+1. Copy `zero/models.yaml.example` to `zero/models.yaml` and fill in your api_key.
+2. Double-click `start.bat` in the repo root.
+
+Open <http://localhost:5173> in your browser.
+
+## More
+
+- [routine-py/docs/](routine-py/docs/) — framework API and concepts
+- [zero/docs/](zero/docs/) — zero project conventions and end-to-end walkthroughs
+- [routine-rs/examples/](routine-rs/examples/) — Rust SDK examples
