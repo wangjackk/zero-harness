@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package routine;
+
+import "google/protobuf/struct.proto";
+
+service RoutineService {
+  rpc Stream(stream google.protobuf.Struct) returns (stream google.protobuf.Struct);
+  rpc Req(google.protobuf.Struct) returns (google.protobuf.Struct);
+}

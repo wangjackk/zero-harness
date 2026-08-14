@@ -1,0 +1,29 @@
+# LLM 配置: models 下分 provider, 每个 provider 下直接分 model.
+# model 传参格式: "<provider>/<model_name>", 如 "seed/glm-5.2".
+#
+# 使用: 复制本文件为 models.yaml (同目录), 填入你的 api_key.
+
+default: seed/glm-5.2
+
+models:
+  seed:
+    api_key: <your-api-key>
+    base_url: https://ark.cn-beijing.volces.com/api/plan/v3
+    glm-5.2:
+      model: glm-5.2
+      max_context: 1048576
+      extra:
+        reasoning: {effort: high}
+        store: true
+    doubao-turbo:
+      model: doubao-seed-2.1-turbo
+      max_context: 256000
+      extra: {store: true}
+
+  openrouter:
+    api_key: <your-api-key>
+    base_url: https://openrouter.ai/api/v1
+    claude-4.6:
+      model: anthropic/claude-sonnet-4.6
+      max_context: 200000
+      extra: {}

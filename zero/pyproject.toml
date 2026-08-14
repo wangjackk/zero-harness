@@ -1,0 +1,35 @@
+[project]
+name = "zero"
+version = "0.1.0"
+description = "kshell zero：routine 应用骨架（参考 shell/zero，基于 kshell routine SDK）"
+requires-python = ">=3.10"
+dependencies = [
+    "routine",
+    # 跟 routine 一致：生成的 pb2_grpc 要求 grpcio>=1.80.0
+    "grpcio>=1.80.0",
+    "protobuf>=6.31.1",
+    # HTTP+WS 前门 (zero/routines/user/web_server.py)：FastAPI app + uvicorn ASGI server。
+    # 业务层依赖，不进 routine 框架。
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2.13.4",
+    "httpx>=0.28.1",
+    "openai>=2.45.0",
+    "asyncssh>=2.24.0",
+    # IPython tool: 用真 ipykernel + jupyter_client 走 ZMQ,替换原 JSONL worker。
+    "ipykernel>=6.29.0",
+    "jupyter_client>=8.6.0",
+
+    # web_server 的 /ws 端点: 裸 uvicorn 不含 WS 支持, 需显式声明
+    "websockets>=13.0",
+    "pyyaml>=6.0.3",
+    "trafilatura>=2.1.0",
+]
+
+# routine 经 path 依赖 + editable：改 routine 源码重启 server 即生效，无需重装。
+[tool.uv.sources]
+routine = { path = "../routine-py", editable = true }
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

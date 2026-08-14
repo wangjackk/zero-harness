@@ -1,0 +1,44 @@
+# zero routines 清单 ---- 配置驱动注册.
+# 两种条目粒度:
+#   - 文件 (xxx.py): 显式单模块, 只注册该文件内定义的 Routine 子类
+#   - 目录 (pkg/):   import 该包 __init__.py, 注册其 re-export 的 Routine 类.
+#                    __init__ 即 manifest: 子包经 import 链自然引入, 新增 .py
+#                    需在对应 __init__.py re-export 才会注册
+# 两种条目形态:
+#   - 纯字符串:  - routines/user/ask.py
+#   - dict:      path + kwargs ---- passive routine 的启动配置. 注册时注入类的
+#                is_passive, 随 catalog 推给 kernel; auto-start Execute(name,
+#                kwargs) 带参拉起, run(kwargs) 直接收参 ---- routine 不回头读 yaml.
+# name/schema/doc 以类声明为唯一事实源, 此处不重复声明.
+
+routines:
+  # web 前门 (HTTP + WS). 改端口需同步前端 App.vue 与 Vite 代理.
+  - path: routines/user/web_server/server.py
+    kwargs:
+      host: 127.0.0.1
+      port: 7781
+
+  # agent 基础设施 (单文件单 routine)
+  - routines/user/ask.py
+  - routines/user/send_message.py
+  - routines/user/user_agent.py
+  - routines/user/world_agent.py
+  - routines/user/list_running_agents.py
+  - routines/user/get_agent_rid.py
+  - routines/user/fetch_agent_state.py
+  - routines/user/list_routines.py
+  - routines/user/routine_doc.py
+
+  # prime agent (入口 + manager) + condenser
+  - routines/user/agents/prime/agent.py
+  - routines/user/agents/prime/manager.py
+  - routines/user/agents/_core/condenser/routine.py
+
+  # prime 工具 (整包: file_ops / shell / remote / utils)
+  - routines/user/agents/tools
+
+  # 通用 skill routines (整包)
+  - routines/user/skills
+
+  # watcher: yaml/源码变更自动热重载
+  - routines/watcher.py

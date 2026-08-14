@@ -1,0 +1,10 @@
+[package]
+name = "routine-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Wire protocol types and conversions for routine."
+
+[dependencies]
+prost-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

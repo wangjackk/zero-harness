@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "routine"
+version = "0.1.0"
+description = "精简 routine server SDK — create/start/stop 生命周期"
+requires-python = ">=3.10"
+dependencies = [
+    # grpcio>=1.80.0：生成的 grpc/routine_pb2_grpc.py 硬要求此版本
+    # （grpcio-tools 生成时写入下限）。低于此 import 时报 RuntimeError。
+    "grpcio>=1.80.0",
+    "protobuf>=6.31.1",
+]
+
+# 标准包布局：源码在 routine/ 子目录，tests/ 留在项目根（不打进 wheel）。
+# editable install 正常工作（flat-layout 的 `packages=["."]` 映射会让 editables 失败）。
+[tool.hatch.build.targets.wheel]
+packages = ["routine"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["tests/"]

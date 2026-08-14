@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package routine;
+
+option go_package = "kernel/grpc;grpc";
+
+import "google/protobuf/struct.proto";
+
+// RoutineService 调度器核心（kernel）与远端 routine server 之间的 gRPC 契约。
+// 不在 wire 上写死 Start/Stop 等方法，而是一个通用 Req + 双向 Stream，
+// 业务语义靠 google.protobuf.Struct（= map[string]any）里的 event 字段表达。
+service RoutineService {
+  rpc Req(google.protobuf.Struct) returns (google.protobuf.Struct);
+  rpc Stream(stream google.protobuf.Struct) returns (stream google.protobuf.Struct);
+}
