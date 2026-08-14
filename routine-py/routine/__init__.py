@@ -4,7 +4,7 @@
 装饰器 + ``RunContext.req`` / ``stream_req`` 暴露.routine 体由本 SDK 的 server
 实例化运行;调度器(kernel)通过 gRPC lifecycle 事件驱动,并 dumb-forward p2p 帧.
 
-uv 安装:``uv pip install -e kshell/routine`` 或作 path 依赖被 demo 引用.
+uv 安装:``uv pip install -e routine-py`` 或作 path 依赖被 demo 引用.
 """
 from .ctx import RunContext, RoutineHubLike, RoutineIO
 from .errors import (

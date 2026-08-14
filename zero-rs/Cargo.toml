@@ -2,7 +2,7 @@
 name = "zero-rs"
 version = "0.1.0"
 edition = "2021"
-description = "kshell zero 的 Rust 骨架:单 routine 拨入 kernel,证明分布式跨语言。"
+description = "zero 的 Rust 骨架:单 routine 拨入 kernel,证明分布式跨语言。"
 
 [dependencies]
 routine = { path = "../routine-rs" }
