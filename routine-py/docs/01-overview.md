@@ -47,7 +47,7 @@ hub (gRPC server, 监听 0.0.0.0:7777)  ←─── kernel (as_grpc_client 连�
 ### client 模式(dial-in,kernel 当 server)
 
 ```
-hub (gRPC client, 主动拨)             ───→  kernel (as_grpc_server, 监听 127.0.0.1:8889)
+hub (gRPC client, 主动拨)             ───→  kernel (as_grpc_server, 监听 127.0.0.1:8888)
 ```
 
 - kernel 绑端口监听,hub 主动拨。
