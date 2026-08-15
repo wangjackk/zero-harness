@@ -24,6 +24,9 @@ dependencies = [
     "websockets>=13.0",
     "pyyaml>=6.0.3",
     "trafilatura>=2.1.0",
+    # xml/tts LocalSpeaker: sounddevice + numpy PCM 直通播放
+    "sounddevice>=0.5.1",
+    "numpy>=2.0.0",
 ]
 
 # routine 经 path 依赖 + editable：改 routine 源码重启 server 即生效，无需重装。

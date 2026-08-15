@@ -42,6 +42,9 @@ routines:
   # 通用 skill routines (整包)
   - routines/user/skills
 
+  # XML body 编排 routines (整包: Act / RunXml / PrintBody / Speak + TTS)
+  - routines/user/xml
+
   # dynamic 实验场 (creator agent 写的实验性 routine, watcher 热重载)
   - routines/user/dynamic
 
