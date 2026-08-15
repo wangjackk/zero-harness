@@ -12,8 +12,6 @@
 和 watcher 也是 routine。任何 routine 用任意语言编写。
 每个 hub 独立进程、任意语言、任意设备.
 
-启停由 `zero/routines.yaml` 声明（注释条目即禁用），热重载自动生效。
-
 ## 快速开始（Windows）
 
 前置：[Go](https://golang.google.cn/dl/)、[uv](https://docs.astral.sh/uv/getting-started/installation/)、bun 或 node（任一）。
