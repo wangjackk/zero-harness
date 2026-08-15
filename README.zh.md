@@ -52,6 +52,7 @@ curl -X POST http://localhost:7781/run/hello -H "Content-Type: application/json"
 
 ## 更多
 
+- [zero-example](https://github.com/wangjackk/zero-example) — 基于 zero-harness 的完整应用示例（agents / presets / skills / TTS / 前端）
 - [routine-py/docs/](routine-py/docs/) — 框架 API 与概念详解
 - [zero/docs/](zero/docs/) — zero 项目约定、模块清单、端到端案例
 - [routine-rs/examples/](routine-rs/examples/) — Rust SDK 示例
