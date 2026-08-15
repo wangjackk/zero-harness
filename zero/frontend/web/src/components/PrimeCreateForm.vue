@@ -3,6 +3,38 @@
     <div class="cf-cols">
       <div class="cf-col cf-col-left">
         <div class="am-field">
+          <label class="am-label">preset</label>
+          <div class="cf-preset-row">
+            <div
+              v-for="p in props.presets"
+              :key="p.id"
+              class="cf-preset-chip"
+              :class="{ on: form.preset === p.id, user: p.source === 'user' }"
+              :title="p.description"
+              @click="selectPreset(p.id)"
+            >
+              {{ p.name }}
+              <span
+                v-if="p.source === 'user'"
+                class="cf-preset-del"
+                title="删除此预设"
+                @click.stop="onDeletePreset(p.id)"
+              >×</span>
+            </div>
+            <div
+              class="cf-preset-chip cf-preset-add"
+              title="复制当前预设为新预设 (copy-only)"
+              @click="showCopy = !showCopy"
+            >+</div>
+          </div>
+          <div v-if="showCopy" class="cf-preset-copy">
+            <NInput v-model:value="copyId" size="tiny" placeholder="新 preset id (小写字母/数字/_)" />
+            <NInput v-model:value="copyName" size="tiny" placeholder="显示名 (可选)" />
+            <NButton size="tiny" :loading="copying" @click="onCopyPreset">复制</NButton>
+          </div>
+        </div>
+
+        <div v-if="!presetLocked" class="am-field">
           <label class="am-label">project_dir</label>
           <NAutoComplete
             v-model:value="form.project_dir"
@@ -13,10 +45,10 @@
           />
         </div>
 
-        <div class="am-advanced-toggle" @click="showAdvanced = !showAdvanced">
+        <div v-if="!presetLocked" class="am-advanced-toggle" @click="showAdvanced = !showAdvanced">
           {{ showAdvanced ? '▾' : '▸' }} 高级参数
         </div>
-        <div v-if="showAdvanced" class="am-advanced">
+        <div v-if="showAdvanced && !presetLocked" class="am-advanced">
           <div class="am-field">
             <label class="am-label">model <span v-if="form.model" class="cf-model-clear" @click="form.model = null">×</span></label>
             <div class="cf-model-picker">
@@ -58,10 +90,28 @@
 
       <div class="cf-col cf-col-right">
         <div class="cf-desc-bar">
-          {{ selectedDesc || '点击下方任意行查看描述' }}
+          {{ selectedDesc || '点击 preset 或下方任意行查看描述' }}
         </div>
 
-        <div class="am-field">
+        <div v-if="presetLocked" class="am-field">
+          <label class="am-label">skills (preset 已声明, copy preset 才能改)</label>
+          <div class="cf-checklist cf-locked-list">
+            <div v-for="s in selectedPreset?.preload_skills" :key="`l2:${s}`" class="cf-row cf-row-locked">
+              <span class="cf-seg-btn cf-seg-l2 on">L2</span>
+              <span class="cf-row-name">{{ s }}</span>
+            </div>
+            <div v-for="s in selectedPreset?.level1_skills" :key="`l1:${s}`" class="cf-row cf-row-locked">
+              <span class="cf-seg-btn cf-seg-l1 on">L1</span>
+              <span class="cf-row-name">{{ s }}</span>
+            </div>
+            <div
+              v-if="!(selectedPreset?.preload_skills?.length || selectedPreset?.level1_skills?.length)"
+              class="cf-hint"
+            >preset 未声明 skills</div>
+          </div>
+        </div>
+
+        <div v-else class="am-field">
           <label class="am-label">
             skills (L1=仅注入 name+desc, L2=全量预加载; 互斥, 不勾=不加载)
           </label>
@@ -149,7 +199,7 @@
         size="small"
         type="primary"
         :loading="creating"
-        :disabled="!form.project_dir?.trim()"
+        :disabled="!presetLocked && !form.project_dir?.trim()"
         @click="onCreate"
       >
         Create
@@ -164,13 +214,16 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import {
   NButton, NInput, NInputNumber, NAutoComplete, NSwitch,
 } from 'naive-ui'
-import type { CreateAgentParams } from '../composables/useAgents'
+import type { CreateAgentParams, PresetRow } from '../composables/useAgents'
 
 const props = defineProps<{
   httpBase: string
   projectSuggestions: string[]
   createAgent: (params: CreateAgentParams) => Promise<string | null>
   creating: boolean
+  presets: PresetRow[]
+  copyPreset: (from: string, newId: string, name?: string) => Promise<string | null>
+  deletePreset: (id: string) => Promise<string | null>
 }>()
 
 const emit = defineEmits<{
@@ -182,6 +235,7 @@ const showAdvanced = ref(false)
 const createError = ref('')
 
 const form = reactive({
+  preset: 'prime',
   project_dir: '' as string,
   model: '' as string | null,
   plan_mode: false,
@@ -190,6 +244,43 @@ const form = reactive({
   preload_skills: [] as string[],
   level1_skills: [] as string[],
 })
+
+// ---- preset copy (copy-only 创作) ----
+const showCopy = ref(false)
+const copyId = ref('')
+const copyName = ref('')
+const copying = ref(false)
+
+async function onCopyPreset() {
+  createError.value = ''
+  const id = copyId.value.trim()
+  if (!id) return
+  copying.value = true
+  try {
+    const err = await props.copyPreset(form.preset, id, copyName.value.trim() || undefined)
+    if (err) {
+      createError.value = err
+      emit('error', err)
+    } else {
+      form.preset = id
+      showCopy.value = false
+      copyId.value = ''
+      copyName.value = ''
+    }
+  } finally {
+    copying.value = false
+  }
+}
+
+async function onDeletePreset(id: string) {
+  const err = await props.deletePreset(id)
+  if (err) {
+    createError.value = err
+    emit('error', err)
+  } else if (form.preset === id) {
+    form.preset = 'prime'
+  }
+}
 
 // model 选项: 从 /models 拉, 按 provider 分组
 interface ModelOption { label: string; value: string; short: string; provider: string }
@@ -231,6 +322,18 @@ async function loadModels() {
 }
 
 const selectedKey = ref<string>('')
+
+const selectedPreset = computed(() => props.presets.find(p => p.id === form.preset))
+// 完整预设: 声明了 skills (L1/L2 任一) 即视为组装已定死, 创建表单不再提供
+// skill/model 覆盖 (要改能力 copy preset 改 yaml, 这是 copy-only 哲学).
+const presetLocked = computed(() =>
+  !!(selectedPreset.value?.preload_skills?.length || selectedPreset.value?.level1_skills?.length),
+)
+
+function selectPreset(id: string) {
+  form.preset = id
+  selectedKey.value = `preset:${id}`
+}
 
 function selectSkill(name: string) {
   selectedKey.value = `skill:${name}`
@@ -300,7 +403,15 @@ async function loadSkills() {
 
 const selectedDesc = computed<string>(() => {
   if (!selectedKey.value) return ''
-  const [kind, name] = selectedKey.value.split(':')
+  const idx = selectedKey.value.indexOf(':')
+  const kind = selectedKey.value.slice(0, idx)
+  const name = selectedKey.value.slice(idx + 1)
+  if (kind === 'preset') {
+    const p = props.presets.find(x => x.id === name)
+    if (!p) return ''
+    const head = `[preset] ${p.id} (${p.source})${p.description ? ' -- ' + p.description : ''}`
+    return p.extra_instructions ? `${head}\n\n${p.extra_instructions}` : head
+  }
   if (kind === 'skill') {
     const s = skillOptions.value.find(o => o.value === name)
       || primeSkillOptions.value.find(o => o.value === name)
@@ -313,16 +424,20 @@ const selectedDesc = computed<string>(() => {
 async function onCreate() {
   createError.value = ''
   try {
-    const params: CreateAgentParams = {
-      kind: 'prime',
-      project_dir: form.project_dir.trim() || undefined,
-      model: form.model || undefined,
-      plan_mode: form.plan_mode,
-      max_turns: form.max_turns ?? undefined,
-      extra_instructions: form.extra_instructions.trim() || undefined,
-      preload_skills: form.preload_skills.length ? form.preload_skills.slice() : undefined,
-      level1_skills: form.level1_skills.length ? form.level1_skills.slice() : undefined,
-    }
+    const params: CreateAgentParams = presetLocked.value
+      // 锁定预设: 一键创建, 只传 preset, 其余全以 preset.yaml 为准
+      ? { kind: 'prime', preset: form.preset }
+      : {
+          kind: 'prime',
+          preset: form.preset,
+          project_dir: form.project_dir.trim() || undefined,
+          model: form.model || undefined,
+          plan_mode: form.plan_mode,
+          max_turns: form.max_turns ?? undefined,
+          extra_instructions: form.extra_instructions.trim() || undefined,
+          preload_skills: form.preload_skills.length ? form.preload_skills.slice() : undefined,
+          level1_skills: form.level1_skills.length ? form.level1_skills.slice() : undefined,
+        }
     const id = await props.createAgent(params)
     if (id) {
       emit('create', params, id)
@@ -348,6 +463,35 @@ onMounted(() => {
 
 <style scoped>
 .cf-form { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+
+.cf-preset-row {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+}
+.cf-preset-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 10px;
+  font-size: 11px; font-family: ui-monospace, 'Consolas', monospace;
+  color: #94a3b8;
+  background: #1a1d27;
+  border: 1px solid #2d3148; border-radius: 999px;
+  cursor: pointer; user-select: none;
+  transition: all .12s;
+}
+.cf-preset-chip:hover { border-color: #4f46e5; color: #cbd5e1; }
+.cf-preset-chip.on {
+  background: #1f2235; border-color: #6366f1; color: #c7d2fe;
+}
+.cf-preset-chip.user { border-style: dashed; }
+.cf-preset-del {
+  color: #6b7280; font-size: 13px; line-height: 1;
+  padding: 0 1px; border-radius: 50%;
+}
+.cf-preset-del:hover { color: #f87171; }
+.cf-preset-add { padding: 2px 12px; color: #6b7280; }
+.cf-preset-copy {
+  display: flex; gap: 6px; margin-top: 6px; align-items: center;
+}
+.cf-preset-copy .n-input { flex: 1; }
 
 .cf-cols {
   display: grid;
@@ -437,6 +581,11 @@ onMounted(() => {
 }
 
 .cf-filter { margin-bottom: 4px; }
+
+/* 锁定预设: 组装只读概览 */
+.cf-locked-list { opacity: .85; }
+.cf-row-locked { cursor: default; }
+.cf-row-locked:hover { background: transparent; }
 .cf-checklist {
   max-height: 260px; overflow-y: auto;
   border: 1px solid #2d3148; border-radius: 6px;
@@ -513,7 +662,7 @@ onMounted(() => {
   background: #0f1117; border: 1px solid #2d3148; border-radius: 6px;
   height: 200px; line-height: 1.6;
   font-family: 'Segoe UI', system-ui, sans-serif;
-  word-break: break-word; white-space: normal;
+  word-break: break-word; white-space: pre-wrap;
   flex-shrink: 0;
   overflow-y: auto;
 }

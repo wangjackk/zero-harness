@@ -168,7 +168,9 @@ const emit = defineEmits<{
 
 const filter = ref('')
 const hubFilter = ref<string>('')
-const formValues = ref<Record<string, unknown>>({})
+// 表单值: 按 schema type 初始化为 number|null / boolean / string,
+// 绑定到 NInputNumber/NSwitch/NInput 各自的 v-model (联合类型, 不细分).
+const formValues = ref<Record<string, any>>({})
 const selected = ref<RoutineInfo | null>(null)
 const running = ref(false)
 const results = ref<RunResult[]>([])

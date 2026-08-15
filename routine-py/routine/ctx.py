@@ -257,8 +257,8 @@ class RunContext:
         self._io.register_handle(child_id, handle)
         # 拿到 handle 时子一定已 created(kernel 等 created 回报才发 submitted):
         # created 路由表 + ctx 都已就绪----可直接 send / req / publish(子不必 start
-        # 就能收 message.* 定向消息).只有子要**收 pubsub** 需 start 后
-        # (auto_subscribe 在 start 发订阅给 kernel).
+        # 就能收 message.* 定向消息).pubsub 也已就绪(auto_subscribe 在 created
+        # 回报前同步发订阅,见 lifecycle.handle_created).
         return handle
 
     async def call(self, name: str,

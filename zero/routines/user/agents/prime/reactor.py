@@ -36,6 +36,9 @@ class ReactorAgentInput(BaseModel):
     session_id: str | None = Field(None, description='Session id. Auto when omitted.')
     project_dir_root_path: str | None = Field(None, description='Project root path.')
     agent_id: str | None = Field(None, description='Agent id. Auto when omitted.')
+    agent_name: str | None = Field(
+        None, description='Display name (from preset), used in system prompt identity.',
+    )
     enabled_tools: list[str] | None = Field(None, description='Tool whitelist.')
     disabled_tools: list[str] | None = Field(None, description='Tool blacklist.')
     condense_config: dict[str, Any] | None = Field(None, description='Condenser config.')
@@ -55,6 +58,10 @@ class ReactorAgentOutput(BaseModel):
 
 class ReactorAgent(Routine):
     """Coding agent with simplified dialog state and modular react loop."""
+
+    # skill 受众画像: seed 时用于过滤 builtin 里带 ``agents:`` 声明的 skill.
+    # None = 只 seed 通用 skill; 子类设 'prime' 等值以获得专属 skill.
+    skill_profile: ClassVar[str | None] = None
 
     meta: ClassVar[Dict[str, Any]] = {
         'hidden': True,
@@ -161,17 +168,18 @@ class ReactorAgent(Routine):
         self._disabled_tools = set(params.disabled_tools) if params.disabled_tools else None
         self._condense_config = dict(params.condense_config or {})
 
-        # workspace + skill seed: <project>/.agents/<agent_id>/
-        self._workspace = None
+        # workspace + skill seed: 有 project 落 <project>/.agents/<agent_id>/,
+        # 没有则落 ~/.zero/agent-workspaces/<agent_id>/ ---- skill 体系不依赖
+        # project_dir, 无项目的 agent (如 creator) 也要能 seed/preload skill.
         if params.project_dir_root_path:
             self._workspace = Path(params.project_dir_root_path) / '.agents' / self._agent_id
-            self._workspace.mkdir(parents=True, exist_ok=True)
-            seeded = seed_workspace_skills(self._workspace)
-            # 子类 hook: 额外 seed 自带 skills 到 workspace (如 prime/skills/).
-            seeded += self._seed_extra_skills(self._workspace)
-            if seeded:
-                _log.info('seeded %d skill(s) into workspace (agent_id=%s)',
-                          seeded, self._agent_id)
+        else:
+            self._workspace = Path.home() / '.zero' / 'agent-workspaces' / self._agent_id
+        self._workspace.mkdir(parents=True, exist_ok=True)
+        seeded = seed_workspace_skills(self._workspace, self.skill_profile)
+        if seeded:
+            _log.info('seeded %d skill(s) into workspace (agent_id=%s)',
+                      seeded, self._agent_id)
 
         # level1 skill summaries: name + description 注入 system prompt
         skill_summaries: list[tuple[str, str]] = []
@@ -218,10 +226,6 @@ class ReactorAgent(Routine):
         replay_items = getattr(self._session, '_replay_items', None) or []
         if replay_items:
             self._ctx.load_items(replay_items)
-
-    def _seed_extra_skills(self, workspace: Path) -> int:
-        """子类 hook: 额外 seed 自带 skills 到 workspace. 默认不做事."""
-        return 0
 
     def _build_system_prompt(
         self, *, params: ReactorAgentInput,

@@ -1,5 +1,6 @@
 ---
 name: hub_routine
+agents: [prime]
 description: "IPython 里一键启动 routine hub + passive routine 实例,拿到实例后直接用其 call/subscribe/publish 方法。需要从 kernel 侧主动调 routine、监听事件、或搭建常驻被动 routine 时使用。"
 ---
 
@@ -70,7 +71,7 @@ r = await start_hub(routines=[MyRoutine])
 
 | 函数 | 说明 |
 |------|------|
-| `start_hub(routines=None, hub_id="hub_routine", wait=2.0)` | 启动 hub,返回 passive 实例 |
+| `start_hub()` | 启动 hub,返回 passive 实例 |
 | `stop_hub()` | 停止 hub |
 
 passive 实例返回后,直接用 `Routine` 原生方法:`call` / `submit` / `subscribe` / `unsubscribe` / `publish`。

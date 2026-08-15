@@ -110,3 +110,49 @@ async def on_delete_agent(inst, msg: dict, reply) -> None:
     result = await _req_prime_manager(inst, 'delete_agent', {'agent_id': agent_id})
     await reply({'type': 'agent_deleted', 'id': req_id, 'agent_id': agent_id,
                  'kind': 'prime', **result})
+
+
+async def on_list_presets(inst, msg: dict, reply) -> None:
+    """列出全部 agent preset (随附 + 用户根). 走 agent_preset routine (op=list)."""
+    req_id = msg.get('id')
+    try:
+        result = await inst.call('agent_preset', {'op': 'list'})
+        await reply({'type': 'presets', 'id': req_id,
+                     'presets': (result or {}).get('presets') or []})
+    except Exception as exc:
+        logger.warning('[bridge] list_presets error: %s', exc)
+        await reply({'type': 'presets', 'id': req_id, 'presets': [], 'error': str(exc)})
+
+
+async def on_copy_preset(inst, msg: dict, reply) -> None:
+    """复制一个 preset 到用户根 (copy-only). 走 agent_preset routine (op=copy)."""
+    req_id = msg.get('id')
+    payload = {
+        'op': 'copy',
+        'from': str(msg.get('from') or ''),
+        'id': str(msg.get('preset_id') or ''),
+        'name': msg.get('name'),
+    }
+    try:
+        result = await inst.call('agent_preset', payload)
+        await reply({'type': 'preset_copied', 'id': req_id, **(result or {})})
+    except Exception as exc:
+        logger.warning('[bridge] copy_preset error: %s', exc)
+        await reply({'type': 'preset_copied', 'id': req_id, 'ok': False, 'error': str(exc)})
+
+
+async def on_delete_preset(inst, msg: dict, reply) -> None:
+    """删除用户根 preset (随附只读). 走 agent_preset routine (op=delete)."""
+    req_id = msg.get('id')
+    pid = str(msg.get('preset_id') or '').strip()
+    if not pid:
+        await reply({'type': 'preset_deleted', 'id': req_id, 'ok': False,
+                     'error': 'preset_id is required'})
+        return
+    try:
+        result = await inst.call('agent_preset', {'op': 'delete', 'id': pid})
+        await reply({'type': 'preset_deleted', 'id': req_id, 'preset_id': pid, **(result or {})})
+    except Exception as exc:
+        logger.warning('[bridge] delete_preset error: %s', exc)
+        await reply({'type': 'preset_deleted', 'id': req_id, 'preset_id': pid,
+                     'ok': False, 'error': str(exc)})

@@ -5,17 +5,14 @@
 manager 端硬编码 enabled_tools=['ipython'].
 
 设计参考: E:\\code\\pyfiles\\prime-agent
-prime skills (routine, hub_routine) seed 到 workspace, 和经典 builtin skill 共存,
-统一从 workspace/skills/ 加载.
+skill 统一放 skills/builtin/ (带 ``agents: [prime]`` 受众声明),
+seed 时按 skill_profile 过滤, 统一从 workspace/skills/ 加载.
 """
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
 from typing import Any, ClassVar, Dict
 
 from routine.logger import setup_logger
-from .kernel_env import PRIME_SKILLS_DIR
 from .prompt import build_prime_system_prompt
 from .reactor import ReactorAgent, ReactorAgentInput, ReactorAgentOutput
 
@@ -37,6 +34,10 @@ class PrimeAgent(ReactorAgent):
 
     name = 'prime_agent'
 
+    # seed 时额外获得 builtin 里 agents: [prime] 的专属 skill
+    # (routine_bridge / hub_routine / routine-creator / editing-agent-presets).
+    skill_profile = 'prime'
+
     meta: ClassVar[Dict[str, Any]] = {
         'hidden': True,
         'input_schema': PrimeAgentInput.model_json_schema(),
@@ -48,27 +49,6 @@ class PrimeAgent(ReactorAgent):
         ),
     }
 
-    def _seed_extra_skills(self, workspace: Path) -> int:
-        """把 prime/skills/ 下的 skill 拷到 workspace/skills/, 和经典 builtin 共存."""
-        target = workspace / 'skills'
-        target.mkdir(parents=True, exist_ok=True)
-        count = 0
-        if not PRIME_SKILLS_DIR.is_dir():
-            return 0
-        for child in sorted(PRIME_SKILLS_DIR.iterdir()):
-            if not child.is_dir():
-                continue
-            if child.name.startswith('_') or child.name.startswith('.'):
-                continue
-            if not (child / 'SKILL.md').is_file():
-                continue
-            dst = target / child.name
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(child, dst)
-            count += 1
-        return count
-
     def _build_system_prompt(
         self, *, params: ReactorAgentInput,
         skill_summaries: list[tuple[str, str]],
@@ -78,6 +58,7 @@ class PrimeAgent(ReactorAgent):
             project_root=params.project_dir_root_path,
             extra=params.extra_instructions,
             agent_id=self._agent_id,
+            agent_name=params.agent_name,
             skill_summaries=skill_summaries,
         )
 

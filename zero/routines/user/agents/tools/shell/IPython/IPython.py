@@ -14,7 +14,8 @@ from routine import Routine
 from routine.logger import setup_logger
 
 from zero.routines.user.agents._core.paths import AGENT_ID_KEY, resolve_optional_tool_path
-from ....prime.kernel_env import ensure_kernel_env, PRIME_SKILLS_DIR
+from zero.routines.user.skills.registry import BUILTIN_SKILLS_DIR
+from ....prime.kernel_env import ensure_kernel_env
 from .prompt import DESCRIPTION
 
 _log = setup_logger('ipython')
@@ -25,14 +26,11 @@ _MAX_TIMEOUT_SECONDS = 120
 # ipykernel 的 traceback 带 ANSI 颜色码, 剥掉得到纯文本
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
-# skill 包源码路径 (prime/skills/routine_bridge/src/routine_bridge/__init__.py).
+# skill 包源码路径 (skills/builtin/routine_bridge/src/routine_bridge/__init__.py).
 # 用绝对路径显式加载, 绕开 sys.path 上同名 routine 包的遮蔽.
-# IPython.py 在 .../tools/shell/IPython/IPython.py,
-# parents[3] = agents/, 再进 prime/skills/...
 # 包名用 routine_bridge 避免跟 routine SDK 顶层包重名 (sys.modules 冲突).
 _SKILL_ROUTINE_INIT = (
-    Path(__file__).resolve().parents[3]
-    / 'prime' / 'skills' / 'routine_bridge' / 'src' / 'routine_bridge' / '__init__.py'
+    BUILTIN_SKILLS_DIR / 'routine_bridge' / 'src' / 'routine_bridge' / '__init__.py'
 )
 
 # Bootstrap code: 显式路径加载 skill 包, 绕开 sys.path 顺序问题.
@@ -179,7 +177,7 @@ class _ConsoleWorker:
         # ensure_kernel_env 内部有 subprocess.run (uv venv / uv pip install),
         # 同步调用会阻塞 event loop → HTTP/WebSocket 卡死 + wait_for timeout 失效.
         # 用 asyncio.to_thread 扔到线程池, 不阻塞 event loop.
-        venv_python = await asyncio.to_thread(ensure_kernel_env, PRIME_SKILLS_DIR)
+        venv_python = await asyncio.to_thread(ensure_kernel_env, BUILTIN_SKILLS_DIR)
 
         km = AsyncKernelManager(kernel_name='python3')
         # 覆盖 kernel spec argv[0] 为 venv python.

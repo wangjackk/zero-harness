@@ -226,6 +226,21 @@ def build_app(server_cls) -> FastAPI:
         """删除 agent (DB 行 + messages). body:{agent_id}. live 拒绝."""
         return _Json(await _run_ws_handler(_agents.on_delete_agent, body))
 
+    @app.get('/presets')
+    async def _http_presets():
+        """列出全部 agent preset (随附 + 用户根)."""
+        return _Json(await _run_ws_handler(_agents.on_list_presets, {}))
+
+    @app.post('/presets/copy')
+    async def _http_preset_copy(body: Dict[str, Any] = Body(default_factory=dict)):
+        """复制 preset 到用户根 (copy-only). body:{from, preset_id, name?}."""
+        return _Json(await _run_ws_handler(_agents.on_copy_preset, body))
+
+    @app.post('/presets/delete')
+    async def _http_preset_delete(body: Dict[str, Any] = Body(default_factory=dict)):
+        """删除用户根 preset. body:{preset_id}. 随附只读."""
+        return _Json(await _run_ws_handler(_agents.on_delete_preset, body))
+
     # ------------------------------------------------------------------
     # WS 端点
     # ------------------------------------------------------------------

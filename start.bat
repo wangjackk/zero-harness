@@ -1,5 +1,5 @@
 @echo off
-rem zero-harness one-click start: kernel(8889) + zero server(7781) + frontend(vite)
+rem zero-harness one-click start: kernel(8889) + zero server(7780) + frontend(vite)
 rem All paths are relative to this script. Works from any checkout location.
 setlocal EnableExtensions
 set "ROOT=%~dp0"
@@ -46,5 +46,5 @@ timeout /t 2 /nobreak >nul
 echo [start] frontend (%PKG%)...
 start "zero-web" /D "%ROOT%zero\frontend\web" cmd /k "%PKG% run dev"
 
-echo [done] kernel=8889  server=7781 (routines.yaml)  web=http://localhost:5173
+echo [done] kernel=8889  server=7780 (routines.yaml)  web=http://localhost:5173
 endlocal

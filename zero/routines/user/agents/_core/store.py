@@ -176,9 +176,13 @@ class Store:
                     updated_at  TEXT    NOT NULL
                 )
             ''')
-            # migration: 已有 DB 的 agents 表补 session_id 列
+            # migration: 已有 DB 的 agents 表补 session_id / preset 列
             try:
                 c.execute('ALTER TABLE agents ADD COLUMN session_id TEXT')
+            except Exception:
+                pass  # 列已存在
+            try:
+                c.execute('ALTER TABLE agents ADD COLUMN preset TEXT')
             except Exception:
                 pass  # 列已存在
 
@@ -440,12 +444,14 @@ class Store:
 
     def register_agent(
         self, agent_id: str, *, session_id: str | None = None, model: str | None = None,
+        preset: str | None = None,
     ) -> None:
         """upsert 一个 agents 行 (存元数据 + session_id).
 
         session_id: 会话身份 (UUID). create 时传入新 UUID; resume 时传入从
         get_agent 读出的旧 UUID (保证消息流连续). 仅在 INSERT 时写入,
         UPDATE 不覆盖已有 session_id (防止 resume 误传空值清掉).
+        preset: spawn 用的 preset id (CREATE TABLE 后补列, 旧行为 NULL).
         INSERT OR IGNORE 保留 created_at (resume 场景), 再 UPDATE model + updated_at.
         """
         now = _now_iso()
@@ -455,24 +461,24 @@ class Store:
             with self._tx() as c:
                 c.execute(
                     'INSERT OR IGNORE INTO agents'
-                    '(agent_id, session_id, model, created_at, updated_at) '
-                    'VALUES(?, ?, ?, ?, ?)',
-                    (agent_id_, session_id_, model_, now_, now_),
+                    '(agent_id, session_id, model, preset, created_at, updated_at) '
+                    'VALUES(?, ?, ?, ?, ?, ?)',
+                    (agent_id_, session_id_, model_, preset, now_, now_),
                 )
                 c.execute(
-                    'UPDATE agents SET model = ?, updated_at = ? '
+                    'UPDATE agents SET model = ?, preset = ?, updated_at = ? '
                     'WHERE agent_id = ?',
-                    (model_, now_, agent_id_),
+                    (model_, preset, now_, agent_id_),
                 )
 
         self._submit_write(_write)
 
     def list_agents(self) -> list[dict[str, Any]]:
-        """all agent rows, newest-updated first (返回元数据 + session_id)."""
+        """all agent rows, newest-updated first (返回元数据 + session_id + preset)."""
         self.flush()
         with self._tx() as c:
             rows = c.execute(
-                'SELECT agent_id, session_id, model, title, created_at, updated_at '
+                'SELECT agent_id, session_id, model, preset, title, created_at, updated_at '
                 'FROM agents ORDER BY updated_at DESC'
             ).fetchall()
         return [dict(r) for r in rows]
@@ -507,7 +513,7 @@ class Store:
         self.flush()
         with self._tx() as c:
             row = c.execute(
-                'SELECT agent_id, session_id, model, title, created_at, updated_at '
+                'SELECT agent_id, session_id, model, preset, title, created_at, updated_at '
                 'FROM agents WHERE agent_id = ?',
                 (agent_id,),
             ).fetchone()

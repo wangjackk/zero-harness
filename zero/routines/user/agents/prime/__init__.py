@@ -1,7 +1,7 @@
 from .agent import PrimeAgent, PrimeAgentInput, PrimeAgentOutput
-from .manager import PrimeAgentManager, CreatePrimeAgent
+from .manager import PrimeAgentManager, CreatePrimeAgent, StopPrimeAgent
 
 __all__ = [
     'PrimeAgent', 'PrimeAgentInput', 'PrimeAgentOutput',
-    'PrimeAgentManager', 'CreatePrimeAgent',
+    'PrimeAgentManager', 'CreatePrimeAgent', 'StopPrimeAgent',
 ]

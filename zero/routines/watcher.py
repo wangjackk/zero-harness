@@ -43,6 +43,8 @@ class RoutinesWatcher(Routine):
         self._yaml_mtime: float = 0.0
         # [(path, kwargs)] ---- yaml 条目快照 (diff 基准)
         self._entries: List[tuple[str, Dict[str, Any]]] = []
+        # dotted -> 上次 reload 错误文本 (失败日志去重 + 恢复上报)
+        self._reload_errors: Dict[str, str] = {}
 
     async def on_created(self, rid: str, kwargs: Dict[str, Any]):
         self._stop_event = Event()
@@ -149,29 +151,54 @@ class RoutinesWatcher(Routine):
         self._mtimes = {p: _mtime(p) for p in self._watched_files()}
 
     async def _reload_sources(self, changed: List[Path]) -> None:
-        """源码变更: reload 模块链 + 重注入 yaml kwargs + hub.reload_routine(新类)."""
+        """源码变更: reload 模块链 + 重注入 yaml kwargs + hub.reload_routine(新类).
+
+        import 失败(写到一半/manifest 先于文件/语法错)**不丢变更**: 失败文件
+        的 mtime 快照保留旧值, 下轮 poll 自动视为仍有变更重试 ---- 文件与
+        manifest 的编辑顺序无关, 两边写齐后 ~1.5s 内自动收敛.
+        """
         hub = self.ctx.hub
         if hub is None:
             return
 
-        dotted_changed: Set[str] = set()
+        file_dotted: Dict[Path, str] = {}
         for p in changed:
+            rel = p.relative_to(_PACKAGE_ROOT).as_posix()
             if p.name == '__init__.py':
-                dotted_changed.add(_to_dotted(
-                    p.relative_to(_PACKAGE_ROOT).as_posix().rsplit('/', 1)[0]))
-            else:
-                dotted_changed.add(_to_dotted(p.relative_to(_PACKAGE_ROOT).as_posix()))
+                rel = rel.rsplit('/', 1)[0]
+            file_dotted[p] = _to_dotted(rel)
 
+        failed: Set[str] = set()
         reloaded_classes: Set[type] = set()
-        for dotted in dotted_changed:
+        for dotted in sorted(set(file_dotted.values())):
             try:
-                mod = importlib.reload(importlib.import_module(dotted))
-            except Exception:
-                _log.exception('reload module %s failed', dotted)
+                old = importlib.import_module(dotted)
+                # reload 前快照本包导出的 routine name(manifest 撤下检测基准)
+                old_names = {cls.name for cls in _collect_pub(old)
+                             if (cls.__module__ == dotted
+                                 or cls.__module__.startswith(dotted + '.'))}
+                mod = importlib.reload(old)
+            except Exception as exc:
+                failed.add(dotted)
+                self._note_reload_error(dotted, exc)
                 continue
-            for cls in _collect_pub(mod):
-                if cls.__module__ == mod.__name__:   # 只 reload 本模块定义的类
-                    reloaded_classes.add(cls)
+            self._note_reload_ok(dotted)
+            fresh = [cls for cls in _collect_pub(mod)
+                     # 本模块**或其子模块**定义的类都收: 包(__init__)变更时
+                     # 新建文件 + manifest 增补 re-export 的类也要 reload ----
+                     # 与 loader 目录条目语义(imported_ok) / _apply_yaml_change
+                     # 前缀匹配对齐. 文件条目无子模块,前缀匹配退化为精确匹配.
+                     if (cls.__module__ == dotted
+                         or cls.__module__.startswith(dotted + '.'))]
+            reloaded_classes.update(fresh)
+            # manifest 撤下 / 类被删: 老名字不在新导出里 → deregister
+            # (实验 routine 的卸载路径, 不撤则 kernel 留僵尸路由直到重启)
+            for gone in old_names - {cls.name for cls in fresh}:
+                try:
+                    await hub.deregister_routine(gone)
+                    _log.info('🔥 deregistered %s (removed from manifest)', gone)
+                except Exception as exc:
+                    _log.warning('deregister %s failed: %s', gone, exc)
 
         # reload 后类是重新定义的干净声明, yaml kwargs 注入已丢 ----
         # 用持有的 entries 快照重注入(不读文件), 新 kwargs 随 reload 推给 kernel.
@@ -185,7 +212,25 @@ class RoutinesWatcher(Routine):
             except ReloadError as exc:
                 _log.warning('reload %s failed: %s', cls.name, exc)
 
-        self._mtimes = {p: _mtime(p) for p in self._watched_files()}
+        # mtime 快照: 失败模块的文件保留旧值 ---- 下轮 poll 检测到"仍有变更"
+        # 自动重试. 新文件(旧快照没有)用 0.0, 同样触发重试.
+        snapshot = {p: _mtime(p) for p in self._watched_files()}
+        for p, dotted in file_dotted.items():
+            if dotted in failed and p in snapshot:
+                snapshot[p] = self._mtimes.get(p, 0.0)
+        self._mtimes = snapshot
+
+    def _note_reload_error(self, dotted: str, exc: Exception) -> None:
+        """记 reload 失败: 同错不重复刷屏(重试每秒跑, 日志只打文本变化时)."""
+        text = f'{type(exc).__name__}: {exc}'
+        if self._reload_errors.get(dotted) != text:
+            _log.warning('reload %s 失败, 每秒自动重试中: %s', dotted, text)
+            self._reload_errors[dotted] = text
+
+    def _note_reload_ok(self, dotted: str) -> None:
+        if dotted in self._reload_errors:
+            _log.info('reload %s 恢复', dotted)
+            del self._reload_errors[dotted]
 
     def _entries_to_dotteds(self, entries: List[str]) -> List[str]:
         """条目 path → 模块 dotted. 目录条目就是该包 ``__init__.py`` 一个

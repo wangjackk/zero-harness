@@ -1,0 +1,26 @@
+# 随附 preset: prime agent 默认组装 (manager 硬编码行为的文件化快照).
+# 副本请 copy 到用户根 (~/.zero/agent-presets/), 随附目录只读.
+
+name: Prime
+description: IPython 持久控制环境的编码 agent, 只有 ipython 一个 tool.
+
+# 用哪个 agent routine 实现 (submit 的 routine name).
+agent_routine: prime_agent
+
+# 可选: 默认模型 (create 显式传 model 时覆盖).
+model:
+
+# 工具白名单.
+enabled_tools:
+  - ipython
+
+# L2 预加载 skill (全量注入 system prompt).
+preload_skills:
+  - routine_bridge
+
+# L1 轻量发现 skill (只注入 name+desc).
+level1_skills:
+  - hub_routine
+
+# 可选: 附加系统指令 (persona).
+extra_instructions:

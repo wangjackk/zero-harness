@@ -10,7 +10,8 @@ Pattern: Progressive Disclosure (Anthropic-style).
 agent 在自己的 skill routine wrapper 里把 workspace/skills/ 作为 skill_dir 传入.
 
 builtin 来源 (zero 包内置, seed 时使用, 运行时不读):
-  - skills/builtin/   ← 所有 agent 共享 (npx skills 装这里)
+  - skills/builtin/   ← 唯一 skill 库 (npx skills 装这里);
+    frontmatter ``agents: [prime]`` 声明专属受众, 缺省所有 agent.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ class SkillMeta:
     skill_path: Path
     version: Optional[str] = None
     source: str = ''  # 'workspace' (agent 自己的副本)
+    # 受众声明 (frontmatter ``agents: [prime]``); 空 = 所有 agent.
+    agents: tuple[str, ...] = ()
 
 
 class SkillRegistry:
@@ -76,6 +79,7 @@ class SkillRegistry:
         name = path.parent.name
         description = ''
         version = None
+        agents: tuple[str, ...] = ()
         m = _FM_RE.match(text)
         if m:
             try:
@@ -86,6 +90,11 @@ class SkillRegistry:
                 version = fm.get('version')
                 if version is not None:
                     version = str(version)
+                raw_agents = fm.get('agents')
+                if isinstance(raw_agents, str):
+                    agents = (raw_agents,)
+                elif isinstance(raw_agents, list):
+                    agents = tuple(str(a) for a in raw_agents)
             except Exception:
                 pass
         if not description:
@@ -101,6 +110,7 @@ class SkillRegistry:
             skill_path=path,
             version=version,
             source='workspace',
+            agents=agents,
         )
 
     def list_skills(self) -> List[SkillMeta]:
@@ -169,11 +179,15 @@ def build_registry(skill_dir: str | Path | None = None) -> SkillRegistry:
     return SkillRegistry(dirs=[Path(skill_dir)])
 
 
-def seed_workspace_skills(workspace: str | Path) -> int:
+def seed_workspace_skills(workspace: str | Path, profile: str | None = None) -> int:
     """初始化时把 builtin skill 拷贝到 agent workspace 的 skills/ 子目录.
 
     通用层不认 workspace, 但 seed 是初始化期操作 (agent 专用层调),
     接收 workspace 路径, 拷贝到 ``<workspace>/skills/``.
+
+    受众过滤: skill frontmatter ``agents: [prime]`` 声明专属受众;
+    无 ``agents`` = 所有 agent. ``profile`` 是 agent 自己的画像
+    (None = 仅通用 skill, 'prime' = 通用 + prime 专属).
 
     project 私有 skill 由用户直接放到 ``<workspace>/skills/``,
     agent 运行时自动扫到, 不参与 seed. 注意: 同名 skill 会被 builtin 覆盖,
@@ -193,14 +207,13 @@ def seed_workspace_skills(workspace: str | Path) -> int:
     if not src.is_dir():
         return 0
 
+    reg = SkillRegistry(dirs=[src])
+    reg.rescan()
     count = 0
-    for child in sorted(src.iterdir()):
-        if not child.is_dir():
+    for meta in reg.list_skills():
+        if meta.agents and profile not in meta.agents:
             continue
-        if child.name.startswith('_') or child.name.startswith('.'):
-            continue
-        if not (child / 'SKILL.md').is_file():
-            continue
+        child = meta.skill_path.parent
         dst = target / child.name
         if dst.exists():
             shutil.rmtree(dst)
@@ -209,38 +222,38 @@ def seed_workspace_skills(workspace: str | Path) -> int:
     return count
 
 
-def list_builtin_skills() -> List[Dict[str, str]]:
+def list_builtin_skills() -> List[Dict[str, object]]:
     """列 builtin 可用 skill (给前端 preload_skills 选项用, 不依赖 skill_dir).
 
-    返回 [{name, description, version?}].
+    返回 [{name, description, version?, agents}] — ``agents`` 空列表 = 通用,
+    非空 = 专属受众 (如 ['prime']).
     """
     reg = SkillRegistry(dirs=[BUILTIN_SKILLS_DIR])
     reg.rescan()
-    out: List[Dict[str, str]] = []
+    out: List[Dict[str, object]] = []
     for meta in reg.list_skills():
-        entry: Dict[str, str] = {'name': meta.name, 'description': meta.description}
+        entry: Dict[str, object] = {
+            'name': meta.name,
+            'description': meta.description,
+            'agents': list(meta.agents),
+        }
         if meta.version:
             entry['version'] = meta.version
         out.append(entry)
     return out
 
 
-def list_prime_skills() -> List[Dict[str, str]]:
-    """列 prime 自带 skill.
+def list_prime_skills() -> List[Dict[str, object]]:
+    """列 prime 专属 skill (builtin 里 ``agents`` 含 prime 的).
 
     返回 [{name, description, version?}].
     """
-    # 局部 import 避免 skills/registry.py 反向依赖 prime.
-    try:
-        from zero.routines.user.agents.prime.kernel_env import PRIME_SKILLS_DIR
-    except Exception:
-        return []
-    reg = SkillRegistry(dirs=[PRIME_SKILLS_DIR])
-    reg.rescan()
-    out: List[Dict[str, str]] = []
-    for meta in reg.list_skills():
-        entry: Dict[str, str] = {'name': meta.name, 'description': meta.description}
-        if meta.version:
-            entry['version'] = meta.version
-        out.append(entry)
-    return out
+    return [
+        {
+            'name': e['name'],
+            'description': e['description'],
+            **({'version': e['version']} if 'version' in e else {}),
+        }
+        for e in list_builtin_skills()
+        if 'prime' in e.get('agents', [])
+    ]

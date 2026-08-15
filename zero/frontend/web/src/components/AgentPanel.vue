@@ -396,23 +396,20 @@ function toolStatusType(result: ToolResult) {
 
 // 消息分组: 连续的 tool messages 合并成一组, 其余各自独立.
 // 这样 21 次 ipython 调用会合并成一个折叠块, 而不是 21 个独立行.
-interface MessageGroup {
-  type: 'single' | 'tool-group'
-  groupId: string
-  msg?: PanelMessage
-  msgs?: PanelMessage[]
-}
+type MessageGroup =
+  | { type: 'single'; groupId: string; msg: PanelMessage }
+  | { type: 'tool-group'; groupId: string; msgs: PanelMessage[] }
 
 const groupedMessages = computed<MessageGroup[]>(() => {
   const groups: MessageGroup[] = []
-  let currentToolGroup: MessageGroup | null = null
+  let currentToolGroup: { type: 'tool-group'; groupId: string; msgs: PanelMessage[] } | null = null
   for (const msg of props.messages) {
     if (msg.role === 'tool') {
       if (!currentToolGroup) {
         currentToolGroup = { type: 'tool-group', groupId: `tg-${msg.id}`, msgs: [] }
         groups.push(currentToolGroup)
       }
-      currentToolGroup.msgs!.push(msg)
+      currentToolGroup.msgs.push(msg)
     } else {
       currentToolGroup = null
       groups.push({ type: 'single', groupId: msg.id, msg })
@@ -435,7 +432,7 @@ function isToolGroupOpen(group: MessageGroup): boolean {
   const id = group.groupId
   if (id in toolOpenState.value) return toolOpenState.value[id]
   // 默认: 有任一 running 就展开
-  return group.msgs!.some(m => !m.final)
+  return group.type === 'tool-group' && group.msgs.some(m => !m.final)
 }
 
 function onToolGroupToggle(group: MessageGroup, e: Event) {

@@ -110,10 +110,11 @@ def build_prime_system_prompt(
     project_root: str | None = None,
     extra: str | None = None,
     agent_id: str | None = None,
+    agent_name: str | None = None,
     skill_summaries: list[tuple[str, str]] | None = None,
 ) -> str:
     """构建 prime agent 系统提示词."""
-    identity = f'You are Prime (agent_id={agent_id}), a code-driven agent.'
+    identity = f'You are {agent_name or "Prime"} (agent_id={agent_id}), a code-driven agent.'
     parts = [identity, _STATIC.strip()]
 
     cwd = os.path.abspath(project_root or os.getcwd())

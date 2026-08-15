@@ -16,6 +16,16 @@
 
       <div class="header-spacer" />
 
+      <!-- Prompt 面板 -->
+      <NButton
+        size="small"
+        :type="showPrompt ? 'primary' : 'default'"
+        :ghost="showPrompt"
+        quaternary
+        title="Prompt 面板"
+        @click="showPrompt = !showPrompt"
+      >⌗</NButton>
+
       <!-- Routine Runner -->
       <NButton
         size="small"
@@ -67,10 +77,12 @@
       </div>
     </Teleport>
 
-    <div class="app-body">
+    <div class="app-body" ref="bodyEl">
       <!-- 左侧 sidebar -->
       <aside class="sidebar">
-        <button class="sidebar-new" @click="viewMode = 'create'">+ New</button>
+        <div class="sidebar-actions">
+          <button class="sidebar-new" @click="viewMode = 'create'">+ New</button>
+        </div>
         <div class="sidebar-list">
           <div
             v-for="id in sidebarAgents"
@@ -148,12 +160,26 @@
               :project-suggestions="projectSuggestions"
               :create-agent="createAgent"
               :creating="creating"
+              :presets="presets"
+              :copy-preset="copyPreset"
+              :delete-preset="deletePreset"
               @create="onChildCreate"
               @error="onChildError"
             />
           </div>
         </div>
       </main>
+
+      <!-- 右侧 Prompt panel (可折叠, 可拖宽) -->
+      <template v-if="showPrompt && activeId">
+        <div class="divider" @mousedown="startDrag" />
+        <PromptPanel
+          :epoch="agentEpochs[activeId] ?? 0"
+          :messages="agentPrompts[activeId] ?? []"
+          class="prompt-sidebar"
+          :style="{ width: sidebarWidth + 'px' }"
+        />
+      </template>
     </div>
   </div>
   </NConfigProvider>
@@ -165,6 +191,7 @@ import { NConfigProvider, NButton, NBadge, NTag, NCard, NAlert, darkTheme } from
 import type { GlobalThemeOverrides } from 'naive-ui'
 import AgentPanel from './components/AgentPanel.vue'
 import RoutineRunner from './components/RoutineRunner.vue'
+import PromptPanel from './components/PromptPanel.vue'
 import SelectorDialog from './components/SelectorDialog.vue'
 import TableDialog from './components/TableDialog.vue'
 import DateDialog from './components/DateDialog.vue'
@@ -218,6 +245,11 @@ interface UsageInfo {
   reasoning_effort?: string | null
 }
 
+interface PromptMessage {
+  role: string
+  content: string
+}
+
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     primaryColor: '#6366f1',
@@ -236,11 +268,14 @@ const { connected, on, send, request } = ws
 useAudioPlayer(ws)
 
 // HTTP base for /routines + /builtin_skills + /agents 端点拉可选项.
-// 默认 7781, 跟 routines.yaml 里 web_server 条目的 kwargs.port 一致.
-const httpBase = 'http://127.0.0.1:7781'
+// 默认 7780, 跟 routines.yaml 里 web_server 条目的 kwargs.port 一致.
+const httpBase = 'http://127.0.0.1:7780'
 
-// useAgents: sidebar history + project suggestions
-const { agents, refresh, createAgent, creating, resumeAgent, stopAgent, deleteAgent: _deleteAgent } = useAgents(httpBase)
+// useAgents: sidebar history + project suggestions + presets
+const {
+  agents, refresh, createAgent, creating, resumeAgent, stopAgent, deleteAgent: _deleteAgent,
+  presets, refreshPresets, copyPreset, deletePreset,
+} = useAgents(httpBase)
 
 // UI 请求队列(后端通过 ui_request 弹出组件,用户交互后发回 ui_response)
 const { queue: uiQueue, receive: receiveUI, respond: respondUI, cancel: cancelUI, serverCancel } = useUIRequests(send)
@@ -267,11 +302,12 @@ async function fetchRoutines() {
   }
 }
 
-// 连上后立即拉取 routine 列表 + 刷新 agents 历史
+// 连上后立即拉取 routine 列表 + 刷新 agents 历史 + presets
 watch(connected, (v) => {
   if (v) {
     void fetchRoutines()
     refresh()
+    void refreshPresets()
   }
 })
 
@@ -353,6 +389,12 @@ const unread = reactive<Record<string, number>>({})
 const streaming = reactive<Record<string, StreamingState | null>>({})
 const showRunner = ref(false)
 const agentUsage = reactive<Record<string, UsageInfo>>({})
+// prompt 面板: 可折叠右侧栏, 按 agent 分 epoch + messages (sys_prompt 事件填充)
+const showPrompt = ref(false)
+const sidebarWidth = ref(750)
+const bodyEl = ref<HTMLElement | null>(null)
+const agentEpochs = reactive<Record<string, number>>({})
+const agentPrompts = reactive<Record<string, PromptMessage[]>>({})
 let assistantEntrySeq = 0
 
 // 视图模式: chat = 显示当前 agent 对话; create = 显示新建 agent 表单
@@ -543,11 +585,11 @@ on('assistant_output', (msg) => {
   if (!prev || prev.messageId !== message_id) {
     const entryId = `${message_id}-${++assistantEntrySeq}`
     streaming[agent_id] = { messageId: message_id, entryId, text: '', thinking: '' }
-    panels[agentId].push({ id: entryId, role: 'assistant', text: '', thinking: undefined, final: false })
+    panels[agent_id].push({ id: entryId, role: 'assistant', text: '', thinking: undefined, final: false })
   }
 
   const state = streaming[agent_id]!
-  const entry = panels[agentId].find(m => m.id === state.entryId)
+  const entry = panels[agent_id].find(m => m.id === state.entryId)
 
   if (is_thinking) {
     // thinking 增量不影响 text,单独累积
@@ -684,6 +726,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
+// sys_prompt -- 按 agent_id 分组 (每个 agent 有自己的 epoch + messages)
+on('sys_prompt', (msg) => {
+  const agent_id = (msg.agent_id as string | undefined) ?? ''
+  if (!agent_id) return
+  const epoch = msg.epoch as number | undefined
+  if (epoch !== undefined) agentEpochs[agent_id] = epoch
+  const msgs = msg.messages as PromptMessage[] | undefined
+  if (msgs?.length) agentPrompts[agent_id] = msgs
+})
+
+// prompt 面板拖宽 (divider col-resize)
+function startDrag(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = sidebarWidth.value
+  document.body.style.userSelect = 'none'
+
+  function onMove(ev: MouseEvent) {
+    const dx = startX - ev.clientX
+    const bodyW = bodyEl.value?.clientWidth ?? window.innerWidth
+    sidebarWidth.value = Math.min(Math.max(startW + dx, 200), bodyW - 300)
+  }
+  function onUp() {
+    document.body.style.userSelect = ''
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
 // usage -- LLM 每次 Completed 后推送的 token 用量 + 上下文百分比
 on('usage', (msg) => {
   const agent_id = (msg.agent_id as string | undefined) ?? ''
@@ -808,6 +881,20 @@ body {
   overflow: hidden;
 }
 
+.prompt-sidebar {
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.divider {
+  width: 4px;
+  flex-shrink: 0;
+  background: #2d3148;
+  cursor: col-resize;
+  transition: background 0.15s;
+}
+.divider:hover { background: #6366f1; }
+
 /* ---- sidebar ---- */
 .sidebar {
   width: 260px;
@@ -819,8 +906,14 @@ body {
   overflow: hidden;  /* 禁止水平滚动 (NBadge offset / 长名字溢出不触发 x-scroll) */
 }
 
-.sidebar-new {
+.sidebar-actions {
+  display: flex;
+  gap: 6px;
   margin: 8px 8px 4px;
+  flex-shrink: 0;
+}
+.sidebar-new {
+  flex: 1;
   padding: 8px 12px;
   background: transparent;
   border: 1px solid #6366f1;
@@ -830,9 +923,10 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: background .12s;
-  flex-shrink: 0;
+  white-space: nowrap;
 }
 .sidebar-new:hover { background: #1e2235; }
+.sidebar-new:disabled { opacity: .5; cursor: not-allowed; }
 
 .sidebar-list {
   flex: 1;

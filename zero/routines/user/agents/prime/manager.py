@@ -15,12 +15,14 @@ from pydantic import BaseModel, Field
 from routine import Routine, request
 from routine.logger import setup_logger
 
+from .._core.presets import load_preset
 from .._core.store import Store, get_store
 
 _log = setup_logger('prime.manager')
 
 _AGENT_ROUTINE_NAME = 'prime_agent'
 _MANAGER_NAME = 'prime_agent_manager'
+_DEFAULT_PRESET = 'prime'
 
 class PrimeAgentsInput(BaseModel):
     pass
@@ -81,21 +83,30 @@ class PrimeAgentManager(Routine):
     @request('create_agent')
     async def on_create(self, source, data: dict) -> dict:
         data = data or {}
+        preset_id = str(data.get('preset') or _DEFAULT_PRESET)
+        try:
+            preset = load_preset(preset_id)
+        except (FileNotFoundError, ValueError) as exc:
+            return {'ok': False, 'error': f'preset error: {exc}'}
         store = self._store_for()
         agent_id = str(data.get('agent_id') or '').strip()
         if agent_id:
             if store.get_agent(agent_id) is not None:
                 return {'ok': False, 'error': f'agent_id {agent_id} already exists; use resume instead'}
         else:
-            agent_id = self._next_agent_id(store)
+            agent_id = self._next_agent_id(store, preset_id)
         if agent_id in self._agents:
             return {'ok': False, 'error': f'agent_id {agent_id} already live'}
         session_id = uuid4().hex
         try:
-            store.register_agent(agent_id, session_id=session_id, model=data.get('model'))
+            store.register_agent(
+                agent_id, session_id=session_id,
+                model=data.get('model') or preset.get('model'), preset=preset_id,
+            )
         except Exception as exc:
             _log.warning('persist agent %s failed: %r', agent_id, exc)
-        return await self._spawn_child(agent_id, data, is_resume=False, session_id=session_id)
+        return await self._spawn_child(
+            agent_id, data, preset, session_id=session_id, is_resume=False)
 
     @request('resume_agent')
     async def on_resume(self, source, data: dict) -> dict:
@@ -109,32 +120,39 @@ class PrimeAgentManager(Routine):
         agent_rec = store.get_agent(agent_id)
         if agent_rec is None:
             return {'ok': False, 'error': f'agent_id {agent_id} not found'}
+        preset_id = str(data.get('preset') or agent_rec.get('preset') or _DEFAULT_PRESET)
+        try:
+            preset = load_preset(preset_id)
+        except (FileNotFoundError, ValueError) as exc:
+            return {'ok': False, 'error': f'preset error: {exc}'}
         session_id = str(agent_rec.get('session_id') or '') or uuid4().hex
-        return await self._spawn_child(agent_id, data, is_resume=True, session_id=session_id)
+        return await self._spawn_child(
+            agent_id, data, preset, session_id=session_id, is_resume=True)
 
     async def _spawn_child(
-        self, agent_id: str, data: dict, *, is_resume: bool, session_id: str,
+        self, agent_id: str, data: dict, preset: dict, *, session_id: str,
+        is_resume: bool,
     ) -> dict:
+        # preset 声明是 defaults, 调用方显式传参覆盖.
         project_dir = data.get('project_dir') or data.get('project_dir_root_path')
-        model = data.get('model')
+        model = data.get('model') or preset.get('model')
         plan_mode = bool(data.get('plan_mode', False))
-        extra_instructions = data.get('extra_instructions')
+        extra_instructions = data.get('extra_instructions') or preset.get('extra_instructions')
         max_turns = data.get('max_turns')
-        # prime 只暴露 ipython 一个 tool.
-        enabled_tools = ['ipython']
-        disabled_tools = None
-        # routine_bridge skill 教 agent 怎么用 kernel 内的 run_routine.
-        # routine_bridge skill 永远预加载 (prime 的核心桥接), 跟调用方传的合并去重.
+        enabled_tools = list(data.get('enabled_tools') or preset.get('enabled_tools') or [])
+        disabled_tools = data.get('disabled_tools')
         user_skills = list(data.get('preload_skills') or [])
-        preload_skills = list(dict.fromkeys(['routine_bridge'] + user_skills))
-        # hub_routine (双向通信) 走 L1 轻量发现: 只注入 name+desc,
-        # LLM 需要订阅/发布事件时自己调 load_skill('hub_routine') 加载全量.
+        preload_skills = list(dict.fromkeys(
+            list(preset.get('preload_skills') or []) + user_skills))
         user_l1 = list(data.get('level1_skills') or [])
-        level1_skills = list(dict.fromkeys(['hub_routine'] + user_l1))
+        level1_skills = list(dict.fromkeys(
+            list(preset.get('level1_skills') or []) + user_l1))
         condense_config = data.get('condense_config')
+        agent_routine = str(preset.get('agent_routine') or _AGENT_ROUTINE_NAME)
 
         child_kwargs: Dict[str, Any] = {
             'agent_id': agent_id,
+            'agent_name': preset.get('name'),
             'project_dir_root_path': project_dir,
             'model': model,
             'plan_mode': plan_mode,
@@ -148,11 +166,11 @@ class PrimeAgentManager(Routine):
             'condense_config': condense_config,
         }
         try:
-            handle = await self.submit(_AGENT_ROUTINE_NAME, child_kwargs)
+            handle = await self.submit(agent_routine, child_kwargs)
             await handle.start()
         except Exception as exc:
-            action = 'resume' if is_resume else 'create'
-            _log.error('%s prime agent %s failed: %r', action, agent_id, exc)
+            _log.error('spawn agent %s (preset %s) failed: %r',
+                       agent_id, preset.get('id'), exc)
             return {'ok': False, 'error': str(exc)}
 
         self._agents[agent_id] = {
@@ -191,13 +209,17 @@ class PrimeAgentManager(Routine):
         items = []
         for row in rows:
             agent_id = row.get('agent_id', '')
-            if not agent_id.startswith('prime_'):
+            preset = row.get('preset')
+            # 本 manager 管的记录: 带 preset 列, 或旧数据 prime_ 前缀 (migration 前).
+            # preset 已删的历史 agent 仍列出 (resume 时 load_preset 失败会报错).
+            if not (preset or agent_id.startswith('prime_')):
                 continue
             info = self._agents.get(agent_id)
             live = info is not None
             handle = (info or {}).get('handle')
             items.append({
                 'agent_id': agent_id,
+                'preset': preset,
                 'model': row.get('model'),
                 'reasoning_effort': store.get_last_reasoning_effort(agent_id),
                 'title': row.get('title'),
@@ -255,13 +277,13 @@ class PrimeAgentManager(Routine):
         _log.info('deleted prime agent: agent_id=%s', agent_id)
         return {'ok': True, 'agent_id': agent_id}
 
-    def _next_agent_id(self, store: 'Store') -> str:
-        """生成下一个 prime_<N> agent_id."""
+    def _next_agent_id(self, store: 'Store', preset_id: str) -> str:
+        """生成下一个 <preset>_<N> agent_id (prime preset 即旧版 prime_<N>)."""
         existing = {r.get('agent_id', '') for r in store.list_agents()}
         n = 1
-        while f'prime_{n}' in existing or f'prime_{n}' in self._agents:
+        while f'{preset_id}_{n}' in existing or f'{preset_id}_{n}' in self._agents:
             n += 1
-        return f'prime_{n}'
+        return f'{preset_id}_{n}'
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -270,6 +292,7 @@ class PrimeAgentManager(Routine):
 
 class CreatePrimeAgentInput(BaseModel):
     agent_id: str | None = Field(None, description='Agent id. Auto-generated when omitted.')
+    preset: str | None = Field(None, description='Agent preset id. Defaults to "prime".')
     project_dir: str | None = Field(None, description='Project root directory path.')
     model: str | None = Field(None, description='LLM model name.')
     plan_mode: bool = Field(False, description='Readonly tools only.')
@@ -308,6 +331,59 @@ class CreatePrimeAgent(Routine):
             )
         return await self.ctx.req(
             manager_id, 'create_agent', kwargs or {},
+            timeout=self._REQ_TIMEOUT,
+        )
+
+    async def _find_manager(self) -> Optional[str]:
+        for _ in range(50):
+            try:
+                routines = await self.ctx.get_running_routines()
+            except Exception as exc:
+                _log.warning('get_running failed (%r), retry', exc)
+                routines = []
+            for r in routines:
+                if str(r.get('name') or '') == _MANAGER_NAME:
+                    rid = str(r.get('id') or '').strip()
+                    if rid:
+                        return rid
+            await asyncio.sleep(0.1)
+        return None
+
+
+class StopPrimeAgentInput(BaseModel):
+    agent_id: str = Field(description='Agent id to stop (e.g. prime_1).')
+
+
+class StopPrimeAgentOutput(BaseModel):
+    ok: bool = Field(description='Whether the agent was stopped.')
+    agent_id: str | None = Field(None, description='The stopped agent id.')
+    error: str | None = Field(None, description='Error message when ok is false.')
+
+
+class StopPrimeAgent(Routine):
+    """entry routine: stop a live PrimeAgent via the resident manager."""
+
+    meta: ClassVar[Dict[str, Any]] = {
+        'hidden': True,
+        'input_schema': StopPrimeAgentInput.model_json_schema(),
+        'output_schema': StopPrimeAgentOutput.model_json_schema(),
+        'description': (
+            'Entry routine that stops a live PrimeAgent via the resident '
+            'PrimeAgentManager. The agent record persists; resume to restart.'
+        ),
+    }
+
+    _REQ_TIMEOUT = 10.0
+
+    async def run(self, kwargs: Dict[str, Any]) -> dict:
+        inp = StopPrimeAgentInput.model_validate(kwargs or {})
+        manager_id = await self._find_manager()
+        if manager_id is None:
+            raise RuntimeError(
+                f'{_MANAGER_NAME} manager not running; cannot stop agent'
+            )
+        return await self.ctx.req(
+            manager_id, 'stop_agent', {'agent_id': inp.agent_id},
             timeout=self._REQ_TIMEOUT,
         )
 

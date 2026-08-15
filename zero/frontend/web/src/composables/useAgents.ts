@@ -41,6 +41,7 @@ export interface ProjectGroup {
 
 export interface CreateAgentParams {
   kind: 'prime'
+  preset?: string
   project_dir?: string
   model?: string
   plan_mode?: boolean
@@ -48,6 +49,19 @@ export interface CreateAgentParams {
   max_turns?: number
   enabled_tools?: string[]
   disabled_tools?: string[]
+  preload_skills?: string[]
+  level1_skills?: string[]
+}
+
+export interface PresetRow {
+  id: string
+  name: string
+  description: string
+  source: 'shipped' | 'user'
+  path: string
+  extra_instructions?: string
+  model?: string | null
+  enabled_tools?: string[]
   preload_skills?: string[]
   level1_skills?: string[]
 }
@@ -158,6 +172,57 @@ export function useAgents(httpBase: string) {
     }
   }
 
+  // ---- presets (copy-only 创作) ----
+
+  const presets = ref<PresetRow[]>([])
+
+  async function refreshPresets(): Promise<void> {
+    try {
+      const res = await fetch(`${httpBase}/presets`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      presets.value = ((data.presets as PresetRow[] | undefined) ?? []).slice()
+    } catch {
+      presets.value = []
+    }
+  }
+
+  /** 复制 preset 到用户根. 返回 error string 或 null. */
+  async function copyPreset(from: string, newId: string, name?: string): Promise<string | null> {
+    try {
+      const res = await fetch(`${httpBase}/presets/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, preset_id: newId, name }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      if (!data.ok) throw new Error(data.error || 'copy failed')
+      await refreshPresets()
+      return null
+    } catch (e) {
+      return (e as Error).message
+    }
+  }
+
+  /** 删除用户根 preset (随附只读). 返回 error string 或 null. */
+  async function deletePreset(id: string): Promise<string | null> {
+    try {
+      const res = await fetch(`${httpBase}/presets/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preset_id: id }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      if (!data.ok) throw new Error(data.error || 'delete failed')
+      await refreshPresets()
+      return null
+    } catch (e) {
+      return (e as Error).message
+    }
+  }
+
   /** distinct project_dirs seen in history, newest-updated first. */
   const knownProjects = computed<string[]>(() => {
     const seen = new Map<string, string>() // project_dir -> latest updated_at
@@ -189,5 +254,9 @@ export function useAgents(httpBase: string) {
     return out
   })
 
-  return { agents, loading, creating, refresh, createAgent, resumeAgent, stopAgent, deleteAgent, projects, knownProjects }
+  return {
+    agents, loading, creating, refresh, createAgent, resumeAgent, stopAgent, deleteAgent,
+    projects, knownProjects,
+    presets, refreshPresets, copyPreset, deletePreset,
+  }
 }

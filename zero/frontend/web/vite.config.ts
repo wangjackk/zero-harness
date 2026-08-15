@@ -9,7 +9,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/ws': {
-        target: 'ws://127.0.0.1:7781',
+        target: 'ws://127.0.0.1:7780',
         ws: true,
       },
     },

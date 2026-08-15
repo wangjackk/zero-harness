@@ -16,7 +16,7 @@ routines:
   - path: routines/user/web_server/server.py
     kwargs:
       host: 127.0.0.1
-      port: 7781
+      port: 7780
 
   # agent 基础设施 (单文件单 routine)
   - routines/user/ask.py
@@ -27,7 +27,9 @@ routines:
   - routines/user/get_agent_rid.py
   - routines/user/fetch_agent_state.py
   - routines/user/list_routines.py
+  - routines/user/check_routine_name.py
   - routines/user/routine_doc.py
+  - routines/user/agent_presets.py
 
   # prime agent (入口 + manager) + condenser
   - routines/user/agents/prime/agent.py
@@ -39,6 +41,9 @@ routines:
 
   # 通用 skill routines (整包)
   - routines/user/skills
+
+  # dynamic 实验场 (creator agent 写的实验性 routine, watcher 热重载)
+  - routines/user/dynamic
 
   # watcher: yaml/源码变更自动热重载
   - routines/watcher.py

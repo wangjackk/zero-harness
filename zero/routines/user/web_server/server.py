@@ -317,6 +317,12 @@ class WebServer(Routine):
             asyncio.create_task(_agents.on_stop_agent(self, msg, reply))
         elif msg_type == 'delete_agent':
             asyncio.create_task(_agents.on_delete_agent(self, msg, reply))
+        elif msg_type == 'list_presets':
+            asyncio.create_task(_agents.on_list_presets(self, msg, reply))
+        elif msg_type == 'copy_preset':
+            asyncio.create_task(_agents.on_copy_preset(self, msg, reply))
+        elif msg_type == 'delete_preset':
+            asyncio.create_task(_agents.on_delete_preset(self, msg, reply))
         elif msg_type == 'ui_response':
             self._resolve_ui(msg.get('id', ''), msg.get('value'), msg.get('error'))
         elif msg_type == 'audio_playback_done':

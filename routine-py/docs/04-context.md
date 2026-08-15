@@ -200,13 +200,13 @@ async def run(self, kwargs):
 | `req` / `stream_req` | ✅(target 必须 started 才能回执) | ✅ |
 | `publish` | ✅ | ✅ |
 | `subscribe` / `unsubscribe`(动态) | ✅ | ✅ |
-| `@subscribe` 装饰器(自动订阅) | ❌(start 时才发订阅给 kernel) | ✅ |
+| `@subscribe` 装饰器(自动订阅) | ✅ | ✅ |
 | `acquire` / `release` / `force_*` | ❌ | ✅ |
 | `load_module` / `unload_module` | ❌ | ✅ |
 | `handle.start()` / `handle.stop()` | ❌ | ✅ |
 | `call` / `force_call` | ❌ | ✅ |
 
-> `@subscribe` 装饰器的自动订阅在 `_auto_subscribe()` 里发,**`_auto_subscribe` 在 lifecycle.start 时调**(不在 created 时)——所以装饰器订阅要 started 后才能收到消息。
+> `@subscribe` 装饰器的自动订阅在 `_auto_subscribe()` 里发,**`_auto_subscribe` 在 created 回报前同步调**(见 `lifecycle.py` handle_created)——保证 kernel 订阅表在 created 时已更新,避免 publish race,所以装饰器订阅 created 后即可收到消息。
 
 ## 下一步
 

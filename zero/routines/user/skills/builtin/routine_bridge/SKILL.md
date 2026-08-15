@@ -1,5 +1,6 @@
 ---
 name: routine_bridge
+agents: [prime]
 description: "IPython kernel 内置的 run_routine 函数,用于从 kernel 内调用任意 routine (read/edit/grep/list_routines 等)。需要文件操作、搜索、shell 命令时使用本 skill。"
 ---
 

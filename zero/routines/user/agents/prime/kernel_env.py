@@ -24,13 +24,10 @@ _VENV_DIR = Path.home() / '.zero' / 'kernel-venv'
 _HASH_FILE = _VENV_DIR / '.skills-hash'
 _BOOTSTRAP_VERSION = 10  # v10: 去 --seed (无 pip), 扩 _BASE_DEPS 预装数据科学栈
 
-# prime 自带的 skills 目录 (prime 专用, 不走通用 builtin).
-PRIME_SKILLS_DIR = Path(__file__).resolve().parent / 'skills'
-
 # routine SDK 目录: kernel_env.py 在 zero-harness/zero/routines/user/agents/prime/,
-# skills 的 parents: [0]=prime [1]=agents [2]=user [3]=routines [4]=zero [5]=zero-harness.
+# parents: [0]=prime [1]=agents [2]=user [3]=routines [4]=zero [5]=zero-harness.
 # SDK 与 zero/ 平级, 在 zero-harness/routine-py.
-_ROUTINE_SDK_DIR = PRIME_SKILLS_DIR.parents[5] / 'routine-py'
+_ROUTINE_SDK_DIR = Path(__file__).resolve().parents[5] / 'routine-py'
 
 
 def _venv_python() -> Path:
@@ -72,6 +69,10 @@ def _compute_hash(skills: list[Path]) -> str:
     h.update(f'v{_BOOTSTRAP_VERSION}'.encode())
     h.update(b'\x00')
     for s in skills:
+        # 纳入安装路径: skill 目录搬家后 editable 安装指向旧路径,
+        # 内容 hash 不变检测不到 → 路径入 hash 强制重装.
+        h.update(str(s.parent.resolve()).encode())
+        h.update(b'\x00')
         h.update(s.name.encode())
         h.update(b'\x00')
         h.update(_skill_hash(s).encode())
