@@ -95,7 +95,7 @@ async def serve(addr: str, *, client: bool = False) -> None:
 def _main() -> None:
     print(f'Python 版本: {sys.version}')
     client = True
-    addr = '0.0.0.0:7777' if not client else '127.0.0.1:8889'
+    addr = '0.0.0.0:7777' if not client else '127.0.0.1:8888'
     asyncio.run(serve(addr, client=client))
 
 

@@ -10,7 +10,7 @@
 
 ```bash
 cd kernel
-go run .         # 常驻:按 config 起 as_grpc_server(bind :8889 等 routine 进程拨入)
+go run .         # 常驻:按 config 起 as_grpc_server(bind :8888 等 routine 进程拨入)
 go run . demo    # 跑一遍 16 步端到端 demo 后退出(连 config 第一个 as_grpc_client)
 go run . xsa     # 跨 server 端到端(连 config 所有 as_grpc_client)
 ```

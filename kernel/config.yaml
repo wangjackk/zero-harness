@@ -2,7 +2,7 @@
 # enable=false 或整段注释 = 不起 server.
 as_grpc_server:
   enable: true
-  address: 127.0.0.1:8889
+  address: 127.0.0.1:8888
 
 # as_grpc_client: kernel 作为 grpc client,主动连 routine server.
 # 整段注释 / 显式空 [] / 文件不存在 = 不连任何 server;只有显式写地址才连.

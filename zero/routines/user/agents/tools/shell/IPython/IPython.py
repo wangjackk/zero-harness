@@ -41,7 +41,7 @@ def _build_bootstrap_code(agent_id: str) -> str:
     safe_id = agent_id.replace("'", "\\'")
     # kernel 地址从 zero 进程 env 透传到 IPython 子进程, hub_routine 等
     # skill 经 start_hub() 自动读到, agent 无需关心地址.
-    kernel_addr = os.environ.get('ZERO_KERNEL_ADDR', '127.0.0.1:8889')
+    kernel_addr = os.environ.get('ZERO_KERNEL_ADDR', '127.0.0.1:8888')
     return f"""\
 try:
     import os as _os

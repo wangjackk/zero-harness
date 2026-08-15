@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routines = routines::registry();
 
     let address = std::env::args().nth(1).unwrap_or_else(|| {
-        std::env::var("ZERO_KERNEL_ADDR").unwrap_or_else(|_| "127.0.0.1:8889".to_string())
+        std::env::var("ZERO_KERNEL_ADDR").unwrap_or_else(|_| "127.0.0.1:8888".to_string())
     });
     let hub_id = std::env::args()
         .nth(2)

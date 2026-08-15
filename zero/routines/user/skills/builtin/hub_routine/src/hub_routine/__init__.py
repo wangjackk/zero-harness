@@ -61,7 +61,7 @@ class _Passive(Routine):
 
 
 def _resolve_addr(kernel_addr: Optional[str]) -> str:
-    return kernel_addr or os.environ.get("ZERO_KERNEL_ADDR", "127.0.0.1:8889")
+    return kernel_addr or os.environ.get("ZERO_KERNEL_ADDR", "127.0.0.1:8888")
 
 
 async def start_hub(
@@ -76,7 +76,7 @@ async def start_hub(
     Args:
         routines: 额外注册的 routine 类列表.
         hub_id: hub 标识符.
-        kernel_addr: kernel gRPC 地址,默认读 ZERO_KERNEL_ADDR 或 127.0.0.1:8889.
+        kernel_addr: kernel gRPC 地址,默认读 ZERO_KERNEL_ADDR 或 127.0.0.1:8888.
         wait: 等 kernel auto-start passive 的秒数.
 
     Returns:
