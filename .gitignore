@@ -26,5 +26,6 @@ build/
 .DS_Store
 Thumbs.db
 
-# runtime (agent 会话 skills 安装目录)
+# runtime (agent 会话 skills 安装目录 / 本地会话数据)
 .agents/
+runtime/
