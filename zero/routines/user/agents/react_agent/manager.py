@@ -29,7 +29,7 @@ from routine.logger import setup_logger
 
 from .agent import ReactAgent
 from .memory import get_memory
-from .._core.llm import LLMClient, _DEFAULT_MODEL
+from .llm import LLMClient, _DEFAULT_MODEL
 
 _log = setup_logger('react_agent.manager')
 

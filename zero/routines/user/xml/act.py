@@ -22,12 +22,15 @@ from .body_chunk import BodyChunk, BodyChunkKind, TextChunk
 from .xml_routine import XmlRoutine
 from .xml_parser import ChildOpen
 
+# wire 契约常量: act 注入调用方 agent_id 到 tool routine kwargs,
+# tool 侧 (react_agent 等调用方) 按同名键读取. 与 react_agent/agent.py 保持一致.
+AGENT_ID_KEY = 'from_agent_id'
+
 
 def _clean_kwargs(kwargs: Dict[str, Any] | None) -> Dict[str, Any] | None:
     """过滤掉框架注入字段(如 agent_id), 只保留业务参数给前端展示."""
     if not kwargs:
         return None
-    from zero.routines._shared._paths import AGENT_ID_KEY
     cleaned = {k: v for k, v in kwargs.items() if k != AGENT_ID_KEY}
     return cleaned or None
 
@@ -69,7 +72,6 @@ class Act(XmlRoutine):
 
     async def on_created(self, rid: str, kwargs: Dict[str, Any]) -> None:
         await super().on_created(rid, kwargs)
-        from zero.routines._shared._paths import AGENT_ID_KEY
         self._agent_id = kwargs.get(AGENT_ID_KEY)
 
     async def on_body_text(self, chunk: TextChunk) -> None:
@@ -123,7 +125,6 @@ class Act(XmlRoutine):
         (基类 _cur_handle 没设上).
         """
         if isinstance(ev, ChildOpen) and self._agent_id:
-            from zero.routines._shared._paths import AGENT_ID_KEY
             if ev.kwargs is None:
                 ev.kwargs = {}
             if AGENT_ID_KEY not in ev.kwargs:

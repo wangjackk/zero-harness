@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from routine.logger import setup_logger
 
-from .._core.condenser.base_routine import (
+from ._condenser.base_routine import (
     BaseCondenserRoutine,
     CondenseInput,
     CondenseLoadResult,

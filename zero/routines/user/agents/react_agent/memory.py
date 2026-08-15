@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 def _now_iso() -> str:
-    """ISO-8601 UTC 时间戳, 与 _core/store.py 对齐 (前端按字符串降序排序)."""
+    """ISO-8601 UTC 时间戳 (前端按字符串降序排序)."""
     return datetime.now(timezone.utc).isoformat()
 from typing import Callable, Optional
 from uuid import uuid4

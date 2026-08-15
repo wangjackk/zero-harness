@@ -27,11 +27,12 @@ from pydantic import BaseModel, Field
 
 from routine import Routine, RoutineHandle, request
 
-from zero.routines._shared._paths import AGENT_ID_KEY
-
-from .._core.llm import LLMClient, TextDelta, ReasoningDelta, Completed
+from .llm import LLMClient, TextDelta, ReasoningDelta, Completed
 from .provider import ReactContextProvider
 from .condenser import project_with_summary
+
+# wire 契约常量: act 注入调用方 agent_id 到 tool routine kwargs, tool 侧按同名键读取.
+AGENT_ID_KEY = 'from_agent_id'
 
 # legacy shared constants removed: per-instance agent_id (from manager submit
 # kwargs) replaces the old shared 'react' id/namespace.
@@ -273,7 +274,7 @@ class ReactAgent(Routine):
 
     async def _register_with_bridge(self) -> None:
         """向 WS bridge req 注册自己 (委托共享实现)."""
-        from .._core.bridge import register_with_bridge
+        from ._bridge import register_with_bridge
 
         async def _on_success() -> None:
             # emit session_changed so frontend backfills panel history
@@ -298,7 +299,7 @@ class ReactAgent(Routine):
 
     async def _on_input(self, source, data) -> None:
         async with self._event_lock:
-            from zero.routines._shared._agent_messaging import IncomingMessage, USER_SOURCE, wrap_from
+            from ._messaging import IncomingMessage, USER_SOURCE, wrap_from
             msg = IncomingMessage.from_payload(data)
             if not msg.text:
                 return
@@ -619,7 +620,7 @@ class ReactAgent(Routine):
             self._logger.info('context condensed via react_condenser_agent')
 
     # ==================================================================
-    # LLM 调用(Responses API 直调,复用 _core/llm.py 的 LLMClient)
+    # LLM 调用(Responses API 直调,包内 llm.py 的 LLMClient)
     # ==================================================================
 
     async def _stream_llm(
@@ -628,7 +629,7 @@ class ReactAgent(Routine):
     ):
         """直调 LLM(Responses API),流式 yield (kind, text|response_id|None).
 
-        复用 ``_core/llm.py`` 的 ``LLMClient``(配置从 models.yaml 加载).
+        复用包内 ``llm.py`` 的 ``LLMClient``(配置从 models.yaml 加载).
 
         - previous_response_id 非空 -> 只发增量 input + 传它复用服务端缓存 prefix
           (prompt caching).为空 -> 全量发 input.
@@ -878,7 +879,7 @@ class ReactAgent(Routine):
             return {'ok': False, 'error': f'invalid payload: {exc}'}
         if not req.message.strip():
             return {'ok': False, 'error': 'message is required'}
-        from zero.routines._shared._agent_messaging import PRIORITY_HIGH
+        from ._messaging import PRIORITY_HIGH
         raw_priority = (data or {}).get('priority')
         priority = int(raw_priority) if raw_priority is not None else PRIORITY_HIGH
         payload: dict = {'text': req.message, 'from': req.from_}
@@ -986,7 +987,7 @@ class ReactAgent(Routine):
     @request('agent_state')
     async def on_agent_state(self, source, data) -> dict:
         """返回 agent 运行时状态, 供 tool routine 通过 ctx.req 反向获取."""
-        from zero.routines._shared._agent_state import AgentState
+        from ._agent_state import AgentState
         return AgentState(
             agent_id=self._agent_id,
             skill_dir=str(self._workspace / 'skills') if self._workspace else None,

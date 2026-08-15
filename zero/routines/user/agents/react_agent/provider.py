@@ -80,6 +80,8 @@ class ReactContextProvider:
         if not self._ov_config:
             return
         try:
+            # 可选集成点: 应用提供 zero.routines._shared.ov_memory.OVMemory
+            # 则启用长期记忆; 缺省 (模块不存在) 走 except -> OV 禁用, 不影响主流程.
             from zero.routines._shared.ov_memory import OVMemory
             self._ov = OVMemory(
                 self._ov_config, self._workspace, peer_id=self._peer_id,
