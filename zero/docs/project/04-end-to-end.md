@@ -47,12 +47,7 @@ routines:
   - routines/user/timestamp.py
 ```
 
-两种生效路径:
-
-| 路径 | 前提 | 何时生效 |
-|---|---|---|
-| **热注册**(推荐) | 进程在跑,`RoutinesWatcher` 监控 routines.yaml | 保存后秒级自动注册,无需重启 |
-| **冷注册** | 下次进程启动 | `RoutinesLoader` 被动拉起时读 yaml 注册 |
+生效路径:`RoutinesWatcher` 监控 routines.yaml 与 routine 源码,进程在跑时保存后秒级自动注册,无需重启(进程未跑时,下次启动由 `RoutinesLoader` 读 yaml 注册)。
 
 - yaml 是启用 routine 的**单一真理源**:加行 = 启用,注释行 = 禁用。
 - name / schema / doc 以 Routine 类声明为唯一事实源,yaml 不重复声明。
@@ -95,7 +90,6 @@ agent 侧由 `run_routine` 工具走同一条路由(见 [03-modules-overview.md]
 | 新增 routine | 写 `.py` + yaml 加条目 | watcher 秒级自动注册 |
 | 修改 routine | 改 `.py` 源码 | watcher reload 替换路由 |
 | 停用 routine | yaml 注释条目 | watcher 自动注销 |
-| 全部生效的兜底 | 重启进程 | `RoutinesLoader` 冷注册 |
 
 ## 下一步
 
