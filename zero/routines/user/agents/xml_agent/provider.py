@@ -1,4 +1,4 @@
-"""ReactContextProvider — react_agent 上下文存取抽象.
+﻿"""XmlContextProvider — xml_agent 上下文存取抽象.
 
 封装 Memory (sqlite 持久化) + 可选 OVMemory (OpenViking 长期记忆),
 统一消息读写、持久化、OV 推送、长期记忆检索.
@@ -8,7 +8,7 @@ Memory 同时承担 agents 表管理 (manager 用), 通过 memory 属性暴露.
 
 本地 DB 是 source of truth: resume 还原 + 上下文压缩全本地化.
 OV 只做同步备份 (tick + finalize) 和长期记忆查询 (find), 不参与 resume/压缩.
-压缩走 react_condenser_agent (写 summary 到 messages 表, kind='summary').
+压缩走 xml_condenser_agent (写 summary 到 messages 表, kind='summary').
 """
 from __future__ import annotations
 
@@ -20,16 +20,16 @@ from routine.logger import setup_logger
 
 from .memory import Memory, get_memory
 
-_log = setup_logger('react_agent.provider')
+_log = setup_logger('xml_agent.provider')
 
 
-class ReactContextProvider:
-    """react_agent 上下文 provider: Memory 持久化 + OV 长期记忆.
+class XmlContextProvider:
+    """xml_agent 上下文 provider: Memory 持久化 + OV 长期记忆.
 
     Memory: sqlite 持久化 (messages + agents 表), 重启保留, manager 共用.
     OVMemory: OpenViking 长期记忆推送 + 语义检索, 失败不阻断主流程.
 
-    peer_id 默认 'react' (跟 prime 的 'claude' 隔离, 跨系不共享).
+    peer_id 默认 'xml' (跟 prime 的 'claude' 隔离, 跨系不共享).
     """
 
     def __init__(
@@ -38,7 +38,7 @@ class ReactContextProvider:
         memory: Memory | None = None,
         ov_config: dict[str, Any] | None = None,
         workspace: Path | None = None,
-        peer_id: str = 'react',
+        peer_id: str = 'xml',
         agent_id: str = '',
     ) -> None:
         self._mem = memory or get_memory()
@@ -213,14 +213,14 @@ class ReactContextProvider:
     def append_function_call(
         self, name: str, arguments: str, call_id: str,
     ) -> None:
-        """追加 function_call (Protocol; react_agent 用 act 不走 function call → no-op)."""
+        """追加 function_call (Protocol; xml_agent 用 act 不走 function call → no-op)."""
         pass
 
     def append_function_output(
         self, call_id: str, output: str,
         raw_result: Any | None = None,
     ) -> None:
-        """追加 function_call_output (Protocol; react_agent → no-op)."""
+        """追加 function_call_output (Protocol; xml_agent → no-op)."""
         pass
 
     def items(self) -> list[dict]:
@@ -232,7 +232,7 @@ class ReactContextProvider:
     def __len__(self) -> int:
         return len(self.items())
 
-    # --- 压缩 (本地 react_condenser_agent, 与 OV 无关) ---
+    # --- 压缩 (本地 xml_condenser_agent, 与 OV 无关) ---
 
     async def compact(
         self,
@@ -247,11 +247,11 @@ class ReactContextProvider:
         cwd: str | None,
         call: Any,
     ) -> dict[str, Any] | None:
-        """本地压缩: 走 react_condenser_agent (写 summary 到 messages 表).
+        """本地压缩: 走 xml_condenser_agent (写 summary 到 messages 表).
 
         压缩完全本地化, 与 OV 无关. OV 只做同步备份 + 长期记忆查询.
         实现 ContextProvider Protocol 签名 (model_key/plan_mode/project_root/cwd/call
-        被 react_agent 忽略, 保留签名兼容).
+        被 xml_agent 忽略, 保留签名兼容).
 
         返回 {'compacted': True} 表示压缩了, None 表示未压缩.
         """
@@ -275,9 +275,9 @@ class ReactContextProvider:
             int(max_context * trigger_ratio),
         )
 
-        # 调本地 react_condenser_agent (走 wire, 跟 prime condenser_agent 平级)
+        # 调本地 xml_condenser_agent (走 wire, 跟 prime condenser_agent 平级)
         try:
-            result = await call('react_condenser_agent', {
+            result = await call('xml_condenser_agent', {
                 'agent_id': agent_id,
                 'session_id': session_id,
                 'model_key': model_key,

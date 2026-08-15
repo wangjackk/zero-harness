@@ -1,4 +1,4 @@
-"""LLM 摘要调用封装 — 收集 stream 的 TextDelta 拼成完整文本.
+﻿"""LLM 摘要调用封装 — 收集 stream 的 TextDelta 拼成完整文本.
 
 轻量封装, 不走完整 agent react 循环. 只用于 condenser 的 LLM 摘要.
 """

@@ -23,7 +23,7 @@ from .xml_routine import XmlRoutine
 from .xml_parser import ChildOpen
 
 # wire 契约常量: act 注入调用方 agent_id 到 tool routine kwargs,
-# tool 侧 (react_agent 等调用方) 按同名键读取. 与 react_agent/agent.py 保持一致.
+# tool 侧 (xml_agent 等调用方) 按同名键读取. 与 xml_agent/agent.py 保持一致.
 AGENT_ID_KEY = 'from_agent_id'
 
 

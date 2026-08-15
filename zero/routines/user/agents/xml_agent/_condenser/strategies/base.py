@@ -1,4 +1,4 @@
-"""压缩策略接口 + token 估算工具.
+﻿"""压缩策略接口 + token 估算工具.
 
 所有策略实现 CondenserStrategy 协议. 策略对象是无状态的(除配置),
 接收 items 列表 + token 信息, 返回压缩结果.

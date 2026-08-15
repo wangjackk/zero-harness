@@ -1,4 +1,4 @@
-"""统一 incoming 消息格式 + from 头包装.
+﻿"""统一 incoming 消息格式 + from 头包装.
 
 ``IncomingMessage``: user / agent 消息共用的统一数据格式. from 恒有值
 (用户消息填 ``'user'``, agent 消息填 agent_id), agent 内部统一看待.

@@ -1,4 +1,4 @@
-"""共享: 向 WS bridge 注册自己 (agent_id/namespace/name), 轮询直到成功.
+﻿"""共享: 向 WS bridge 注册自己 (agent_id/namespace/name), 轮询直到成功.
 
 prime/reactor 共用实现, 唯一差异是 name 前缀
 和注册成功后的回调 (emit_session_history vs emit_session_changed).
@@ -28,7 +28,7 @@ async def register_with_bridge(
     参数:
         agent_id: agent 持久 id (同时作为 namespace)
         routine_id: 当前 routine 实例 id (self.id)
-        name_prefix: 显示名前缀 (如 'Reactor-'/'Prime-'/'React-')
+        name_prefix: 显示名前缀 (如 'Reactor-'/'Prime-'/'Xml-')
         bridge_name: bridge routine 名 (_BRIDGE_NAME)
         ctx: routine ctx (提供 get_running_routines / req)
         stop_event: agent 停止事件, set 后立即退出避免孤儿 task

@@ -45,8 +45,8 @@ routines:
   # XML body 编排 routines (整包: Act / RunXml / PrintBody / Speak + TTS)
   - routines/user/xml
 
-  # react agent (ReactAgents manager + CreateReactAgent + ReactAgent + Condenser)
-  - routines/user/agents/react_agent
+  # xml agent (XmlAgents manager + CreateXmlAgent + XmlAgent + Condenser)
+  - routines/user/agents/xml_agent
 
   # dynamic 实验场 (creator agent 写的实验性 routine, watcher 热重载)
   - routines/user/dynamic

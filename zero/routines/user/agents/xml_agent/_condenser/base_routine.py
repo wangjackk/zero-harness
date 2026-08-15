@@ -1,4 +1,4 @@
-"""BaseCondenserRoutine — 上下文压缩 routine 模板基类.
+﻿"""BaseCondenserRoutine — 上下文压缩 routine 模板基类.
 
 模板方法 run() 封装完整压缩流程:
   读消息 → 投影 → 估算 token → trigger 判断 → 选策略执行 → 写 summary → 返回

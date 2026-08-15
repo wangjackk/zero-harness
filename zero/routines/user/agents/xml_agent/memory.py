@@ -1,9 +1,9 @@
-"""ReactAgent 记忆 ---- 极简 sqlite.
+﻿"""XmlAgent 记忆 ---- 极简 sqlite.
 
 对比老 ``AgentMemory``(树 + yaml 双写双读 + 流式缓冲 + 单例 + save/restore),
 这里只有一张表,一把锁,四个方法.无树,无 yaml,无单例,无持久化镜像分层.
 
-DB 文件 ``runtime/react_agent/memory.db``,**重启保留**(老 agent 启动清空,这是升级).
+DB 文件 ``runtime/xml_agent/memory.db``,**重启保留**(老 agent 启动清空,这是升级).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _now_iso() -> str:
 from typing import Callable, Optional
 from uuid import uuid4
 
-_DB_PATH = Path('runtime/react_agent/memory.db')
+_DB_PATH = Path('runtime/xml_agent/memory.db')
 
 
 # 模块级单例: Memory() 构造时启动后台写线程, 多次 new 会泄漏线程.
@@ -58,7 +58,7 @@ class Memory:
         self._write_q: "queue.Queue[Optional[Callable[[], None]]]" = queue.Queue()
         self._writer_stop = threading.Event()
         self._writer = threading.Thread(
-            target=self._write_loop, name='react-memory-writer', daemon=True,
+            target=self._write_loop, name='xml-memory-writer', daemon=True,
         )
         self._writer.start()
 
@@ -473,11 +473,11 @@ class Memory:
     # agents 表管理 (agent = session, 每个独立)
     # ------------------------------------------------------------------
 
-    def next_agent_id(self, prefix: str = 'react') -> str:
+    def next_agent_id(self, prefix: str = 'xml') -> str:
         """生成下一个自增 agent_id: ``<prefix>_<N>``.
 
         N = 当前 DB 中以 ``<prefix>_`` 开头且后缀为纯数字的 agent_id 的最大数字 + 1.
-        用 prefix 区分 kind (react_1 / react_2 ...), 便于 agent 间互相称呼.
+        用 prefix 区分 kind (xml_1 / xml_2 ...), 便于 agent 间互相称呼.
         """
         self.flush()
         pfx = f'{prefix}_'

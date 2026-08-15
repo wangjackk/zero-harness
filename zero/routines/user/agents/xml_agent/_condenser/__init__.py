@@ -1,4 +1,4 @@
-"""condenser 基础机制 (vendor 自 _core/condenser, 供 ReactCondenserAgent 复用).
+﻿"""condenser 基础机制 (vendor 自 _core/condenser, 供 XmlCondenserAgent 复用).
 
 - base_routine: BaseCondenserRoutine 模板方法 (trigger/策略/covered_from_to)
 - strategies: Basic / Agentic / Hybrid 压缩策略

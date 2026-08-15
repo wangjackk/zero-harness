@@ -1,19 +1,19 @@
-"""ReactAgents -- resident passive routine that spawns react_agent children.
+﻿"""XmlAgents -- resident passive routine that spawns xml_agent children.
 
 is_passive=True -> kernel auto-starts on connect (single resident instance).
 Driven via req (bridge -> entry routine -> manager):
 
-  - create_agent  : submit+start a ReactAgent child, return agent_id
+  - create_agent  : submit+start a XmlAgent child, return agent_id
   - list_agents   : enumerate agents (live + historical, from the sqlite Memory)
   - stop_agent    : cascade-stop a child
 
 Mirrors prime/manager.py. Agent records persist in the sqlite Memory
-(react_agent/memory.py agents table): create writes a row, list reads from
+(xml_agent/memory.py agents table): create writes a row, list reads from
 the db. agent_id 是身份, session_id 是 UUID 会话身份 (agents 表持久化). 无线性链. status/handle_id
 是运行时态, 由 manager 内存管 (self._agents dict), 不持久化. live 状态跨重启
 全丢失, list_agents 通过内存判断 live/stopped.
 
-Each child is an independent ReactAgent instance, isolated by agent_id (own
+Each child is an independent XmlAgent instance, isolated by agent_id (own
 pubsub namespace). 一个 agent 一个 session (session_id 是 UUID), resume = 重启
 某个 agent_id (历史消息按 session_id 自动加载).
 """
@@ -27,32 +27,32 @@ from pydantic import BaseModel, Field
 from routine import Routine, request
 from routine.logger import setup_logger
 
-from .agent import ReactAgent
+from .agent import XmlAgent
 from .memory import get_memory
 from .llm import LLMClient, _DEFAULT_MODEL
 
-_log = setup_logger('react_agent.manager')
+_log = setup_logger('xml_agent.manager')
 
-# child routine name (ReactAgent.name snake) -- what manager submits.
-_AGENT_ROUTINE_NAME = 'react_agent'
-# resident manager routine name (ReactAgents.name snake) -- what
-# CreateReactAgent locates by name to req into.
-_MANAGER_NAME = 'react_agents'
+# child routine name (XmlAgent.name snake) -- what manager submits.
+_AGENT_ROUTINE_NAME = 'xml_agent'
+# resident manager routine name (XmlAgents.name snake) -- what
+# CreateXmlAgent locates by name to req into.
+_MANAGER_NAME = 'xml_agents'
 
 # OpenViking 不默认启用: 前端未传 ov_config 时为 None, agent 只用本地
 # sqlite memory (provider 对 None 有完整降级路径). 要长期记忆显式传配置.
 
 
-class ReactAgentsInput(BaseModel):
+class XmlAgentsInput(BaseModel):
     pass
 
 
-class ReactAgentsOutput(BaseModel):
+class XmlAgentsOutput(BaseModel):
     pass
 
 
-class ReactAgents(Routine):
-    """resident passive manager: dynamically create/list/stop react agents.
+class XmlAgents(Routine):
+    """resident passive manager: dynamically create/list/stop xml agents.
 
     agent records persist in the sqlite Memory so the roster survives restart;
     live handles held in-memory only for stop + status annotation.
@@ -61,10 +61,10 @@ class ReactAgents(Routine):
     is_passive = True
     meta: ClassVar[Dict[str, Any]] = {
         'hidden': True,
-        'input_schema': ReactAgentsInput.model_json_schema(),
-        'output_schema': ReactAgentsOutput.model_json_schema(),
+        'input_schema': XmlAgentsInput.model_json_schema(),
+        'output_schema': XmlAgentsOutput.model_json_schema(),
         'description': (
-            'Resident manager for react agents. Spawns/lists/stops ReactAgent '
+            'Resident manager for xml agents. Spawns/lists/stops XmlAgent '
             'child instances on request. Agent records persist to sqlite; each '
             'child runs concurrently, isolated by agent_id.'
         ),
@@ -88,7 +88,7 @@ class ReactAgents(Routine):
         # status 不再持久化 (agent = session, manager 内存管 live 状态).
         # restart 时 self._agents 为空, list_agents 读 DB 历史元数据,
         # live 状态由内存判断.
-        _log.info('react agents manager started')
+        _log.info('xml agents manager started')
 
     async def run(self, kwargs: Dict[str, Any]) -> None:
         """resident: wait for stop. children outlive individual req handlers."""
@@ -115,7 +115,7 @@ class ReactAgents(Routine):
 
     @request('create_agent')
     async def on_create(self, source, data: dict) -> dict:
-        """创建新 ReactAgent. agent_id 不传则自动生成 (react_<N> 自增);
+        """创建新 XmlAgent. agent_id 不传则自动生成 (xml_<N> 自增);
         传了且 DB 已存在则拒绝 (那是 resume 的语义).
         """
         data = data or {}
@@ -137,7 +137,7 @@ class ReactAgents(Routine):
 
     @request('resume_agent')
     async def on_resume(self, source, data: dict) -> dict:
-        """恢复已停止的 react agent. agent_id 必传, 必须已存在 DB, 当前不能 live.
+        """恢复已停止的 xml agent. agent_id 必传, 必须已存在 DB, 当前不能 live.
         child 从 messages 表按 session_id (agents 表持久化的 UUID) replay 历史.
         """
         data = data or {}
@@ -162,7 +162,7 @@ class ReactAgents(Routine):
 
         ov_config 未传为 None -> agent 只用本地 sqlite memory;
         其他可选配置 (condense_config / preload_skills / level1_skills)
-        data 里没传的字段不写入 child_kwargs, ReactAgent.on_started 用 .get()
+        data 里没传的字段不写入 child_kwargs, XmlAgent.on_started 用 .get()
         取时得 None -> 走默认 (禁用).
         """
         model = data.get('model') or _DEFAULT_MODEL
@@ -181,7 +181,7 @@ class ReactAgents(Routine):
             await handle.start()
         except Exception as exc:
             action = 'resume' if is_resume else 'create'
-            _log.error('%s react agent %s failed: %r', action, agent_id, exc)
+            _log.error('%s xml agent %s failed: %r', action, agent_id, exc)
             return {'ok': False, 'error': str(exc)}
 
         self._agents[agent_id] = {
@@ -191,7 +191,7 @@ class ReactAgents(Routine):
         }
         action = 'resumed' if is_resume else 'created'
         _log.info(
-            '%s react agent: agent_id=%s handle_id=%s model=%s',
+            '%s xml agent: agent_id=%s handle_id=%s model=%s',
             action, agent_id, handle.id, model,
         )
         return {
@@ -259,7 +259,7 @@ class ReactAgents(Routine):
             row = self._mem.get_agent(agent_id)
             if row is None:
                 return {'ok': False, 'error': 'agent not found'}
-        _log.info('stopped react agent: agent_id=%s', agent_id)
+        _log.info('stopped xml agent: agent_id=%s', agent_id)
         return {'ok': True, 'agent_id': agent_id}
 
     @request('delete_agent')
@@ -281,7 +281,7 @@ class ReactAgents(Routine):
         except Exception as exc:
             _log.warning('delete agent %s failed: %r', agent_id, exc)
             return {'ok': False, 'error': str(exc)}
-        _log.info('deleted react agent: agent_id=%s', agent_id)
+        _log.info('deleted xml agent: agent_id=%s', agent_id)
         return {'ok': True, 'agent_id': agent_id}
 
 
@@ -289,7 +289,7 @@ class ReactAgents(Routine):
 # entry routine -- bridge calls this to spawn an agent
 # ======================================================================
 
-class CreateReactAgentInput(BaseModel):
+class CreateXmlAgentInput(BaseModel):
     agent_id: Optional[str] = Field(
         None, description='Instance id; auto-generated when omitted. Reuses a stopped agent if it exists.',
     )
@@ -298,25 +298,25 @@ class CreateReactAgentInput(BaseModel):
     )
 
 
-class CreateReactAgentOutput(BaseModel):
+class CreateXmlAgentOutput(BaseModel):
     pass
 
 
-class CreateReactAgent(Routine):
-    """entry routine: spawn a react agent via the resident manager.
+class CreateXmlAgent(Routine):
+    """entry routine: spawn a xml agent via the resident manager.
 
     bridge submits this routine (ctx.call) -> run locates the resident
-    ReactAgents manager by name and reqs it to submit+start a ReactAgent
+    XmlAgents manager by name and reqs it to submit+start a XmlAgent
     child. returns the new agent_id.
     """
 
     meta: ClassVar[Dict[str, Any]] = {
         'hidden': True,
-        'input_schema': CreateReactAgentInput.model_json_schema(),
-        'output_schema': CreateReactAgentOutput.model_json_schema(),
+        'input_schema': CreateXmlAgentInput.model_json_schema(),
+        'output_schema': CreateXmlAgentOutput.model_json_schema(),
         'description': (
-            'Entry routine that spawns a react agent via the resident '
-            'ReactAgents manager. Returns the new agent_id. The spawned agent '
+            'Entry routine that spawns a xml agent via the resident '
+            'XmlAgents manager. Returns the new agent_id. The spawned agent '
             'runs concurrently, isolated by agent_id.'
         ),
     }

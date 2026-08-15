@@ -1,4 +1,4 @@
-"""HybridCondenser — 混合策略.
+﻿"""HybridCondenser — 混合策略.
 
 先用 BasicCondenser 兜底 (快, 无 LLM), 检查结果是否达标.
 如果不达标 (仍超 target), 再上 AgenticCondenser (LLM 摘要).

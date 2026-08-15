@@ -1,4 +1,4 @@
-"""ReactCondenserAgent — react_agent 专用上下文压缩 routine.
+﻿"""XmlCondenserAgent — xml_agent 专用上下文压缩 routine.
 
 基于 Memory (sqlite, schema 不同于 store), 跟 reactor/prime 的 CondenserAgent 平级:
 - 读: Memory.load_history → project_with_summary 投影 → _msg_to_item 转 items
@@ -24,7 +24,7 @@ from ._condenser.base_routine import (
 
 from .memory import get_memory
 
-_log = setup_logger('react_agent.condenser')
+_log = setup_logger('xml_agent.condenser')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -84,12 +84,12 @@ def project_with_summary(history: list[dict[str, Any]]) -> tuple[list[dict[str, 
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# react Memory message -> strategy item 转换
+# Memory message -> strategy item 转换
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def _msg_to_item(msg: dict[str, Any]) -> dict[str, Any] | None:
-    """react Memory message -> strategy item.
+    """Memory message -> strategy item.
 
     react message: {message_id, role, content, interrupted, feedback, response_id, kind}
     strategy item: {role, content} (find_cut_index 按 content 算 token)
@@ -109,14 +109,14 @@ def _msg_to_item(msg: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ReactCondenserAgent
+# XmlCondenserAgent
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class ReactCondenserAgent(BaseCondenserRoutine):
-    """react_agent 上下文压缩 routine (基于 Memory).
+class XmlCondenserAgent(BaseCondenserRoutine):
+    """xml_agent 上下文压缩 routine (基于 Memory).
 
-    读 react Memory (history, 含旧 summary 行) -> 投影 (找最后一条 summary 切) ->
+    读 Memory (history, 含旧 summary 行) -> 投影 (找最后一条 summary 切) ->
     判断 trigger -> 执行策略 -> 写新 summary 到 messages 表 (kind='summary').
 
     共享 BaseCondenserRoutine.run() 模板方法, 只实现 _load_items + _write_summary.
@@ -129,14 +129,14 @@ class ReactCondenserAgent(BaseCondenserRoutine):
         'input_schema': CondenseInput.model_json_schema(),
         'output_schema': CondenseOutput.model_json_schema(),
         'description': (
-            'react_agent 上下文压缩 routine. 读 react Memory, 应用压缩策略, '
+            'xml_agent 上下文压缩 routine. 读 Memory, 应用压缩策略, '
             '写 summary 到 messages 表 (kind=summary). 跟 reactor/prime '
             'CondenserAgent 平级, 各写各的.'
         ),
     }
 
     async def _load_items(self, inp: CondenseInput) -> CondenseLoadResult:
-        """读 react Memory + 投影 + 转 items (带 message_id + response_id)."""
+        """读 Memory + 投影 + 转 items (带 message_id + response_id)."""
         mem = get_memory()
         history = mem.load_history(inp.session_id)
         if not history:
@@ -174,7 +174,7 @@ class ReactCondenserAgent(BaseCondenserRoutine):
         covered_to: str,
         tokens_before: int,
     ) -> None:
-        """写 summary 到 react Memory messages 表 (kind='summary')."""
+        """写 summary 到 Memory messages 表 (kind='summary')."""
         mem = get_memory()
         summary_message_id = f'summary-{uuid4().hex[:8]}'
         mem.add_summary_message(

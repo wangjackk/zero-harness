@@ -1,4 +1,4 @@
-"""LLMClient ---- 封装 Responses API 流式调用 (vendor 自 _core/llm, 包内自治副本).
+﻿"""LLMClient ---- 封装 Responses API 流式调用 (vendor 自 _core/llm, 包内自治副本).
 
 模型配置外置到项目根 models.yaml, 支持 provider/model 二级路由.
 Provider 差异 (reasoning 参数格式等) 由 LlmProvider 处理, 见 llm_provider.py.
@@ -19,7 +19,7 @@ from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 from routine.logger import setup_logger
 from .llm_provider import LlmProvider, make_provider
 
-_log = setup_logger('react_agent.llm')
+_log = setup_logger('xml_agent.llm')
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 配置加载: 项目根 models.yaml

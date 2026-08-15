@@ -1,4 +1,4 @@
-"""AgentState — agent 运行时状态数据模型.
+﻿"""AgentState — agent 运行时状态数据模型.
 
 agent 侧 ``@request('agent_state')`` handler 构造本模型返回; tool routine 通过
 ``fetch_agent_state`` routine (内部 call get_agent_rid + req agent_state) 拿到.

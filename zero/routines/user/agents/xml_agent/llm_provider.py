@@ -1,4 +1,4 @@
-"""LLM provider profiles ---- 声明式请求构建策略.
+﻿"""LLM provider profiles ---- 声明式请求构建策略.
 
 参考 hermes-agent providers/base.py 的设计:
 - profile 只描述 "怎么发请求", 不持有 client / 不负责流式

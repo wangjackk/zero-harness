@@ -1,8 +1,8 @@
-"""ReactAgent -- reactive agent(ContextProvider 记忆 + 内置 LLM,每轮直推 act 子).
+﻿"""XmlAgent -- reactive agent(ContextProvider 记忆 + 内置 LLM,每轮直推 act 子).
 
 - 直接继承 ``Routine``(被动常驻编排器,不收 XML body,不派生工具子)--
   XmlRoutine 的 body_shell/parser/on_body_chunk 一套它都不用,继承是历史残留.
-- **记忆用 ReactContextProvider**(见 ``provider.py``):封装 Memory(sqlite 持久化)
+- **记忆用 XmlContextProvider**(见 ``provider.py``):封装 Memory(sqlite 持久化)
   + OVMemory(OpenViking 长期记忆),默认启用 OV.
 - **每轮 react 直推一个 act 子**(submit+start+stop 直管,act 才是 XmlRoutine,
   工具子由 act 的 body_shell 派生).
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from routine import Routine, RoutineHandle, request
 
 from .llm import LLMClient, TextDelta, ReasoningDelta, Completed
-from .provider import ReactContextProvider
+from .provider import XmlContextProvider
 from .condenser import project_with_summary
 
 # wire 契约常量: act 注入调用方 agent_id 到 tool routine kwargs, tool 侧按同名键读取.
@@ -66,7 +66,7 @@ def _is_stale_response_id_error(exc: BaseException) -> bool:
     return 'PreviousResponseNotFound' in s or 'previous_response_id' in s.lower()
 
 
-class ReactAgentInput(BaseModel):
+class XmlAgentInput(BaseModel):
     agent_id: Optional[str] = Field(
         None, description='Instance id; auto-generated when omitted.',
     )
@@ -94,19 +94,19 @@ class ReactAgentInput(BaseModel):
     )
 
 
-class ReactAgentOutput(BaseModel):
+class XmlAgentOutput(BaseModel):
     pass
 
 
-class ReactAgent(Routine):
+class XmlAgent(Routine):
     """reactive agent:sqlite 记忆 + 每轮直推 act 子 + 内置 LLM.被动常驻."""
 
-    # is_passive removed: dynamic instance spawned by ReactAgents manager.
+    # is_passive removed: dynamic instance spawned by XmlAgents manager.
     meta: ClassVar[Dict[str, Any]] = {
         'hidden': True,
         'description': '精简版 reactive agent: sqlite 记忆 + 每轮 push act, 常驻对话.',
-        'input_schema': ReactAgentInput.model_json_schema(),
-        'output_schema': ReactAgentOutput.model_json_schema(),
+        'input_schema': XmlAgentInput.model_json_schema(),
+        'output_schema': XmlAgentOutput.model_json_schema(),
     }
     # LLM 可主动调用的 routine 白名单:进 system prompt(XML 示例形式).
     # output 说话类是**被动**派发(裸文本自动走 output),不在此列--LLM 只输出自然语言即可.
@@ -133,11 +133,11 @@ class ReactAgent(Routine):
         self._stop = asyncio.Event()
         self._cur_act: Optional[RoutineHandle] = None
         self._static_prompt = _SYSTEM_PROMPT_FILE.read_text(encoding='utf-8')
-        # per-session workspace (runtime/react_agent/sessions/<session_id>/).
+        # per-session workspace (runtime/xml_agent/sessions/<session_id>/).
         # skill / ov_cursor 都落这里, 切 session 时整目录切换.
         self._workspace: Optional[Path] = None
         # 上下文 provider: Memory 持久化 + OV 长期记忆 (on_started 里构造)
-        self._ctx: Optional[ReactContextProvider] = None
+        self._ctx: Optional[XmlContextProvider] = None
         # condenser 配置 (trigger_ratio 等; TODO 暂未接入)
         self._condense_config: dict[str, Any] = {}
         # 一级 skill 摘要 [(name, desc)], 由 on_started 扫描 workspace skills 生成,
@@ -167,11 +167,11 @@ class ReactAgent(Routine):
         agent_id->namespace 路由 + 广播 conversation_open 给前端建 tab.
 
         额外初始化
-          - per-session workspace (runtime/react_agent/sessions/<session_id>/)
+          - per-session workspace (runtime/xml_agent/sessions/<session_id>/)
           - seed builtin skills 到 workspace/skills/
           - 扫描 level1_skills 生成摘要, 注入 system prompt
           - 预加载 preload_skills 全文, 注入 system prompt
-          - ReactContextProvider (Memory + OV, peer_id='react'), init_session
+          - XmlContextProvider (Memory + OV, peer_id='xml'), init_session
         """
         kwargs = self.init_kwargs or {}
         agent_id = kwargs.get('agent_id') or uuid4().hex
@@ -197,7 +197,7 @@ class ReactAgent(Routine):
 
         # --- per-session workspace + skill seed (复用 skills 的 registry) ---
         # workspace 跟 session_id 1:1 (agent=session 模型, per-agent = per-session).
-        self._workspace = Path('runtime/react_agent/sessions') / self._session_id
+        self._workspace = Path('runtime/xml_agent/sessions') / self._session_id
         self._workspace.mkdir(parents=True, exist_ok=True)
         try:
             from zero.routines.user.skills.registry import (
@@ -241,12 +241,12 @@ class ReactAgent(Routine):
         except Exception as exc:
             self._logger.warning(f'skill seed/scan failed: {exc} (skills disabled)')
 
-        # --- ReactContextProvider: Memory 持久化 + OV 长期记忆 (peer_id='react') ---
+        # --- XmlContextProvider: Memory 持久化 + OV 长期记忆 (peer_id='xml') ---
         # OV init 失败只 log warning, provider.enabled=False, 后续全跳过.
-        self._ctx = ReactContextProvider(
+        self._ctx = XmlContextProvider(
             ov_config=ov_config,
             workspace=self._workspace,
-            peer_id='react',
+            peer_id='xml',
             agent_id=self._agent_id,
         )
         await self._ctx.init_session(self._session_id)
@@ -285,7 +285,7 @@ class ReactAgent(Routine):
         await register_with_bridge(
             agent_id=self._agent_id,
             routine_id=self.id,
-            name_prefix='React-',
+            name_prefix='Xml-',
             bridge_name=_BRIDGE_NAME,
             ctx=self.ctx,
             stop_event=self._stop,
@@ -587,14 +587,14 @@ class ReactAgent(Routine):
         return True
 
     # ==================================================================
-    # 上下文压缩 (委托 provider.compact, 走本地 react_condenser_agent)
+    # 上下文压缩 (委托 provider.compact, 走本地 xml_condenser_agent)
     # ==================================================================
 
     async def _maybe_condense(self, epoch: int) -> None:
         """每轮 LLM 调用前检查是否需要压缩上下文.
 
-        委托给 ReactContextProvider.compact:
-          走 react_condenser_agent (写 summary 到 messages 表, kind='summary').
+        委托给 XmlContextProvider.compact:
+          走 xml_condenser_agent (写 summary 到 messages 表, kind='summary').
 
         condense_config 为空时跳过 (trigger_ratio 等配置在此).
         """
@@ -617,7 +617,7 @@ class ReactAgent(Routine):
             self._logger.warning(f'compact failed: {exc} (skipping)')
             return
         if result:
-            self._logger.info('context condensed via react_condenser_agent')
+            self._logger.info('context condensed via xml_condenser_agent')
 
     # ==================================================================
     # LLM 调用(Responses API 直调,包内 llm.py 的 LLMClient)

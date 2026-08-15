@@ -1,4 +1,4 @@
-"""AgenticCondenser — LLM 摘要策略.
+﻿"""AgenticCondenser — LLM 摘要策略.
 
 head (早期消息) 送 LLM 做结构化摘要, tail (最近消息) 原样保留.
 摘要 prompt 对齐 cline 的 Goal/State/Highlights/Next/Files 结构.

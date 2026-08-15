@@ -1,4 +1,4 @@
-"""BasicCondenser — 无 LLM 截断策略.
+﻿"""BasicCondenser — 无 LLM 截断策略.
 
 保留最近 N token 的消息原样, 更早的消息直接丢弃.
 速度快, 不额外调 LLM, 但会丢失早期上下文. 适合:
