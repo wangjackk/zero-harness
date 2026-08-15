@@ -22,13 +22,13 @@ agent 通过 `list_skills` 发现、`load_skill <name>` 加载。SKILL.md 只放
 
 | # | 文档 | 内容 |
 |---|---|---|
-| 01 | [01-overview.md](../../../routine-py/docs/01-overview.md) | 架构概览:routine hub / kernel / transport 三方关系,两种启动模式,wire 事件分层 |
-| 02 | [02-routine.md](../../../routine-py/docs/02-routine.md) | `Routine` 基类:`run` / `stop` / `on_created` / `on_started` / `on_stopped` 生命周期 + `name` / `meta` / `is_passive` 类字段 |
-| 03 | [03-registration.md](../../../routine-py/docs/03-registration.md) | `Routines.register/deregister` + `RoutineHub.register_routine/deregister_routine` + `catalog.register/catalog.deregister` 事件同步 |
-| 04 | [04-context.md](../../../routine-py/docs/04-context.md) | `RunContext` API:lifecycle ack / 模块操作 / p2p 通信 / pubsub / 子 routine 编排 |
-| 05 | [05-handle.md](../../../routine-py/docs/05-handle.md) | `RoutineHandle`:submit/start/stop/wait + async generator body 迭代 |
-| 06 | [06-errors.md](../../../routine-py/docs/06-errors.md) | 异常类型对照 + 可恢复性 + `lifecycle.stopped` reason 枚举 |
-| ref | [module-operations.md](../../../routine-py/docs/module-operations.md) | 模块操作完整参考(acquire/release/force_acquire/force_release/load_module/unload_module/conflict) |
+| 01 | [01-overview.md](../../routine-py/docs/01-overview.md) | 架构概览:routine hub / kernel / transport 三方关系,两种启动模式,wire 事件分层 |
+| 02 | [02-routine.md](../../routine-py/docs/02-routine.md) | `Routine` 基类:`run` / `stop` / `on_created` / `on_started` / `on_stopped` 生命周期 + `name` / `meta` / `is_passive` 类字段 |
+| 03 | [03-registration.md](../../routine-py/docs/03-registration.md) | `Routines.register/deregister` + `RoutineHub.register_routine/deregister_routine` + `catalog.register/catalog.deregister` 事件同步 |
+| 04 | [04-context.md](../../routine-py/docs/04-context.md) | `RunContext` API:lifecycle ack / 模块操作 / p2p 通信 / pubsub / 子 routine 编排 |
+| 05 | [05-handle.md](../../routine-py/docs/05-handle.md) | `RoutineHandle`:submit/start/stop/wait + async generator body 迭代 |
+| 06 | [06-errors.md](../../routine-py/docs/06-errors.md) | 异常类型对照 + 可恢复性 + `lifecycle.stopped` reason 枚举 |
+| ref | [module-operations.md](../../routine-py/docs/module-operations.md) | 模块操作完整参考(acquire/release/force_acquire/force_release/load_module/unload_module/conflict) |
 
 ### 接手 zero 项目(`zero/docs/project/`)
 
@@ -36,7 +36,7 @@ agent 通过 `list_skills` 发现、`load_skill <name>` 加载。SKILL.md 只放
 |---|---|---|
 | 01 | [project/01-structure.md](./project/01-structure.md) | 目录结构 + routine 注册约定 + 启动模式 + passive routine + manager+child 模式 |
 | 02 | [project/02-routine-conventions.md](./project/02-routine-conventions.md) | routine 编写约定:pydantic schema first / 生命周期钩子 / 错误处理 / 日志 / per-agent workspace 隔离 |
-| 03 | [project/03-modules-overview.md](./project/03-modules-overview.md) | 50 个业务 routine 模块清单 + "按能力查找"索引 |
+| 03 | [project/03-modules-overview.md](./project/03-modules-overview.md) | 全部业务 routine 模块清单 + "按能力查找"索引 |
 | 04 | [project/04-end-to-end.md](./project/04-end-to-end.md) | 全流程案例:实现并调用一个 routine(冷注册/热注册 + 跨 routine 调用) |
 
 ## 文档约定

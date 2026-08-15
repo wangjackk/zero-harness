@@ -65,7 +65,7 @@ HTTP 一键触发(地址读 routines.yaml 条目 kwargs,缺省 7780;当前 yaml 
 
 ```bash
 curl -XPOST localhost:7781/run/timestamp -H 'Content-Type: application/json' -d '{}'
-# {"text": "2026-08-14 12:00:00"}
+# {"ok": true, "result": {"text": "2026-08-14 12:00:00"}}
 ```
 
 routine 在 `run()` 里用 `self.call` / `self.submit` 调用其它已注册 routine(跨进程也行,框架自动路由):

@@ -30,7 +30,7 @@
 
 | 类 | name | passive | 说明 |
 |---|---|---|---|
-| `WebServer` | `web_server` | ✅ | HTTP+WS 前门:`/run/{name}` 一步触发、`/start`+`/stop` 长跑型、`/req/{rid}/{event}` handler 触发、`/docs` Swagger、`/ws` 桥接前端 |
+| `WebServer` | `web_server` | ✅ | HTTP+WS 前门:`/run/{name}` 以 user 身份触发、`/agents/{id}/run/{name}` 按指定 agent 触发、`/agents` 系列(create/stop/resume/delete)管理、`/docs` Swagger、`/ws` 桥接前端 |
 | `Ask` | `ask` | – | 给用户发单选题,等选择结果;支持 `allow_other` 自由输入。UI 弹窗不占 module |
 | `SendMessage` | `send_message` | – | agent 间消息投递(带 `from_agent_id` 身份注入) |
 | `UserAgent` | `user_agent` | ✅ | 用户侧消息入口(前端对话 → agent 循环) |
@@ -117,8 +117,8 @@ builtin skills:`routine-sdk`(框架 API)/ `zero-dev`(项目约定)/ `agent-messa
 | 场景 | 入口 |
 |---|---|
 | 一次性触发(算完即返) | `ctx.call(name, kwargs)` 或 HTTP `POST /run/{name}` |
-| 长跑型(中途 stop) | `ctx.submit + handle.start + handle.stop` 或 HTTP `POST /start/{name}` + `POST /stop/{id}` |
-| 触发常驻 routine 的 handler | `ctx.req(rid, event, body)` 或 HTTP `POST /req/{rid}/{event}` |
+| 长跑型(中途 stop) | `ctx.submit + handle.start + handle.stop`(HTTP 侧无此形态) |
+| 触发常驻 routine 的 handler | `ctx.req(rid, event, body)`(HTTP 侧无此形态) |
 | 触发 passive routine | 不用触发——kernel 连上后 auto-start |
 
 ### 想编排多个 routine
@@ -140,7 +140,7 @@ builtin skills:`routine-sdk`(框架 API)/ `zero-dev`(项目约定)/ `agent-messa
 |---|---|
 | 创建 prime agent | `ctx.call('create_prime_agent', {'agent_id': ..., 'project_dir': ...})` |
 | 列 live agent | `ctx.call('list_running_agents')` |
-| 跟 agent 对话 | `ctx.req(agent_rid, 'send_message', {'text': ...})` |
+| 跟 agent 对话 | `ctx.call('send_message', {'to': agent_id, 'message': ...})`(或直接 `ctx.req(agent_rid, 'chat_message', {'message': ...})`) |
 | 查 agent 会话状态 | `ctx.call('fetch_agent_state', {'agent_id': ...})` |
 
 ## 下一步

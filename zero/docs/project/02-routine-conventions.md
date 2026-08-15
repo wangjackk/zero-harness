@@ -176,14 +176,14 @@ async def stop(self) -> None:
     self._stop_event.set()
 ```
 
-### `async def on_started()` / `async def on_stopped(reason, detail)`(可选,罕见)
+### `async def on_started()` / `async def on_stopped(reason, result, detail)`(可选,罕见)
 
 lifecycle 状态机回调。约定:
 - **`on_started`**:进入 Started 态。罕见 override——`run()` 开始即 Started,不需要额外动作。
 - **`on_stopped`**:进入 Stopped 态,资源清理用。`reason` 是小写字符串(`'auto'/'stop'/'error'/'cancel'/'force'/'disconnect'`)。
 
 ```python
-async def on_stopped(self, reason: str, detail: str = '') -> None:
+async def on_stopped(self, reason: str = 'auto', result: Any = None, detail: str = '') -> None:
     await self._cleanup_resources()
 ```
 
@@ -310,7 +310,7 @@ value = await self.ctx.call('ask', {
 # 查 bridge routine id(bridge 是独立 passive routine,可能跨进程)
 routines = await self.ctx.get_running_routines()
 bridge_id = next(
-    (str(r['id']) for r in routines if r.get('name') == 'agent_ws_bridge'),
+    (str(r['id']) for r in routines if r.get('name') == 'web_server'),
     None,
 )
 if bridge_id is None:
