@@ -5,12 +5,11 @@
 - **`routine-py/docs/`** —— routine SDK 框架级 API(通用,与业务无关)。任何用 `routine` 包的应用都适用。
 - **`zero/docs/project/`** —— zero 项目级约定与业务模块清单(特定于本仓 `zero/` 应用)。
 
-## Agent 入口:两个 skill
+## Agent 入口:一个 skill
 
 | skill | 范围 | skill 目录 | 文档位置 |
 |---|---|---|---|
 | **`routine-sdk`** | 框架级 API(通用) | [builtin/routine-sdk/SKILL.md](../routines/user/skills/builtin/routine-sdk/SKILL.md) | `routine-py/docs/` |
-| **`zero-dev`** | zero 项目级(本仓特定) | [builtin/zero-dev/SKILL.md](../routines/user/skills/builtin/zero-dev/SKILL.md) | `zero/docs/project/` |
 
 agent 通过 `list_skills` 发现、`load_skill <name>` 加载。SKILL.md 只放**章节目录 + 按问题类型快速定位**,agent 根据当前问题主动 Read 对应章节。
 

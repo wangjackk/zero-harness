@@ -108,7 +108,7 @@ per-agent skill 管理,builtin 源在 [skills/builtin/](../../routines/user/skil
 | `InstallSkill` | `install_skill` | 从本地目录或 URL 装 skill 到 agent workspace |
 | `UninstallSkill` | `uninstall_skill` | 卸载 workspace 副本(不动 builtin 源) |
 
-builtin skills:`routine-sdk`(框架 API)/ `zero-dev`(项目约定)/ `agent-messaging` / `skill-creator`。prime 专属 (`agents: [prime]` 受众声明,如 `hub_routine` / `routine_bridge` python 包 skill)也统一放 `skills/builtin/`,seed 时按 `skill_profile` 过滤。
+builtin skills:`routine-sdk`(框架 API)/ `agent-messaging` / `skill-creator`。prime 专属 (`agents: [prime]` 受众声明,如 `hub_routine` / `routine_bridge` / `routine-creator` / `editing-agent-presets` skill)也统一放 `skills/builtin/`,seed 时按 `skill_profile` 过滤。
 
 ## 按能力查找
 
