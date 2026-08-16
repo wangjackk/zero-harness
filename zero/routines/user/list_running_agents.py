@@ -1,6 +1,6 @@
-"""ListRunningAgents -- 列出所有 live agent (prime + user/world).
+"""ListRunningAgents -- 列出所有 live agent (prime/xml + user/world).
 
-向 prime_agent_manager 发 list_agents req, 合并 live 的, 返回 agent_id + rid +
+向各 resident manager 发 list_agents req, 合并 live 的, 返回 agent_id + rid +
 agent_type. manager rid 通过 get_running_routines 按 name 找 (不依赖 bridge).
 另外检查 user_agent / world_agent passive routine 是否在运行, 在则加入列表.
 
@@ -23,6 +23,7 @@ _log = setup_logger('list_running_agents')
 # (manager routine name, agent_type) -- 所有 resident manager.
 _MANAGERS = [
     ('prime_agent_manager', 'prime'),
+    ('xml_agents', 'xml'),
 ]
 
 # passive 常驻 agent (不是 manager 管理的, 直接查 routine 是否在运行).

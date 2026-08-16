@@ -5,12 +5,12 @@
 
 用法(LLM / HTTP / 代码都行)::
 
-    <run_xml xml="<print_body>hello</print_body><dance duration=\"2\"/>"/>
+    <run_xml xml="<wait duration=\"2\"/>"/>
     # 代码:
-    await self.call('run_xml', {'xml': '<print_body>hi</print_body>'})
+    await self.call('run_xml', {'xml': '<wait duration="1"/>'})
     # HTTP:
     curl -XPOST localhost:7780/run/run_xml -H 'Content-Type: application/json' \
-        -d '{"xml":"<music duration=\"5\"><dance duration=\"2\"/></music>"}'
+        -d '{"xml":"<wait duration=\"1\"/>"}'
 
 跟 act 的区别:act 是 async gen(父 send 流式 XML,yield 每个子结果);RunXml 是
 同步收完整 XML 字符串 -> 喂自己 -> 等全部子 done -> 返回结果列表.共用同一条

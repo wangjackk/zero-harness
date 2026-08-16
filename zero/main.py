@@ -92,7 +92,28 @@ async def serve(addr: str, *, client: bool = False) -> None:
         )
 
 
+def _load_env() -> None:
+    """读 ``zero/.env``: KEY=VALUE 逐行 setdefault 进 os.environ.
+
+    已有环境变量(终端手动 set)优先, .env 不覆盖; 不存在则跳过.
+    """
+    env_file = _PROJECT_ROOT / 'zero' / '.env'
+    if not env_file.is_file():
+        return
+    # utf-8-sig: 兼容 Windows 记事本/PowerShell 写出的 BOM 头
+    for line in env_file.read_text(encoding='utf-8-sig').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def _main() -> None:
+    _load_env()
     print(f'Python 版本: {sys.version}')
     client = True
     addr = '0.0.0.0:7777' if not client else '127.0.0.1:8888'

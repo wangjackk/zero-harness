@@ -7,8 +7,8 @@ re-export 的 Routine 类经 routines.yaml 目录条目(``- routines/user/xml``)
 详见 xml_routine.py 模块 docstring.
 """
 from .act import Act
-from .print_body import PrintBody
 from .run_xml import RunXml
 from .speak import Speak
+from .wait import Wait
 
-__all__ = ['Act', 'PrintBody', 'RunXml', 'Speak']
+__all__ = ['Act', 'RunXml', 'Speak', 'Wait']

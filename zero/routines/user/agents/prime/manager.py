@@ -269,6 +269,8 @@ class PrimeAgentManager(Routine):
         if agent_id in self._agents:
             return {'ok': False, 'error': f'agent_id {agent_id} is live; stop it first'}
         store = self._store_for()
+        if store.get_agent(agent_id) is None:
+            return {'ok': False, 'error': f'agent_id {agent_id} not found'}
         try:
             store.delete_agent(agent_id)
         except Exception as exc:

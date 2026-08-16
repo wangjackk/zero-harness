@@ -6,6 +6,7 @@ Provider 差异 (reasoning 参数格式等) 由 LlmProvider 处理, 见 provider
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
@@ -52,6 +53,23 @@ def _load_config() -> dict[str, Any]:
     return data
 
 
+def _expand_env(value: str) -> str:
+    """``$VAR`` / ``${VAR}`` → os.environ 取值, 非该形式原样返回.
+
+    变量未设置时返回空串并 log warning(不炸启动 ---- 真正调用时 provider
+    报 401, 提示补 zero/.env)."""
+    if not isinstance(value, str) or not value.startswith('$'):
+        return value
+    name = value[2:-1] if value.startswith('${') else value[1:]
+    if not name.isidentifier():
+        return value
+    env = os.environ.get(name)
+    if env is None:
+        _log.warning('env %s not set (api_key empty; add it to zero/.env)', name)
+        return ''
+    return env
+
+
 _CONFIG: dict[str, Any] = _load_config()
 _PROVIDERS: dict[str, dict] = _CONFIG.get('models', {})
 _DEFAULT_MODEL: str = _CONFIG.get('default', '')
@@ -60,7 +78,7 @@ _DEFAULT_MODEL: str = _CONFIG.get('default', '')
 _MODELS: dict[str, dict] = {}
 
 for _prov_name, _prov_cfg in _PROVIDERS.items():
-    _api_key = _prov_cfg.get('api_key', '')
+    _api_key = _expand_env(_prov_cfg.get('api_key', ''))
     _base_url = _prov_cfg.get('base_url', '')
     for _m_name, _m_cfg in _prov_cfg.items():
         if _m_name in _PROVIDER_SCALAR_KEYS:

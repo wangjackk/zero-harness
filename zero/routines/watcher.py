@@ -12,7 +12,7 @@ from typing import Any, ClassVar, Dict, List, Set
 
 import yaml
 
-from routine import Routine
+from routine import Routine, request
 from routine.errors import ReloadError, RegisterError
 from routine.logger import setup_logger
 
@@ -57,6 +57,33 @@ class RoutinesWatcher(Routine):
 
     async def run(self, kwargs: Dict[str, Any]):
         await self._stop_event.wait()
+
+    @request('reload')
+    async def _req_reload(self, source, data: Dict[str, Any]) -> Dict[str, Any]:
+        """手动强制重载(poll 逃生口): ``{'path': <yaml 条目路径>, 缺省全部}``.
+
+        path 精确或前缀匹配 yaml 条目: 目录条目展开为包内全部 .py, 文件条目
+        为单文件 ---- 复用 ``_reload_sources`` 同一条链路, 语义与自动热重载
+        完全一致(manifest diff deregister + yaml kwargs 重注入 + upsert).
+        """
+        path = data.get('path')
+        target = path.rstrip('/') if path else None
+        rels = [rel for rel, _ in self._entries
+                if target is None or rel == target
+                or rel.startswith(target + '/')]
+        if target is not None and not rels:
+            return {'error': f'no yaml entry matches {target!r}',
+                    'reloaded': []}
+        changed: Set[Path] = set()
+        for rel in rels:
+            t = _PACKAGE_ROOT / rel
+            if t.is_dir():
+                changed.update(_walk_package_files(t))
+            elif t.is_file():
+                changed.add(t)
+        if not changed:
+            return {'error': 'no source files resolved', 'reloaded': []}
+        return await self._reload_sources(sorted(changed))
 
     async def stop(self) -> None:
         if self._stop_event:
@@ -150,16 +177,19 @@ class RoutinesWatcher(Routine):
 
         self._mtimes = {p: _mtime(p) for p in self._watched_files()}
 
-    async def _reload_sources(self, changed: List[Path]) -> None:
+    async def _reload_sources(self, changed: List[Path]) -> Dict[str, Any]:
         """源码变更: reload 模块链 + 重注入 yaml kwargs + hub.reload_routine(新类).
 
         import 失败(写到一半/manifest 先于文件/语法错)**不丢变更**: 失败文件
         的 mtime 快照保留旧值, 下轮 poll 自动视为仍有变更重试 ---- 文件与
         manifest 的编辑顺序无关, 两边写齐后 ~1.5s 内自动收敛.
+
+        返回 ``{reloaded, deregistered, failed}`` 摘要 ---- poll 轮忽略,
+        ``@request('reload')`` 手动路径透传给调用方.
         """
         hub = self.ctx.hub
         if hub is None:
-            return
+            return {'error': 'no hub', 'reloaded': []}
 
         file_dotted: Dict[Path, str] = {}
         for p in changed:
@@ -170,6 +200,7 @@ class RoutinesWatcher(Routine):
 
         failed: Set[str] = set()
         reloaded_classes: Set[type] = set()
+        deregistered: List[str] = []
         for dotted in sorted(set(file_dotted.values())):
             try:
                 old = importlib.import_module(dotted)
@@ -196,6 +227,7 @@ class RoutinesWatcher(Routine):
             for gone in old_names - {cls.name for cls in fresh}:
                 try:
                     await hub.deregister_routine(gone)
+                    deregistered.append(gone)
                     _log.info('🔥 deregistered %s (removed from manifest)', gone)
                 except Exception as exc:
                     _log.warning('deregister %s failed: %s', gone, exc)
@@ -205,9 +237,14 @@ class RoutinesWatcher(Routine):
         if reloaded_classes:
             apply_yaml_kwargs(self._entries)
 
+        reloaded: List[str] = []
+        seen_names: Set[str] = set()
         for cls in reloaded_classes:
             try:
                 await hub.reload_routine(cls)
+                if cls.name not in seen_names:  # 包 + 子模块双路收集去重
+                    seen_names.add(cls.name)
+                    reloaded.append(cls.name)
                 _log.info('🔄 reloaded %s', cls.name)
             except ReloadError as exc:
                 _log.warning('reload %s failed: %s', cls.name, exc)
@@ -219,6 +256,11 @@ class RoutinesWatcher(Routine):
             if dotted in failed and p in snapshot:
                 snapshot[p] = self._mtimes.get(p, 0.0)
         self._mtimes = snapshot
+        out: Dict[str, Any] = {'reloaded': reloaded,
+                               'deregistered': deregistered}
+        if failed:
+            out['failed'] = sorted(failed)
+        return out
 
     def _note_reload_error(self, dotted: str, exc: Exception) -> None:
         """记 reload 失败: 同错不重复刷屏(重试每秒跑, 日志只打文本变化时)."""

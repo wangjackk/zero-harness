@@ -151,11 +151,41 @@
         <!-- create view: 懒挂载 -->
         <div v-if="viewMode === 'create'" class="create-view">
           <header class="create-header">
-            <h3>新建 Prime Agent</h3>
+            <div class="create-kind">
+              <button
+                class="create-kind-btn"
+                :class="{ on: createKind === 'prime' }"
+                @click="createKind = 'prime'"
+              >Prime</button>
+              <button
+                class="create-kind-btn"
+                :class="{ on: createKind === 'xml' }"
+                @click="createKind = 'xml'"
+              >XML</button>
+            </div>
             <NButton size="small" @click="viewMode = 'chat'">取消</NButton>
           </header>
           <div class="create-body">
+            <div v-if="createKind === 'xml'" class="xml-create">
+              <div class="xml-field">
+                <label class="xml-label">model</label>
+                <NSelect
+                  v-model:value="xmlModel"
+                  size="small"
+                  clearable
+                  filterable
+                  :options="modelOptions"
+                  placeholder="默认模型 (models.yaml default)"
+                />
+              </div>
+              <p class="xml-hint">reactive chat agent: sqlite 记忆 + XML 工具编排, 无需项目目录.</p>
+              <div class="xml-footer">
+                <NButton size="small" type="primary" :loading="creating" @click="onXmlCreate">Create</NButton>
+                <span v-if="xmlError" class="xml-error">{{ xmlError }}</span>
+              </div>
+            </div>
             <PrimeCreateForm
+              v-else
               :http-base="httpBase"
               :project-suggestions="projectSuggestions"
               :create-agent="createAgent"
@@ -187,7 +217,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch, computed, onMounted, onUnmounted } from 'vue'
-import { NConfigProvider, NButton, NBadge, NTag, NCard, NAlert, darkTheme } from 'naive-ui'
+import { NConfigProvider, NButton, NBadge, NTag, NCard, NAlert, NSelect, darkTheme } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import AgentPanel from './components/AgentPanel.vue'
 import RoutineRunner from './components/RoutineRunner.vue'
@@ -400,6 +430,40 @@ let assistantEntrySeq = 0
 // 视图模式: chat = 显示当前 agent 对话; create = 显示新建 agent 表单
 const viewMode = ref<'chat' | 'create'>('chat')
 
+// create view: agent kind 切换 (prime = coding agent, xml = reactive chat agent)
+const createKind = ref<'prime' | 'xml'>('prime')
+const xmlModel = ref<string | null>(null)
+const xmlError = ref('')
+const modelOptions = ref<{ label: string; value: string }[]>([])
+
+async function loadModelOptions() {
+  if (modelOptions.value.length) return
+  try {
+    const res = await fetch(`${httpBase}/models`)
+    if (!res.ok) return
+    const data = await res.json()
+    modelOptions.value = ((data.models || []) as Array<{ key: string; name: string }>).map(m => ({
+      label: `${m.key} (${m.name})`,
+      value: m.key,
+    }))
+  } catch { /* 拉不到就空列表, 后端用默认模型 */ }
+}
+
+watch(createKind, k => { if (k === 'xml') void loadModelOptions() })
+
+async function onXmlCreate() {
+  xmlError.value = ''
+  try {
+    const id = await createAgent({ kind: 'xml', model: xmlModel.value || undefined })
+    if (id) {
+      ensurePanel(id)
+      selectAgent(id)
+    }
+  } catch (e) {
+    xmlError.value = (e as Error).message
+  }
+}
+
 // 项目历史 (从 useAgents 拉, 给 PrimeCreateForm 的 project_dir 自动补全)
 const projectSuggestions = computed(() => {
   const out: string[] = []
@@ -426,7 +490,7 @@ function getAgentName(id: string): string {
   const a = agents.value.find(x => x.agent_id === id)
   if (a?.title) return a.title
   if (agentNames[id]) return agentNames[id]
-  if (a) return 'Prime-' + a.agent_id.slice(0, 8)
+  if (a) return (a.kind === 'xml' ? 'Xml-' : 'Prime-') + a.agent_id.slice(0, 8)
   return agentNames[id] || id
 }
 
@@ -1087,6 +1151,40 @@ body {
   font-weight: 600;
   color: #cbd5e1;
 }
+
+.create-kind {
+  display: flex;
+  gap: 6px;
+}
+.create-kind-btn {
+  padding: 3px 14px;
+  font-size: 12px;
+  color: #94a3b8;
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  transition: all .12s;
+}
+.create-kind-btn:hover { border-color: #4f46e5; color: #cbd5e1; }
+.create-kind-btn.on { background: #1f2235; border-color: #6366f1; color: #c7d2fe; }
+
+.xml-create {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 420px;
+}
+.xml-label {
+  display: block;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+.xml-hint { font-size: 12px; color: #64748b; }
+.xml-footer { display: flex; align-items: center; gap: 10px; }
+.xml-error { font-size: 12px; color: #f87171; }
 
 .create-body {
   flex: 1;

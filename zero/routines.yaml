@@ -29,6 +29,7 @@ routines:
   - routines/user/list_routines.py
   - routines/user/check_routine_name.py
   - routines/user/routine_doc.py
+  - routines/user/reload_routines.py
   - routines/user/agent_presets.py
 
   # prime agent (入口 + manager) + condenser
@@ -42,7 +43,7 @@ routines:
   # 通用 skill routines (整包)
   - routines/user/skills
 
-  # XML body 编排 routines (整包: Act / RunXml / PrintBody / Speak + TTS)
+  # XML body 编排 routines (整包: Act / RunXml / Speak / Wait + TTS)
   - routines/user/xml
 
   # xml agent (XmlAgents manager + CreateXmlAgent + XmlAgent + Condenser)

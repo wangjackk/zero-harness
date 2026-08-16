@@ -30,7 +30,8 @@ from .protocol import (
 
 logger = setup_logger('tts')
 
-_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+# plan 网关 (agent plan 套餐通道; 老 /api/v3/tts/bidirection 已 401, 同 zero-rs config.toml)
+_WS_URL = "wss://openspeech.bytedance.com/api/v3/plan/tts/bidirection"
 
 _DEFAULT_AUDIO_PARAMS: dict = {
     "format": "pcm",

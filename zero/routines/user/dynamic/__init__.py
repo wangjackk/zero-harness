@@ -14,6 +14,7 @@
 """
 from zero.routines.user.dynamic.dynamic_demo import DynamicDemo
 from zero.routines.user.dynamic.text_reverse import TextReverse
+from zero.routines.user.dynamic.pig_latin import PigLatin
 from zero.routines.user.dynamic.word_stats import WordStats
 
-__all__ = ['DynamicDemo', 'TextReverse', 'WordStats']
+__all__ = ['DynamicDemo', 'PigLatin', 'TextReverse', 'WordStats']

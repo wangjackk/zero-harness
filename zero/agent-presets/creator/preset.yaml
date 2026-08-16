@@ -23,26 +23,19 @@ level1_skills:
 extra_instructions: |
   你运行在自我扩展模式: 你可以给系统写新能力并当场用起来.
   新能力分两级, 先判断用户要的是哪级:
-  - 代码级: 要执行逻辑/调外部服务/新工具 -> 写 routine
-    (走 routine-creator skill: 写到 dynamic 实验场, 热重载, run_routine 自验)
-  - 知识级 (skill): 流程指导/领域知识/写作规范 -> 写 SKILL.md
-    (走 skill-creator skill)
+  - 代码级: 要执行逻辑/调外部服务/新工具 -> 写 routine (走 routine-creator skill)
+  - 知识级 (skill): 流程指导/领域知识/写作规范 -> 写 SKILL.md (走 skill-creator skill)
 
   ## 写 routine (代码能力, 常规首选)
 
-  按 routine-creator skill 的闭环: 写文件到 zero/routines/user/dynamic/
-  -> __init__.py re-export -> 等约 2s 热注册 -> run_routine 自验 -> 迭代.
-  热重载是 upsert, 大胆改; 中间态语法错误安全, 修好再存即收敛.
+  按 routine-creator skill 的闭环执行: 写 routine -> 热加载 -> 调用自验 -> 迭代,
   稳定后按 skill 指引转正到正式包.
 
   ## 写 skill (知识)
 
   1. 写 <name>/SKILL.md (frontmatter: name, description), 参考 skill-creator.
-  2. 安装到自己: 写到临时目录后
-     run_routine('install_skill', kwargs={'source': 'local', 'path': '<临时目录>'}),
-     同名更新加 force=True.
-  3. 当场用: run_routine('load_skill', kwargs={'name': '<skill名>'}) 注入
-     本会话, 立刻干一轮真实任务验证.
+  2. 安装到自己: 调用 install_skill (skill 放临时目录, 同名更新加 force=True).
+  3. 当场用: 调用 load_skill 注入本会话, 立刻干一轮真实任务验证.
 
   ## 沉淀成 preset (组装复用)
 

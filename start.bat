@@ -35,16 +35,25 @@ if not exist "%ROOT%zero\frontend\web\node_modules" (
     popd
 )
 
+rem -- kill previous instances (repeat-run = restart) --
+rem 1) command-line kill: each launcher cmd below carries a "[zero-harness xxx]"
+rem    marker; matching cmd.exe + taskkill /T takes down the whole tree
+rem    (cmd -> go/uv/bun -> kernel/python/node) without touching the WT host
+rem 2) port 8888/7780/5173: clean up orphan listeners whose window is gone
+echo [cleanup] stopping previous instances...
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -match '\[zero-harness (kernel|server|web)\]' } | ForEach-Object { taskkill /T /F /PID $_.ProcessId }" >nul 2>&1
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8888,7780,5173 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+
 echo [start] kernel...
-start "zero-kernel" /D "%ROOT%kernel" cmd /k "go run ."
+start "zero-kernel" /D "%ROOT%kernel" cmd /k "echo [zero-harness kernel] && go run ."
 timeout /t 3 /nobreak >nul
 
 echo [start] zero server...
-start "zero-server" /D "%ROOT%zero" cmd /k "uv run python main.py"
+start "zero-server" /D "%ROOT%zero" cmd /k "echo [zero-harness server] && uv run python main.py"
 timeout /t 2 /nobreak >nul
 
 echo [start] frontend (%PKG%)...
-start "zero-web" /D "%ROOT%zero\frontend\web" cmd /k "%PKG% run dev"
+start "zero-web" /D "%ROOT%zero\frontend\web" cmd /k "echo [zero-harness web] && %PKG% run dev"
 
 echo [done] kernel=8888  server=7780 (routines.yaml)  web=http://localhost:5173
 endlocal

@@ -1,9 +1,10 @@
 import { ref, computed } from 'vue'
 
 /**
- * Agent management state + HTTP calls (prime only).
+ * Agent management state + HTTP calls (prime + xml kinds).
  *
- * Backend (web_server.py) routes:
+ * Backend (web_server.py) routes (kind 分发: prime -> prime_agent_manager,
+ * xml -> xml_agents):
  *   GET  /agents                  -> {agents: AgentRow[]}
  *   POST /agents/create           -> {ok, agent_id?, session_id?, ...}
  *   POST /agents/resume           -> {ok, agent_id?, session_id?, ...}
@@ -18,7 +19,7 @@ import { ref, computed } from 'vue'
 
 export interface AgentRow {
   agent_id: string
-  kind: 'prime'
+  kind: 'prime' | 'xml'
   session_id: string | null
   project_dir: string | null
   model: string | null
@@ -40,7 +41,7 @@ export interface ProjectGroup {
 }
 
 export interface CreateAgentParams {
-  kind: 'prime'
+  kind: 'prime' | 'xml'
   preset?: string
   project_dir?: string
   model?: string
@@ -68,7 +69,7 @@ export interface PresetRow {
 
 /** resume 参数: agent_id 必传, 其他可选 (不传则后端从 DB 取 model 等). */
 export interface ResumeAgentParams {
-  kind: 'prime'
+  kind: 'prime' | 'xml'
   agent_id: string
   model?: string
   project_dir?: string

@@ -1,4 +1,4 @@
-﻿"""XmlAgent -- reactive agent(ContextProvider 记忆 + 内置 LLM,每轮直推 act 子).
+"""XmlAgent -- reactive agent(ContextProvider 记忆 + 内置 LLM,每轮直推 act 子).
 
 - 直接继承 ``Routine``(被动常驻编排器,不收 XML body,不派生工具子)--
   XmlRoutine 的 body_shell/parser/on_body_chunk 一套它都不用,继承是历史残留.
@@ -111,7 +111,7 @@ class XmlAgent(Routine):
     # LLM 可主动调用的 routine 白名单:进 system prompt(XML 示例形式).
     # output 说话类是**被动**派发(裸文本自动走 output),不在此列--LLM 只输出自然语言即可.
     PROMPT_ROUTINES: list[str] = ['play_music', 'list_music', 'query_weather', 'print_heart',
-                                  'WAIT', 'list_routines', 'routine_doc',
+                                  'wait', 'list_routines', 'routine_doc',
                                   'list_running_agents', 'send_message']
 
 

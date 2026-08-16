@@ -94,6 +94,7 @@ __all__ = ['DynamicDemo', 'MyThing']
 - **顺序无关**：文件/manifest 谁先写都行。import 失败（写到一半、manifest 先于文件、语法错）时 watcher 每秒自动重试，两边写齐后 ~1.5s 内自动注册
 - **中间态安全**：失败期间老版本继续服务（kernel 路由不动）；修好保存后下一轮自动收敛
 - 卸载 = 从 `__all__` 撤下（自动 deregister），文件随后删不删都行
+- **逃生口**：怀疑没收敛（如 yaml 条目增删误杀包内同名 routine）→ 调 `reload_routines`（`path`=yaml 条目，缺省全部）强制重载，返回 `{reloaded, deregistered, failed}`
 
 ## 约束（硬规则）
 
