@@ -8,8 +8,7 @@ import asyncio
 import unittest
 
 import grpc
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct
+from routine.protocol import dict_to_frame, frame_to_dict
 
 from routine import Routine, Routines, RoutineHandle, RoutineHub, GrpcServerTransport
 from routine.grpc import routine_pb2_grpc
@@ -141,7 +140,7 @@ class _TestClient:
     async def _read(self):
         try:
             async for msg in self._call:
-                d = MessageToDict(msg)
+                d = frame_to_dict(msg)
                 if d.get('event') == LIFECYCLE_CREATED:
                     # created 回报:测试不关心,丢弃(避免污染无 predicate 的 recv FIFO)
                     continue
@@ -150,8 +149,7 @@ class _TestClient:
             pass
 
     async def _send(self, d):
-        s = Struct()
-        s.update(d)
+        s = dict_to_frame(d)
         await self._call.write(s)
 
     async def create(self, id, name, kwargs=None):
@@ -168,10 +166,9 @@ class _TestClient:
         await self._send({'event': LIFECYCLE_STOP, 'id': id})
 
     async def req(self, msg):
-        s = Struct()
-        s.update(msg)
+        s = dict_to_frame(msg)
         resp = await self.stub.Req(s)
-        return MessageToDict(resp)
+        return frame_to_dict(resp)
 
     async def recv(self, timeout=2.0):
         return await asyncio.wait_for(self.events.get(), timeout=timeout)

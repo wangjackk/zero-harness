@@ -29,7 +29,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from routine import Routine, RoutineSource
 
-from .shell import Shell
+from ..shell import Shell
 from .body_chunk import BodyChunk, BodyChunkKind, TextChunk
 from .xml_parser import (
     ChildBody,

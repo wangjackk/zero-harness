@@ -4,12 +4,19 @@ package routine;
 
 option go_package = "kernel/grpc;grpc";
 
-import "google/protobuf/struct.proto";
-
-// RoutineService 调度器核心（kernel）与远端 routine server 之间的 gRPC 契约。
-// 不在 wire 上写死 Start/Stop 等方法，而是一个通用 Req + 双向 Stream，
-// 业务语义靠 google.protobuf.Struct（= map[string]any）里的 event 字段表达。
+// Frame -- wire 上唯一消息类型: payload = 完整事件消息的 JSON 文本
+// (平铺 dict: {event, id, req_id, ...业务字段}, 事件字段面见 py 侧
+// routine/protocol.py 的事件常量, proto 层不镜像字段----加事件零重生成).
+//
+// 边界编解码: py json.dumps/loads (C 实现) / Go sonic(JIT) / rs
+// serde_json, 各语言内部数据流(map/dict/Value)不变. 相比
+// google.protobuf.Struct 少两层 Value 包装反射, wire 体积更小,
+// 且跨语言统一 JSON string 单一格式(kernel 对 payload 按需解析).
 service RoutineService {
-  rpc Req(google.protobuf.Struct) returns (google.protobuf.Struct);
-  rpc Stream(stream google.protobuf.Struct) returns (stream google.protobuf.Struct);
+  rpc Req(Frame) returns (Frame);
+  rpc Stream(stream Frame) returns (stream Frame);
+}
+
+message Frame {
+  string payload = 1;
 }

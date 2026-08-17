@@ -2,12 +2,12 @@ package shell_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"kernel/command"
 	"kernel/conn"
@@ -65,7 +65,10 @@ func TestExecuteRoundTrip(t *testing.T) {
 			if err != nil {
 				return
 			}
-			msg := m.AsMap()
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(m.Payload), &msg); err != nil {
+				return
+			}
 			id, _ := msg["id"].(string)
 			switch conn.Event(msg) {
 			case conn.LifecycleCreated:
@@ -126,6 +129,6 @@ func TestExecuteRoundTrip(t *testing.T) {
 }
 
 func sendStream(stream kgrpc.RoutineService_StreamClient, msg map[string]any) {
-	s, _ := structpb.NewStruct(msg)
-	_ = stream.Send(s)
+	b, _ := json.Marshal(msg)
+	_ = stream.Send(&kgrpc.Frame{Payload: string(b)})
 }

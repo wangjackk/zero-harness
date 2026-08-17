@@ -9,7 +9,7 @@ Driven via req (bridge -> entry routine -> manager):
 
 Mirrors prime/manager.py. Agent records persist in the sqlite Memory
 (xml_agent/memory.py agents table): create writes a row, list reads from
-the db. agent_id 是身份, session_id 是 UUID 会话身份 (agents 表持久化). 无线性链. status/handle_id
+the db. agent_id 是身份, session_id 是 UUID 会话身份 (agents 表持久化). 无线性链. status/routine_id
 是运行时态, 由 manager 内存管 (self._agents dict), 不持久化. live 状态跨重启
 全丢失, list_agents 通过内存判断 live/stopped.
 
@@ -191,15 +191,26 @@ class XmlAgents(Routine):
         }
         action = 'resumed' if is_resume else 'created'
         _log.info(
-            '%s xml agent: agent_id=%s handle_id=%s model=%s',
+            '%s xml agent: agent_id=%s routine_id=%s model=%s',
             action, agent_id, handle.id, model,
         )
         return {
             'ok': True,
             'agent_id': agent_id,
-            'handle_id': handle.id,
+            'routine_id': handle.id,
             'session_id': session_id,
         }
+
+    @request('live_agents')
+    async def on_live_agents(self, source, data: dict) -> dict:
+        """纯内存 live agent 快照 [{agent_id, routine_id}] ---- 热路径
+        (rid 解析) 专用, 不碰 SQLite. 全量元数据走 list_agents."""
+        out = []
+        for aid, info in self._agents.items():
+            handle = info.get('handle')
+            if handle is not None and not handle.is_done():
+                out.append({'agent_id': aid, 'routine_id': handle.id})
+        return {'agents': out}
 
     @request('list_agents')
     async def on_list(self, source, data: dict) -> dict:
@@ -217,7 +228,7 @@ class XmlAgents(Routine):
                 'model': row.get('model'),
                 'reasoning_effort': (info or {}).get('reasoning_effort'),
                 'status': 'live' if live else 'stopped',
-                'handle_id': handle.id if live else None,
+                'routine_id': handle.id if live else None,
                 'title': row.get('title'),
                 'created_at': row.get('created_at'),
                 'updated_at': row.get('updated_at'),

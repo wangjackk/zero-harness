@@ -2,19 +2,31 @@
 
 平铺事件名(msg["event"] 分发),只保留
 create / start / stop 三类生命周期事件 + Req 查询事件.
+
+wire 格式: Frame{payload=JSON string} ---- 整条平铺消息一次编码/解码,
+data 等业务字段随 payload 整体编解码, 无嵌套转义.
 """
 from __future__ import annotations
 
 from enum import Enum
 
-from google.protobuf.struct_pb2 import Struct
+import orjson
+from .grpc.routine_pb2 import Frame
 
 
-def dict_to_struct(d: dict) -> Struct:
-    """dict -> protobuf Struct(grpc wire 编码共用 helper)."""
-    s = Struct()
-    s.update(d)
-    return s
+def dict_to_frame(d: dict) -> Frame:
+    """dict -> Frame(payload=紧凑 JSON 文本).
+
+    orjson 默认即紧凑分隔符 + 非 ASCII 直出(等价 stdlib 的
+    ensure_ascii=False, separators=(',',':')), 输出 bytes 再 decode 成
+    proto 要求的 string.
+    """
+    return Frame(payload=orjson.dumps(d).decode())
+
+
+def frame_to_dict(f: Frame) -> dict:
+    """Frame -> dict.格式不对直接抛 JSONDecodeError 暴露协议破坏,不做兼容读."""
+    return orjson.loads(f.payload)
 
 
 class ControlDoneReason(str, Enum):

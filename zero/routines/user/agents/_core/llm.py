@@ -38,6 +38,9 @@ _log = setup_logger('prime.llm')
 
 _CONFIG_PATH = Path(__file__).resolve().parents[4] / 'models.yaml'
 
+# stream(reasoning_effort=...) 的 "未指定" 哨兵 (None 是合法值 = 显式关)
+_UNSET = object()
+
 # provider 级别的标量字段 (非 model 入口), 展平时跳过.
 _PROVIDER_SCALAR_KEYS: frozenset[str] = frozenset({'api_key', 'base_url'})
 
@@ -229,12 +232,18 @@ class LLMClient:
         tool_choice: Any = None,
         previous_response_id: str | None = None,
         disable_reasoning: bool = False,
+        reasoning_effort: Any = _UNSET,
         **extra_kw: Any,
     ) -> AsyncIterator[TextDelta | ReasoningDelta | Completed]:
         provider = self._provider
         client = _get_client(provider)
         model_id = provider.model_id
         base_url = provider.base_url
+
+        # per-call effort 覆盖 (sentinel 区分 "未指定" 与 None=off);
+        # 不落实例态 ---- 单次请求生效, dsh "适配器默认值不粘步" 语义
+        effort = self._reasoning_effort if reasoning_effort is _UNSET \
+            else reasoning_effort
 
         kw: dict[str, Any] = {
             'model': model_id,
@@ -245,7 +254,7 @@ class LLMClient:
             **extra_kw,
         }
         # reasoning 参数格式由 provider 决定
-        provider.apply_reasoning(kw, self._reasoning_effort, disable_reasoning)
+        provider.apply_reasoning(kw, effort, disable_reasoning)
         if instructions:
             kw['instructions'] = instructions
         # 合并运行时 function tools + 模型原生 tools (如 web_search)

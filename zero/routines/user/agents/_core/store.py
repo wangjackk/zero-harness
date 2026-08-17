@@ -163,7 +163,7 @@ class Store:
             )
 
             # --- agents: 历史元数据 (无运行时状态列) ---
-            # status / handle_id / peer_seq 等运行时字段不入表,
+            # status / routine_id / peer_seq 等运行时字段不入表,
             # 由 manager 内存维护; 跨重启只剩元数据 + session_id.
             # session_id 列: UUID, 创建时生成, resume 时复用 (保证消息流连续).
             c.execute('''

@@ -2,12 +2,13 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"kernel/bus"
 	"kernel/conn"
@@ -72,7 +73,10 @@ func TestServerConnTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("outbound Recv: %v", err)
 	}
-	got := m.AsMap()
+	got, err := frameToMap(m)
+	if err != nil {
+		t.Fatalf("outbound frame: %v", err)
+	}
 	if got["event"] != "test.out" || got["id"] != "1" {
 		t.Fatalf("outbound msg = %v, want event=test.out id=1", got)
 	}
@@ -141,11 +145,11 @@ func TestServerConnDisconnect(t *testing.T) {
 
 // send 把 map 发到 stream(test client 出站).
 func send(stream RoutineService_StreamClient, msg map[string]any) error {
-	s, err := structpb.NewStruct(msg)
+	f, err := mapToFrame(msg)
 	if err != nil {
 		return err
 	}
-	return stream.Send(s)
+	return stream.Send(f)
 }
 
 // waitAccepted 从 channel 取 conn(onAccept 在 Stream accept 时异步发).
@@ -166,5 +170,70 @@ func recvConnChange(sub *bus.Subscriber, timeout time.Duration) *conn.ConnChange
 		return &cc
 	case <-time.After(timeout):
 		return nil
+	}
+}
+
+// benchMsg 典型 wire 事件:平铺生命周期字段 + 嵌套 kwargs/data.
+func benchMsg() map[string]any {
+	return map[string]any{
+		"event": "lifecycle.created",
+		"id":    "r-123",
+		"name":  "edit",
+		"kwargs": map[string]any{
+			"text":     "hello world 你好",
+			"count":    3,
+			"enabled":  true,
+			"items":    []any{"a", nil, 2.5},
+			"children": []any{map[string]any{"x": 1}, map[string]any{"y": "z"}},
+		},
+	}
+}
+
+// BenchmarkEncodeSonic vs BenchmarkEncodeStd:wire 边界编码对比.
+func BenchmarkEncodeSonic(b *testing.B) {
+	msg := benchMsg()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := mapToFrame(msg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEncodeStd(b *testing.B) {
+	msg := benchMsg()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := json.Marshal(msg); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkDecodeSonic vs BenchmarkDecodeStd:wire 边界解码对比.
+func BenchmarkDecodeSonic(b *testing.B) {
+	f, err := mapToFrame(benchMsg())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := frameToMap(f); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDecodeStd(b *testing.B) {
+	raw, err := sonic.Marshal(benchMsg())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

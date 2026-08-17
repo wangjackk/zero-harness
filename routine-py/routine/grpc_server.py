@@ -13,11 +13,13 @@ import asyncio
 from typing import Any, Dict, Optional
 
 import grpc
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct
+
+from .protocol import (
+    ROUTINE_GET_MODULE_TREE, ROUTINE_GET_RUNNING, dict_to_frame, frame_to_dict,
+)
 
 from .grpc import routine_pb2_grpc
-from .protocol import ROUTINE_GET_MODULE_TREE, ROUTINE_GET_RUNNING, dict_to_struct
+from .grpc.routine_pb2 import Frame
 from .transport import Transport
 from uuid import uuid4
 
@@ -90,7 +92,7 @@ class GrpcServerTransport(Transport):
 
     async def send_event(self, payload: Dict[str, Any],
                          peer_id: Optional[str] = None) -> None:
-        message = dict_to_struct(payload)
+        message = dict_to_frame(payload)
         if peer_id is None:
             for q in list(self._out_queues.values()):
                 await q.put(message)
@@ -176,7 +178,7 @@ class GrpcServerTransport(Transport):
         async def reader() -> None:
             try:
                 async for item in request_iterator:
-                    msg = MessageToDict(item)
+                    msg = frame_to_dict(item)
                     try:
                         await self._inbound(peer_id, msg)
                     except asyncio.CancelledError:
@@ -217,10 +219,12 @@ class GrpcServerTransport(Transport):
             runtime.logger.info(
                 f'❌ [Stream] disconnected: {peer_id} (stopped {n} instance(s))')
 
-    async def serve_req(self, request: Struct) -> Struct:
+    async def serve_req(self, request) -> Frame:
         if self._req_handler is None:
-            return dict_to_struct({'error': 'no req handler'})
-        return await self._req_handler(request)
+            return dict_to_frame({'error': 'no req handler'})
+        msg = frame_to_dict(request)
+        resp = await self._req_handler(msg)
+        return dict_to_frame(resp)
 
     def _ensure_queue(self, peer_id: str) -> asyncio.Queue:
         q = self._out_queues.get(peer_id)

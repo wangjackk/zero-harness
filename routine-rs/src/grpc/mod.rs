@@ -4,16 +4,27 @@ pub mod routine {
 }
 
 use crate::{
-    protocol::struct_to_json,
+    protocol::{json_to_payload, payload_to_json, JsonObject},
     server::{BusinessEventRouter, LifecycleManager, QueryService, ServerRuntime},
 };
 use futures::Stream;
-use prost_types::Struct;
 use routine::routine_service_server::{RoutineService, RoutineServiceServer};
 use std::{pin::Pin, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tonic::{Request, Response, Status};
+
+/// 边界编码:JsonObject → Frame(payload=JSON 文本)。
+pub fn json_to_frame(data: &JsonObject) -> routine::Frame {
+    routine::Frame {
+        payload: json_to_payload(data),
+    }
+}
+
+/// 边界解码:Frame → JsonObject。格式不对 panic 暴露协议破坏(见 protocol::frame)。
+pub fn frame_to_json(frame: &routine::Frame) -> JsonObject {
+    payload_to_json(&frame.payload)
+}
 
 #[derive(Clone)]
 pub struct GrpcRoutineService {
@@ -45,11 +56,11 @@ impl GrpcRoutineService {
 
 #[tonic::async_trait]
 impl RoutineService for GrpcRoutineService {
-    type StreamStream = Pin<Box<dyn Stream<Item = Result<Struct, Status>> + Send + Sync + 'static>>;
+    type StreamStream = Pin<Box<dyn Stream<Item = Result<routine::Frame, Status>> + Send + Sync + 'static>>;
 
     async fn stream(
         &self,
-        request: Request<tonic::Streaming<Struct>>,
+        request: Request<tonic::Streaming<routine::Frame>>,
     ) -> Result<Response<Self::StreamStream>, Status> {
         let peer_id = request
             .remote_addr()
@@ -57,7 +68,7 @@ impl RoutineService for GrpcRoutineService {
             .unwrap_or_else(|| "unknown".to_string());
         tracing::info!("[Stream] connected: {peer_id}");
         let mut inbound = request.into_inner();
-        let (sender, receiver) = mpsc::unbounded_channel::<Struct>();
+        let (sender, receiver) = mpsc::unbounded_channel::<routine::Frame>();
         self.runtime
             .peer_to_queue
             .lock()
@@ -72,7 +83,7 @@ impl RoutineService for GrpcRoutineService {
             while let Some(item) = inbound.next().await {
                 match item {
                     Ok(message) => {
-                        let msg = struct_to_json(&message);
+                        let msg = frame_to_json(&message);
                         business.safe_route_stream(&peer_for_inbound, msg).await;
                     }
                     Err(error) => {
@@ -101,7 +112,7 @@ impl RoutineService for GrpcRoutineService {
         Ok(Response::new(Box::pin(stream) as Self::StreamStream))
     }
 
-    async fn req(&self, request: Request<Struct>) -> Result<Response<Struct>, Status> {
+    async fn req(&self, request: Request<routine::Frame>) -> Result<Response<routine::Frame>, Status> {
         Ok(Response::new(
             self.query.handle_req(request.into_inner()).await,
         ))

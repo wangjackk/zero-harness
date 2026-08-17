@@ -19,8 +19,8 @@ from routine import Routine
 
 from .prompt import DESCRIPTION
 
-# Agent Plan API Key(跟豆包 LLM 共用同一个),从环境变量 ARK_API_KEY 读取.
-_DEFAULT_API_KEY = os.environ.get('ARK_API_KEY', '')
+# Agent Plan API Key(跟豆包 LLM 共用同一个),从环境变量 SEED_API_KEY 读取
+# (.env 加载于 main.py 启动早期, 早于 routine import, run 时直接读即可).
 _SEARCH_URL = 'https://open.feedcoopapi.com/search_api/web_search'
 _REQ_TIMEOUT = 15.0
 
@@ -100,7 +100,10 @@ class WebSearch(Routine):
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         inp = WebSearchInput(**kwargs)
 
-        api_key = os.environ.get('ARK_API_KEY', _DEFAULT_API_KEY)
+        api_key = os.environ.get('SEED_API_KEY', '')
+        if not api_key:
+            return {'ok': False,
+                    'error': 'SEED_API_KEY not configured (zero/.env)'}
         payload = self._build_payload(inp)
 
         self._logger.info('web_search: query=%r type=%s count=%d',

@@ -180,15 +180,24 @@ class PrimeAgentManager(Routine):
         }
         action = 'resumed' if is_resume else 'created'
         _log.info(
-            '%s prime agent: agent_id=%s handle_id=%s session_id=%s project_dir=%s',
+            '%s prime agent: agent_id=%s routine_id=%s session_id=%s project_dir=%s',
             action, agent_id, handle.id, session_id, project_dir,
         )
         return {
             'ok': True,
             'agent_id': agent_id,
-            'handle_id': handle.id,
+            'routine_id': handle.id,
             'session_id': session_id,
         }
+
+    @request('live_agents')
+    async def on_live_agents(self, source, data: dict) -> dict:
+        """纯内存 live agent 快照 [{agent_id, routine_id}] ---- 热路径
+        (rid 解析) 专用, 不碰 SQLite. 全量元数据走 list_agents."""
+        return {'agents': [
+            {'agent_id': aid, 'routine_id': info['handle'].id}
+            for aid, info in self._agents.items() if info.get('handle')
+        ]}
 
     @request('list_agents')
     async def on_list(self, source, data: dict) -> dict:
@@ -227,7 +236,7 @@ class PrimeAgentManager(Routine):
                 'updated_at': row.get('updated_at'),
                 'session_id': (info or {}).get('session_id'),
                 'project_dir': (info or {}).get('project_dir'),
-                'handle_id': handle.id if handle else None,
+                'routine_id': handle.id if handle else None,
                 'status': 'live' if live else 'stopped',
                 'live': live,
                 'started': live,

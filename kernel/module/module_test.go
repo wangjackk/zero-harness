@@ -3,8 +3,6 @@ package module
 import (
 	"encoding/json"
 	"testing"
-
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // tree4 测试用模块树(flat map 构造):
@@ -318,11 +316,11 @@ func TestSerializeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSerializeStructPB(t *testing.T) {
+func TestSerializeJSON(t *testing.T) {
 	tr := tree4()
 	ser := tr.Serialize()
-	if _, err := structpb.NewStruct(ser); err != nil {
-		t.Fatalf("Serialize 输出无法被 structpb.NewStruct 序列化(proto: invalid type 报错): %v", err)
+	if _, err := json.Marshal(ser); err != nil {
+		t.Fatalf("Serialize 输出无法被 json.Marshal 序列化: %v", err)
 	}
 }
 

@@ -15,7 +15,8 @@ from .grpc_client import GrpcClientTransport
 from .grpc_server import GrpcServerTransport
 from .handle import RoutineHandle
 from .module_tree import ModuleTree
-from .routine import Modules, RoutineSource, Routine, Routines, request, stream, subscribe
+from .routine import (Modules, PassiveConfig, RoutineSource, Routine, Routines,
+                      request, stream, subscribe)
 from .server import RoutineHub, start_client, start_server
 from .transport import Transport
 
@@ -29,6 +30,7 @@ __all__ = [
     'RoutineIO',
     'ModuleTree',
     'Modules',
+    'PassiveConfig',
     'Transport',
     'GrpcServerTransport',
     'GrpcClientTransport',

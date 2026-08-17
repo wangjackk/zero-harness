@@ -7,8 +7,7 @@ import asyncio
 import unittest
 
 import grpc
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct
+from routine.protocol import dict_to_frame, frame_to_dict
 
 from routine import Routine, Routines, RoutineHub, stream, GrpcServerTransport
 from routine.errors import StreamCancelled
@@ -93,7 +92,7 @@ class _KernelRelayClient:
     async def _read(self):
         try:
             async for msg in self._call:
-                d = MessageToDict(msg)
+                d = frame_to_dict(msg)
                 ev = d.get('event', '')
                 if ev in self._MSG_DELIVERED:
                     await self._relay(d, self._MSG_DELIVERED[ev])
@@ -113,13 +112,11 @@ class _KernelRelayClient:
                 'data': data,
                 'source': {'id': source_id},
             }
-            s = Struct()
-            s.update(delivered)
+            s = dict_to_frame(delivered)
             await self._call.write(s)
 
     async def _send(self, d):
-        s = Struct()
-        s.update(d)
+        s = dict_to_frame(d)
         await self._call.write(s)
 
     async def create(self, id, name, kwargs=None):

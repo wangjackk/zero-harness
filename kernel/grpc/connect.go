@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"kernel/bus"
 	"kernel/conn"
@@ -145,11 +144,11 @@ func (c *Client) onStreamError() {
 	c.conn.Connect()
 }
 
-// send 出站:structpb.NewStruct + stream.Send.被 sendLoop 调(消费 conn.out topic).
+// send 出站:mapToFrame + stream.Send.被 sendLoop 调(消费 conn.out topic).
 // stream 没就绪(首次连接 / 断线重连中):等 streamReady,不立即丢.超时(30s)兜底
 // 防永久阻塞;Close 后不等直接报错(sendLoop publish OutFail,Manager resolve chan).
 func (c *Client) send(msg map[string]any) error {
-	s, err := structpb.NewStruct(msg)
+	f, err := mapToFrame(msg)
 	if err != nil {
 		return err
 	}
@@ -161,7 +160,7 @@ func (c *Client) send(msg map[string]any) error {
 	if c.stream == nil {
 		return fmt.Errorf("client disconnected (reconnecting)")
 	}
-	return c.stream.Send(s)
+	return c.stream.Send(f)
 }
 
 // waitStreamReady 等 stream 就绪(connect 成功 close streamReady).

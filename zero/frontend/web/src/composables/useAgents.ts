@@ -26,7 +26,7 @@ export interface AgentRow {
   reasoning_effort: string | null
   plan_mode: boolean
   status: 'live' | 'stopped' | string
-  handle_id: string | null
+  routine_id: string | null
   title: string | null
   created_at: string
   updated_at: string

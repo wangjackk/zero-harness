@@ -3,13 +3,13 @@
 //! 对齐 Python `routine/routine/grpc_client.py` 的 `GrpcClientTransport`。
 //! 连接成功后:注册出站通道 → push catalog → recv loop 分发生命周期事件。
 
+use super::frame_to_json;
 use super::routine::routine_service_client::RoutineServiceClient;
 use crate::{
     core::RoutineIo,
-    protocol::{events::*, struct_to_json, JsonObject, RawWireEvent},
+    protocol::{events::*, JsonObject, RawWireEvent},
     server::{LifecycleManager, QueryService, ServerRuntime},
 };
-use prost_types::Struct;
 use serde_json::Value;
 use std::{
     sync::{
@@ -127,7 +127,7 @@ impl GrpcClient {
         eprintln!("[client] channel ready");
         let mut client = RoutineServiceClient::new(channel);
 
-        let (tx, rx) = mpsc::unbounded_channel::<Struct>();
+        let (tx, rx) = mpsc::unbounded_channel::<super::routine::Frame>();
         let outbound = UnboundedReceiverStream::new(rx);
 
         // 注册出站通道(spawn 前注册,确保 send_catalog_push 能发到 channel)
@@ -169,7 +169,7 @@ impl GrpcClient {
         while let Some(item) = inbound.next().await {
             match item {
                 Ok(msg) => {
-                    let json_msg = struct_to_json(&msg);
+                    let json_msg = frame_to_json(&msg);
                     self.dispatch_inbound(json_msg).await;
                 }
                 Err(e) => {

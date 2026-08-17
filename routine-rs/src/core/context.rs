@@ -149,7 +149,7 @@ impl RunContext {
             RawWireEvent::new(ROUTINE_YIELD)
                 .with_field("id", self.id_value())
                 .with_field("source_id", self.id_value())
-                .with_field("data", data)
+                .with_data(&data)
                 .with_field("is_final", Value::Bool(false)),
         )
         .await
@@ -205,7 +205,7 @@ impl RunContext {
                     Value::Array(targets.into_iter().map(Value::String).collect()),
                 )
                 .with_field("topic", Value::String(event.to_string()))
-                .with_field("data", Value::Object(data.unwrap_or_default()))
+                .with_data(&Value::Object(data.unwrap_or_default()))
                 .with_field("source_id", self.id_value()),
         )
         .await
@@ -224,7 +224,7 @@ impl RunContext {
                     Value::String(namespace.unwrap_or("").to_string()),
                 )
                 .with_field("topic", Value::String(event.to_string()))
-                .with_field("data", Value::Object(data.unwrap_or_default()))
+                .with_data(&Value::Object(data.unwrap_or_default()))
                 .with_field("source_id", self.id_value()),
         )
         .await

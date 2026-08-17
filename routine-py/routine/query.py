@@ -11,15 +11,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct
-
 from .module_tree import ModuleTree
 from .protocol import (
     MODULE_TREE,
     REQ_EVENT_GET_MODULES,
     REQ_EVENT_GET_ROUTINES,
-    dict_to_struct,
 )
 from .routine import passive_wire
 
@@ -29,8 +25,8 @@ class QueryService:
         self.server = server
         self.runtime = runtime
 
-    async def handle_req(self, request: Struct) -> Struct:
-        msg = MessageToDict(request)
+    async def handle_req(self, msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Req 查询入口(dict 进 dict 出,Frame 编解码在 transport 层)."""
         event = msg.get('event', '')
 
         # module.tree:kernel 推模块树拓扑(dial-out 走同步 Req).缓存逻辑跟 dial-in
@@ -39,21 +35,20 @@ class QueryService:
         # connect/disconnect 变,kernel 每次变更重推全量(reconnect 重推直接覆盖).
         # server 缓存后本地算 cone/conflict----业务侧编排策略(AutoSP 等)用.
         if event == MODULE_TREE:
-            return dict_to_struct({'ok': self.cache_module_tree(msg)})
+            return {'ok': self.cache_module_tree(msg)}
 
         if event == REQ_EVENT_GET_MODULES:
-            return dict_to_struct({'modules': self.runtime.modules})
+            return {'modules': self.runtime.modules}
 
         if event == REQ_EVENT_GET_ROUTINES:
             # dial-out: hub_id 随首次 get_routines 响应带给 kernel,
             # kernel 据此校验唯一性(重复则 Close 这条 conn,拒绝连接).
-            resp: Dict[str, Any] = {
+            return {
                 'routines': self.build_routines(),
                 'hub_id': self.server.hub_id,
             }
-            return dict_to_struct(resp)
 
-        return dict_to_struct({})
+        return {}
 
     def cache_module_tree(self, msg: Dict[str, Any]) -> bool:
         """缓存 kernel 推来的 module.tree 拓扑(Req/Stream 共用).成功 True."""

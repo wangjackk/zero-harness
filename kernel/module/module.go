@@ -430,13 +430,7 @@ func (t *Tree) Serialize() map[string]any {
 			rec["name"] = m.Name // name==ID 不输出(缺省语义,省 wire)
 		}
 		if len(m.Children) > 0 {
-			// structpb.NewStruct 要求 slice 必须是 []any,不能 []string,否则报
-			// "proto: invalid type: []string".这里就地转.
-			kids := make([]any, len(m.Children))
-			for i, c := range m.Children {
-				kids[i] = c
-			}
-			rec["children"] = kids
+			rec["children"] = m.Children
 		}
 		mods[id] = rec
 	}

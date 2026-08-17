@@ -85,17 +85,34 @@ def subscribe(topic: str, *, namespace: str = ''):
     return deco
 
 
+@dataclass(frozen=True)
+class PassiveConfig:
+    """``is_passive`` 带参形态: passive + auto-start 默认入参.
+
+    单字段 ``kwargs`` ---- 与 wire ``{flag, kwargs}`` 的 kwargs 同源, 常驻
+    服务的启动配置(如 WebServer 的 host/port). frozen dataclass 只留嵌套
+    一种写法, 参数展开到表层在类型上不可表达; yaml 部署配置可整体覆盖.
+    """
+
+    kwargs: Dict[str, Any]
+
+
 def passive_wire(cls: 'Type[Routine]') -> Dict[str, Any]:
-    """is_passive(bool | dict) 序列化成 wire 单字段 ``{flag, kwargs}``.
+    """is_passive(bool | PassiveConfig) 序列化成 wire 单字段 ``{flag, kwargs}``.
 
     类声明 ``is_passive = True`` 本质是 ``{flag: true, kwargs: {}}`` 的语法糖;
-    dict 形态 = passive + auto-start 默认 kwargs.序列化统一嵌套结构,wire 上
-    ``is_passive`` 恒为 map(kernel 侧不用类型分支,直接取 flag/kwargs).
+    ``PassiveConfig(kwargs={...})`` 是带默认入参的形态. 序列化统一嵌套结构,
+    wire 上 ``is_passive`` 恒为 map(kernel 侧不用类型分支,直接取 flag/kwargs).
+    裸 dict 等杂型注册即 TypeError(协议违规立即暴露,不留兼容分支).
     """
     ip = getattr(cls, 'is_passive', False)
-    if isinstance(ip, dict):
-        return {'flag': True, 'kwargs': dict(ip)}
-    return {'flag': bool(ip), 'kwargs': {}}
+    if isinstance(ip, PassiveConfig):
+        return {'flag': True, 'kwargs': dict(ip.kwargs)}
+    if isinstance(ip, bool):
+        return {'flag': ip, 'kwargs': {}}
+    raise TypeError(
+        f'{cls.__name__}.is_passive 只接受 bool | PassiveConfig, '
+        f'got {type(ip).__name__}: {ip!r}')
 
 
 class Routine(ABC):
@@ -108,9 +125,9 @@ class Routine(ABC):
 
     enable: bool = True
     # passive 声明 + auto-start 默认入参(kernel 连上自动 Execute, kwargs 就是它).
-    # True: passive 无默认参; dict: passive + 默认 kwargs(常驻服务的启动配置,
-    # 如 WebServer 的 host/port); False: 普通 routine.
-    is_passive: bool | dict = False
+    # True: passive 无默认参; PassiveConfig(kwargs={...}): passive + 默认
+    # kwargs(常驻服务的启动配置, 如 WebServer 的 host/port); False: 普通 routine.
+    is_passive: bool | PassiveConfig = False
     # routine 命令名 ---- 类字段,子类可直接覆盖::
     #
     #     class Edit(Routine):
@@ -581,7 +598,12 @@ class Routines:
                 self._register_one(item)
 
     def _register_one(self, cls: 'Type[Routine]') -> None:
-        """注册单个 routine 类.同名覆盖时打 warning(开发期发现重复定义)."""
+        """注册单个 routine 类.同名覆盖时打 warning(开发期发现重复定义).
+
+        注册即校验 ``passive_wire``:``is_passive`` 杂型(裸 dict 等)当场
+        raise, 违规类进不了 catalog.
+        """
+        passive_wire(cls)
         existing = self._routines.get(cls.name)
         if existing is not None and existing is not cls:
             self._logger.warning(

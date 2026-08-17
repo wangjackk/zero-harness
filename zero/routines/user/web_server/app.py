@@ -119,17 +119,13 @@ def build_app(server_cls) -> FastAPI:
         inst = server_cls._active
         if inst is None:
             return _Json({'ok': False, 'error': 'no active WebServer instance'})
+        # 查 user rid: 两跳快查询(passive 直击 get_running_routines, 不骑 routine 生命周期)
+        from zero.routines.user.agents._core.rid import resolve_agent_rid
         try:
-            listing = await inst.ctx.call('list_running_agents')
+            agent_rid, _ = await resolve_agent_rid(inst, 'user')
         except Exception as exc:
-            return _Json({'ok': False, 'error': f'list_running_agents failed: {exc}'})
+            return _Json({'ok': False, 'error': f'resolve agent rid failed: {exc}'})
         t1 = time.perf_counter()
-        agents = (listing or {}).get('agents') or []
-        agent_rid = None
-        for a in agents:
-            if a.get('agent_id') == 'user':
-                agent_rid = a.get('rid')
-                break
         if not agent_rid:
             return _Json({'ok': False, 'error': "agent 'user' not live or not found"})
         try:
@@ -157,18 +153,13 @@ def build_app(server_cls) -> FastAPI:
         inst = server_cls._active
         if inst is None:
             return _Json({'ok': False, 'error': 'no active WebServer instance'})
-        # 查 agent rid
+        # 查 agent rid: 两跳快查询(不骑 routine 生命周期)
+        from zero.routines.user.agents._core.rid import resolve_agent_rid
         try:
-            listing = await inst.ctx.call('list_running_agents')
+            agent_rid, _ = await resolve_agent_rid(inst, agent_id)
         except Exception as exc:
-            return _Json({'ok': False, 'error': f'list_running_agents failed: {exc}'})
+            return _Json({'ok': False, 'error': f'resolve agent rid failed: {exc}'})
         t1 = time.perf_counter()
-        agents = (listing or {}).get('agents') or []
-        agent_rid = None
-        for a in agents:
-            if a.get('agent_id') == agent_id:
-                agent_rid = a.get('rid')
-                break
         if not agent_rid:
             return _Json({'ok': False, 'error': f'agent {agent_id!r} not live or not found'})
         # 转发给 agent, agent 内部 self.call 注入 from_agent_id

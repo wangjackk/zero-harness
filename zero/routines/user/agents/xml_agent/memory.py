@@ -1,4 +1,4 @@
-﻿"""XmlAgent 记忆 ---- 极简 sqlite.
+"""XmlAgent 记忆 ---- 极简 sqlite.
 
 对比老 ``AgentMemory``(树 + yaml 双写双读 + 流式缓冲 + 单例 + save/restore),
 这里只有一张表,一把锁,四个方法.无树,无 yaml,无单例,无持久化镜像分层.
@@ -137,7 +137,7 @@ class Memory:
                 'CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)'
             )
             # agents 表: 每个独立, 无线性链.
-            # status/handle_id 是运行时态 (manager 内存管), 不持久化.
+            # status/routine_id 是运行时态 (manager 内存管), 不持久化.
             # session_id 列: UUID, 创建时生成, resume 时复用 (保证消息流连续).
             c.execute('''
                 CREATE TABLE IF NOT EXISTS agents (

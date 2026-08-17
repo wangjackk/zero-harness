@@ -50,20 +50,17 @@ class FetchAgentState(Routine):
         inp = FetchAgentStateInput.model_validate(kwargs)
 
         # 1. 查 rid
-        try:
-            rid_resp = await self.call('get_agent_rid', {'agent_id': inp.agent_id})
-        except Exception as exc:
-            _log.warning('get_agent_rid failed: %r', exc)
-            return {'ok': False, 'error': f'get_agent_rid failed: {exc}'}
-        if not (rid_resp or {}).get('ok'):
-            return {'ok': False, 'error': (rid_resp or {}).get('error', 'agent not found')}
+        from zero.routines.user.agents._core.rid import resolve_agent_rid
+        rid, _agent_type = await resolve_agent_rid(self, inp.agent_id)
+        if not rid:
+            return {'ok': False, 'error': f'agent {inp.agent_id} not live or not found'}
 
         # 2. req agent_state (重试一次, 应对 agent 事件循环偶发调度延迟)
         state = None
         last_exc: Exception | None = None
         for attempt in (0, 1):
             try:
-                state = await self.req(rid_resp['rid'], 'agent_state', {}, timeout=5.0)
+                state = await self.req(rid, 'agent_state', {}, timeout=5.0)
                 break
             except Exception as exc:
                 last_exc = exc

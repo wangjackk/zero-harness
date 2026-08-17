@@ -78,13 +78,10 @@ class SendMessage(Routine):
         inp = SendMessageInput.model_validate(kwargs)
 
         # 1. 查目标 agent rid
-        try:
-            rid_resp = await self.call('get_agent_rid', {'agent_id': inp.to})
-        except Exception as exc:
-            return {'ok': False, 'error': f'get_agent_rid failed: {exc}'}
-        if not rid_resp.get('ok'):
-            return {'ok': False, 'error': rid_resp.get('error', 'agent not found')}
-        target_rid = rid_resp['rid']
+        from zero.routines.user.agents._core.rid import resolve_agent_rid
+        target_rid, _agent_type = await resolve_agent_rid(self, inp.to)
+        if not target_rid:
+            return {'ok': False, 'error': f'agent {inp.to} not live or not found'}
         t1 = time.perf_counter()
 
         # 2. req 目标 agent chat_message (单向: 只触发 _on_input, 立即返回)

@@ -16,5 +16,6 @@ from zero.routines.user.dynamic.dynamic_demo import DynamicDemo
 from zero.routines.user.dynamic.text_reverse import TextReverse
 from zero.routines.user.dynamic.pig_latin import PigLatin
 from zero.routines.user.dynamic.word_stats import WordStats
+from zero.routines.user.dynamic.text_stat import TextStat
 
-__all__ = ['DynamicDemo', 'PigLatin', 'TextReverse', 'WordStats']
+__all__ = ['DynamicDemo', 'PigLatin', 'TextReverse', 'TextStat', 'WordStats']

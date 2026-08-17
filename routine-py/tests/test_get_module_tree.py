@@ -11,8 +11,7 @@ import asyncio
 import unittest
 
 import grpc
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct
+from routine.protocol import dict_to_frame, frame_to_dict
 
 from routine import Routine, Routines, RoutineHub, GrpcServerTransport
 from routine.grpc import routine_pb2_grpc
@@ -55,7 +54,7 @@ class _FakeKernel:
     async def _read(self):
         try:
             async for msg in self._call:
-                d = MessageToDict(msg)
+                d = frame_to_dict(msg)
                 ev = d.get('event', '')
                 if ev == ROUTINE_GET_MODULE_TREE:
                     req_id = d.get('req_id', '')
@@ -65,8 +64,7 @@ class _FakeKernel:
                         'ok': True,
                         'tree': self._reply_tree,
                     }
-                    s = Struct()
-                    s.update(reply)
+                    s = dict_to_frame(reply)
                     await self._call.write(s)
                 else:
                     await self.events.put(d)
@@ -74,8 +72,7 @@ class _FakeKernel:
             pass
 
     async def _send(self, d):
-        s = Struct()
-        s.update(d)
+        s = dict_to_frame(d)
         await self._call.write(s)
 
     async def create(self, id, name):

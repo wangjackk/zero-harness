@@ -9,7 +9,7 @@ yaml 声明"启用哪些模块", 两种条目粒度:
 两种条目形态:
   - 纯字符串: ``- routines/user/ask.py``
   - dict (带 kwargs): passive routine 的启动配置. 注册时 kwargs 注入类的
-    ``is_passive``(dict 形态 = passive + auto-start 默认入参), 随 catalog
+    ``is_passive``(PassiveConfig = passive + auto-start 默认入参), 随 catalog
     推给 kernel; auto-start 时 ``Execute(name, kwargs)`` 带参拉起, ``run(kwargs)``
     自然收到 ---- 配置随注册一次流动, routine 内无需回头读 yaml.
 
@@ -27,7 +27,7 @@ from typing import Any, ClassVar, Dict, List, Set, Type
 
 import yaml
 
-from routine import Routine, Routines
+from routine import PassiveConfig, Routine, Routines
 from routine.errors import RegisterError
 from routine.logger import setup_logger
 
@@ -85,16 +85,17 @@ def _entry_classes(rel: str, seen: Set[Type[Routine]]) -> List[Type[Routine]]:
 
 
 def _inject_passive_kwargs(classes: List[Type[Routine]], kw: Dict[str, Any]) -> None:
-    """yaml 条目 kwargs 覆盖式注入 passive 类的 ``is_passive``(dict 形态).
+    """yaml 条目 kwargs 覆盖式注入 passive 类的 ``is_passive``(PassiveConfig).
 
-    覆盖不叠加: yaml kwargs 是部署配置的完整声明. 类代码里的 dict 默认仅在
-    条目没写 kwargs 时保留. 非 passive 类忽略(手动 submit 传参, 与 yaml 无关).
+    覆盖不叠加: yaml kwargs 是部署配置的完整声明. 类代码里的 PassiveConfig
+    默认仅在条目没写 kwargs 时保留. 非 passive 类忽略(手动 submit 传参, 与
+    yaml 无关). 注入保持 ``PassiveConfig(kwargs={...})`` 形态.
     """
     if not kw:
         return
     for cls in classes:
         if cls.is_passive:
-            cls.is_passive = dict(kw)
+            cls.is_passive = PassiveConfig(kwargs=dict(kw))
 
 
 def load_entries(entries: List[tuple[str, Dict[str, Any]]]) -> Routines:

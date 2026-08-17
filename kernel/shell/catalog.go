@@ -95,10 +95,8 @@ func (m *Manager) handleCatalogPush(connID string, msg map[string]any) {
 	routines, _ := msg["routines"].([]any)
 	result := m.applyCatalog(connID, modules, routines)
 	m.pushModuleView("")
-	if len(result.Passives) > 0 {
-		go m.AutoStartPassive(connID, result.Passives)
-	}
-	// 回执 catalog.pushed 带 registered/skipped 列表(py 据此打印结果)
+	// 回执 catalog.pushed 带 registered/skipped 列表(py 据此打印结果).
+	// 先回执再 auto-start(同 handleCatalogRegister 的顺序不变量).
 	if reqID, _ := msg["req_id"].(string); reqID != "" {
 		m.sendConn(connID, map[string]any{
 			"event":      conn.CatalogPushed,
@@ -106,6 +104,9 @@ func (m *Manager) handleCatalogPush(connID string, msg map[string]any) {
 			"registered": result.Registered,
 			"skipped":    result.Skipped,
 		})
+	}
+	if len(result.Passives) > 0 {
+		go m.AutoStartPassive(connID, result.Passives)
 	}
 }
 
@@ -149,14 +150,17 @@ func (m *Manager) handleCatalogRegister(connID string, msg map[string]any) {
 		m.log.Warnf("⚠️ catalog.register %s rejected (name already exists)", name)
 	} else {
 		m.log.Infof("➕ catalog.register %s", name)
-		// passive routine 注册成功后异步 auto-start(跟 conn up 时一致).
-		// 异步避免阻塞 dispatch loop:Execute 等 created 回执要经 dispatch loop 投递.
-		if isPassive {
-			go m.AutoStartPassive(connID, []PassiveRoutine{{Name: name, Kwargs: passiveKwargs}})
-		}
 	}
+	// 回执必须先于 auto-start 的 lifecycle.created 发出:py 等回执才本地 register,
+	// created 抢在回执前到达会让 py 报 "routine not found".bus 出站 FIFO,
+	// publish 顺序 = wire 顺序,先 sendConn 再起 goroutine 即保证.
 	if reqID != "" {
 		m.sendConn(connID, reply)
+	}
+	if ok && isPassive {
+		// passive routine 注册成功后异步 auto-start(跟 conn up 时一致).
+		// 异步避免阻塞 dispatch loop:Execute 等 created 回执要经 dispatch loop 投递.
+		go m.AutoStartPassive(connID, []PassiveRoutine{{Name: name, Kwargs: passiveKwargs}})
 	}
 }
 
@@ -188,15 +192,17 @@ func (m *Manager) handleCatalogReload(connID string, msg map[string]any) {
 	meta, _ := msg["meta"].(map[string]any)
 	m.ReloadRoutine(name, connID, isPassive, passiveKwargs, meta)
 	m.log.Infof("🔄 catalog.reload %s", name)
-	// passive routine reload 后异步 auto-start 新实例(ReloadRoutine 已停老实例),
-	// 带新 passive_kwargs----yaml kwargs 变更经 reload 路径热生效.
-	if isPassive {
-		go m.AutoStartPassive(connID, []PassiveRoutine{{Name: name, Kwargs: passiveKwargs}})
-	}
+	// 回执先于 auto-start 的 created(同 handleCatalogRegister:py 等回执才本地
+	// register 覆盖,publish 顺序 = wire 顺序).
 	if reqID != "" {
 		m.sendConn(connID, map[string]any{
 			"event": conn.CatalogReloaded, "req_id": reqID, "ok": true,
 		})
+	}
+	// passive routine reload 后异步 auto-start 新实例(ReloadRoutine 已停老实例),
+	// 带新 passive_kwargs----yaml kwargs 变更经 reload 路径热生效.
+	if isPassive {
+		go m.AutoStartPassive(connID, []PassiveRoutine{{Name: name, Kwargs: passiveKwargs}})
 	}
 }
 
@@ -413,14 +419,10 @@ func (m *Manager) pushModuleView(excludeConnID string) {
 // RunningRoutines 返回当前所有 running 实例的 {name,id} 列表(cmd.State==StateRunning).
 // 供 dial-in Req get_running_routines 查询:routine 据此按 name 找到对端 routine 的 id
 // (跨进程正确:kernel 有全局 nodes 视图).created 态不列(未 started,还没 on_started).
-//
-// 返回 []any 而非 []map[string]any:两条消费路径都过 structpb 序列化(dial-in 走
-// structpb.NewStruct,dial-out 走 stream Struct 写出),structpb.AsValue 的类型 switch
-// 只认 []any 不认 []map[string]any(报 "proto: invalid type",见 conn.ToAnySlice 注释).
-func (m *Manager) RunningRoutines() []any {
+func (m *Manager) RunningRoutines() []map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	routines := make([]any, 0, len(m.nodes))
+	routines := make([]map[string]any, 0, len(m.nodes))
 	for _, n := range m.nodes {
 		if n.cmd == nil || n.cmd.State() != command.StateRunning {
 			continue

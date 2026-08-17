@@ -76,8 +76,7 @@ func (m *Manager) OnSubmitSubmitted(sourceClientID, reqID string,
 	} else {
 		reply["child_id"] = strconv.Itoa(childID)
 		if modules != nil {
-			// structpb.NewStruct 要 []any 不能 []string----转一道.
-			reply["modules"] = conn.ToAnySlice(modules)
+			reply["modules"] = modules
 		}
 	}
 	m.sendOut(sourceClientID, reply)

@@ -7,8 +7,8 @@ routine 主动 dial kernel 的 grpc server,开一条 bidi Stream.对标 Go 侧 *
 重发 module.tree Req + catalog.push.kernel 回来后 routine 自动恢复注册,
 Execute 可继续.对标 Go 侧 monitorConnect + connect 的退避重连.
 
-入站:recv loop 收 Struct → MessageToDict → inbound(peer_id, msg).
-出站:send_event(payload) → out queue → send loop 写 Struct 到 stream.
+入站:recv loop 收 Frame → json.loads → inbound(peer_id, msg).
+出站:send_event(payload) → out queue → send loop 写 Frame 到 stream.
 peer_id 固定常量(dial-in 单 kernel,routine 的 peer 路由退化为一路).
 
 不实现 req_handler:dial-in 下 routine 不收 kernel→routine Req(方向矛盾,catalog
@@ -21,10 +21,9 @@ import time
 from typing import Any, Dict, Optional
 
 import grpc
-from google.protobuf.json_format import MessageToDict
 
 from .grpc import routine_pb2_grpc
-from .protocol import dict_to_struct
+from .protocol import dict_to_frame, frame_to_dict
 from .transport import Transport
 
 
@@ -138,9 +137,9 @@ class GrpcClientTransport(Transport):
 
         用途:连上后拉 module.tree(kernel 不能 Req routine 推,反过来 routine Req 拉).
         """
-        s = dict_to_struct(msg)
+        s = dict_to_frame(msg)
         resp = await asyncio.wait_for(self._stub.Req(s), timeout=self.REQ_TIMEOUT)
-        return MessageToDict(resp)
+        return frame_to_dict(resp)
 
     async def get_running_routines(self) -> list:
         """dial-in:经 Req unary 问 kernel(routine 是 client,有 kernel stub).
@@ -262,7 +261,7 @@ class GrpcClientTransport(Transport):
         """收 kernel 发来的事件.stream 断(async for 结束/异常)即返回,外层重连."""
         try:
             async for item in self._call:
-                msg = MessageToDict(item)
+                msg = frame_to_dict(item)
                 if self._inbound is not None:
                     try:
                         await self._inbound(self.peer_id, msg)
@@ -281,7 +280,7 @@ class GrpcClientTransport(Transport):
         try:
             while True:
                 payload = await self._out_q.get()
-                await self._call.write(dict_to_struct(payload))
+                await self._call.write(dict_to_frame(payload))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

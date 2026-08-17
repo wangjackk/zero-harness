@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"kernel/bus"
 	"kernel/conn"
+	"kernel/logger"
 )
 
 // Server kernel 对外的 grpc server(dial-in 模型):routine 进程主动 dial 进来,
@@ -39,7 +39,7 @@ var serverConnIDCounter uint64
 
 // ReqHandler dial-in routine->kernel Req 查询回调:msg(event+字段) -> reply map.
 // Manager 经 SetReqHandler 注入,集中所有 Req 查询分发(get_module_tree /
-// get_running_routines),访问 nodes 等 shell 层状态.返回 map 由 grpc 层转 structpb.
+// get_running_routines),访问 nodes 等 shell 层状态.返回 map 由 grpc 层转 Frame.
 type ReqHandler func(map[string]any) (map[string]any, error)
 
 // Server kernel grpc server,accept routine 进程的 dial-in 连接.
@@ -95,15 +95,19 @@ type grpcServerImpl struct {
 // Req 处理 dial-in routine->kernel Req 查询:纯委托给注入的 reqHandler(shell
 // Manager.HandleReq).grpc 包不持域知识--所有查询分发在 shell 层(get_module_tree /
 // get_running_routines).reqHandler 未注入时返 unknown event(仅裸测场景).
-func (g *grpcServerImpl) Req(ctx context.Context, in *structpb.Struct) (*structpb.Struct, error) {
+func (g *grpcServerImpl) Req(ctx context.Context, in *Frame) (*Frame, error) {
 	if g.server.reqHandler == nil {
-		return structpb.NewStruct(map[string]any{"error": "unknown event"})
+		return mapToFrame(map[string]any{"error": "unknown event"})
 	}
-	resp, err := g.server.reqHandler(in.AsMap())
+	msg, err := frameToMap(in)
 	if err != nil {
 		return nil, err
 	}
-	return structpb.NewStruct(resp)
+	resp, err := g.server.reqHandler(msg)
+	if err != nil {
+		return nil, err
+	}
+	return mapToFrame(resp)
 }
 
 
@@ -184,7 +188,13 @@ func (c *ServerConn) readLoop() {
 			c.onStreamError()
 			return
 		}
-		bus.GetBus().Publish(conn.TopicEvent, conn.EventIn{ConnID: c.id, Msg: m.AsMap()})
+		msg, err := frameToMap(m)
+		if err != nil {
+			// 坏帧跳过(报错暴露),连接本身还活着
+			logger.GetLogger().Named("rpc").Errorf("conn %s bad frame: %v", c.id, err)
+			continue
+		}
+		bus.GetBus().Publish(conn.TopicEvent, conn.EventIn{ConnID: c.id, Msg: msg})
 	}
 }
 
@@ -221,13 +231,13 @@ func (c *ServerConn) publishOutFail(msg map[string]any) {
 	bus.GetBus().Publish(conn.TopicOutFail, conn.OutFail{ConnID: c.id, ID: id, Event: ev})
 }
 
-// send 出站:structpb.NewStruct + stream.Send(加 streamMu 保护并发 Send).
+// send 出站:mapToFrame + stream.Send(加 streamMu 保护并发 Send).
 func (c *ServerConn) send(msg map[string]any) error {
-	s, err := structpb.NewStruct(msg)
+	f, err := mapToFrame(msg)
 	if err != nil {
 		return err
 	}
 	c.streamMu.Lock()
 	defer c.streamMu.Unlock()
-	return c.stream.Send(s)
+	return c.stream.Send(f)
 }

@@ -11,7 +11,6 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
-	structpb "google.golang.org/protobuf/types/known/structpb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -28,12 +27,17 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// RoutineService 调度器核心(kernel)与远端 routine server 之间的 gRPC 契约.
-// 不在 wire 上写死 Start/Stop 等方法,而是一个通用 Req + 双向 Stream,
-// 业务语义靠 google.protobuf.Struct(= map[string]any)里的 event 字段表达.
+// Frame -- wire 上唯一消息类型: payload = 完整事件消息的 JSON 文本
+// (平铺 dict: {event, id, req_id, ...业务字段}, 事件字段面见 py 侧
+// routine/protocol.py 的事件常量, proto 层不镜像字段----加事件零重生成).
+//
+// 边界编解码: py json.dumps/loads (C 实现) / Go sonic(JIT) / rs
+// serde_json, 各语言内部数据流(map/dict/Value)不变. 相比
+// google.protobuf.Struct 少两层 Value 包装反射, wire 体积更小,
+// 且跨语言统一 JSON string 单一格式(kernel 对 payload 按需解析).
 type RoutineServiceClient interface {
-	Req(ctx context.Context, in *structpb.Struct, opts ...grpc.CallOption) (*structpb.Struct, error)
-	Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[structpb.Struct, structpb.Struct], error)
+	Req(ctx context.Context, in *Frame, opts ...grpc.CallOption) (*Frame, error)
+	Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Frame, Frame], error)
 }
 
 type routineServiceClient struct {
@@ -44,9 +48,9 @@ func NewRoutineServiceClient(cc grpc.ClientConnInterface) RoutineServiceClient {
 	return &routineServiceClient{cc}
 }
 
-func (c *routineServiceClient) Req(ctx context.Context, in *structpb.Struct, opts ...grpc.CallOption) (*structpb.Struct, error) {
+func (c *routineServiceClient) Req(ctx context.Context, in *Frame, opts ...grpc.CallOption) (*Frame, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(structpb.Struct)
+	out := new(Frame)
 	err := c.cc.Invoke(ctx, RoutineService_Req_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -54,29 +58,34 @@ func (c *routineServiceClient) Req(ctx context.Context, in *structpb.Struct, opt
 	return out, nil
 }
 
-func (c *routineServiceClient) Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[structpb.Struct, structpb.Struct], error) {
+func (c *routineServiceClient) Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Frame, Frame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &RoutineService_ServiceDesc.Streams[0], RoutineService_Stream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[structpb.Struct, structpb.Struct]{ClientStream: stream}
+	x := &grpc.GenericClientStream[Frame, Frame]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type RoutineService_StreamClient = grpc.BidiStreamingClient[structpb.Struct, structpb.Struct]
+type RoutineService_StreamClient = grpc.BidiStreamingClient[Frame, Frame]
 
 // RoutineServiceServer is the server API for RoutineService service.
 // All implementations must embed UnimplementedRoutineServiceServer
 // for forward compatibility.
 //
-// RoutineService 调度器核心(kernel)与远端 routine server 之间的 gRPC 契约.
-// 不在 wire 上写死 Start/Stop 等方法,而是一个通用 Req + 双向 Stream,
-// 业务语义靠 google.protobuf.Struct(= map[string]any)里的 event 字段表达.
+// Frame -- wire 上唯一消息类型: payload = 完整事件消息的 JSON 文本
+// (平铺 dict: {event, id, req_id, ...业务字段}, 事件字段面见 py 侧
+// routine/protocol.py 的事件常量, proto 层不镜像字段----加事件零重生成).
+//
+// 边界编解码: py json.dumps/loads (C 实现) / Go sonic(JIT) / rs
+// serde_json, 各语言内部数据流(map/dict/Value)不变. 相比
+// google.protobuf.Struct 少两层 Value 包装反射, wire 体积更小,
+// 且跨语言统一 JSON string 单一格式(kernel 对 payload 按需解析).
 type RoutineServiceServer interface {
-	Req(context.Context, *structpb.Struct) (*structpb.Struct, error)
-	Stream(grpc.BidiStreamingServer[structpb.Struct, structpb.Struct]) error
+	Req(context.Context, *Frame) (*Frame, error)
+	Stream(grpc.BidiStreamingServer[Frame, Frame]) error
 	mustEmbedUnimplementedRoutineServiceServer()
 }
 
@@ -87,10 +96,10 @@ type RoutineServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRoutineServiceServer struct{}
 
-func (UnimplementedRoutineServiceServer) Req(context.Context, *structpb.Struct) (*structpb.Struct, error) {
+func (UnimplementedRoutineServiceServer) Req(context.Context, *Frame) (*Frame, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Req not implemented")
 }
-func (UnimplementedRoutineServiceServer) Stream(grpc.BidiStreamingServer[structpb.Struct, structpb.Struct]) error {
+func (UnimplementedRoutineServiceServer) Stream(grpc.BidiStreamingServer[Frame, Frame]) error {
 	return status.Errorf(codes.Unimplemented, "method Stream not implemented")
 }
 func (UnimplementedRoutineServiceServer) mustEmbedUnimplementedRoutineServiceServer() {}
@@ -115,7 +124,7 @@ func RegisterRoutineServiceServer(s grpc.ServiceRegistrar, srv RoutineServiceSer
 }
 
 func _RoutineService_Req_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(structpb.Struct)
+	in := new(Frame)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -127,17 +136,17 @@ func _RoutineService_Req_Handler(srv interface{}, ctx context.Context, dec func(
 		FullMethod: RoutineService_Req_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RoutineServiceServer).Req(ctx, req.(*structpb.Struct))
+		return srv.(RoutineServiceServer).Req(ctx, req.(*Frame))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _RoutineService_Stream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RoutineServiceServer).Stream(&grpc.GenericServerStream[structpb.Struct, structpb.Struct]{ServerStream: stream})
+	return srv.(RoutineServiceServer).Stream(&grpc.GenericServerStream[Frame, Frame]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type RoutineService_StreamServer = grpc.BidiStreamingServer[structpb.Struct, structpb.Struct]
+type RoutineService_StreamServer = grpc.BidiStreamingServer[Frame, Frame]
 
 // RoutineService_ServiceDesc is the grpc.ServiceDesc for RoutineService service.
 // It's only intended for direct use with grpc.RegisterService,

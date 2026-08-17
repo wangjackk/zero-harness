@@ -11,6 +11,7 @@ dependencies = [
     # grpcio>=1.80.0：生成的 grpc/routine_pb2_grpc.py 硬要求此版本
     # （grpcio-tools 生成时写入下限）。低于此 import 时报 RuntimeError。
     "grpcio>=1.80.0",
+    "orjson>=3.10.0",
     "protobuf>=6.31.1",
 ]
 

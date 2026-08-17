@@ -495,7 +495,7 @@ pub async fn drain_run_result(
                             RawWireEvent::new(ROUTINE_YIELD)
                                 .with_field("id", Value::String(ctx.id().to_string()))
                                 .with_field("source_id", Value::String(ctx.id().to_string()))
-                                .with_field("data", data)
+                                .with_data(&data)
                                 .with_field("is_final", Value::Bool(false)),
                         )
                         .await

@@ -1,14 +1,14 @@
 use crate::{
+    grpc::{frame_to_json, json_to_frame, routine::Frame},
     protocol::{
         events::{
             REQ_EVENT_GET_MODULES, REQ_EVENT_GET_ROUTERS, REQ_EVENT_GET_ROUTINES,
             REQ_EVENT_GET_ROUTINE_FROM_ROUTER, REQ_EVENT_GET_ROUTINE_MODULES,
         },
-        json_to_struct, struct_to_json, JsonObject, RoutineCatalogEntry,
+        JsonObject, RoutineCatalogEntry,
     },
     server::ServerRuntime,
 };
-use prost_types::Struct;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -21,13 +21,13 @@ impl QueryService {
         Self { runtime }
     }
 
-    pub async fn handle_req(&self, request: Struct) -> Struct {
+    pub async fn handle_req(&self, request: Frame) -> Frame {
         match self.handle_req_inner(request).await {
-            Ok(response) => json_to_struct(&response),
+            Ok(response) => json_to_frame(&response),
             Err(error) => {
                 let mut out = JsonObject::new();
                 out.insert("error".to_string(), Value::String(error));
-                json_to_struct(&out)
+                json_to_frame(&out)
             }
         }
     }
@@ -49,8 +49,8 @@ impl QueryService {
             .collect()
     }
 
-    async fn handle_req_inner(&self, request: Struct) -> Result<JsonObject, String> {
-        let req = struct_to_json(&request);
+    async fn handle_req_inner(&self, request: Frame) -> Result<JsonObject, String> {
+        let req = frame_to_json(&request);
         let event = req.get("event").and_then(Value::as_str).unwrap_or_default();
         match event {
             REQ_EVENT_GET_ROUTINES => {

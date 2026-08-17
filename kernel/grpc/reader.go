@@ -3,6 +3,7 @@ package grpc
 import (
 	"kernel/bus"
 	"kernel/conn"
+	"kernel/logger"
 )
 
 // reader 持续读 Stream 回报,把每条 msg publish 到 bus(conn.event).
@@ -22,6 +23,12 @@ func (c *Client) reader() {
 			c.onStreamError()
 			return
 		}
-		bus.GetBus().Publish(conn.TopicEvent, conn.EventIn{ConnID: c.id, Msg: m.AsMap()})
+		msg, err := frameToMap(m)
+		if err != nil {
+			// 坏帧跳过(报错暴露),连接本身还活着
+			logger.GetLogger().Named("rpc").Errorf("client %s bad frame: %v", c.id, err)
+			continue
+		}
+		bus.GetBus().Publish(conn.TopicEvent, conn.EventIn{ConnID: c.id, Msg: msg})
 	}
 }
