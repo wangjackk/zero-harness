@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+from . import routine_pb2 as routine__pb2
 
 GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in grpc/routine_pb2_grpc.py depends on'
+        + ' but the generated code in routine_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -26,9 +26,14 @@ if _version_not_supported:
 
 
 class RoutineServiceStub(object):
-    """RoutineService 调度器核心(kernel)与远端 routine server 之间的 gRPC 契约.
-    与 kernel/rpc/routine.proto 同一份定义(两端各自生成).
-    通用 Req + 双向 Stream,业务语义靠 google.protobuf.Struct 里的 event 字段表达.
+    """Frame -- wire 上唯一消息类型: payload = 完整事件消息的 JSON 文本
+    (平铺 dict: {event, id, req_id, ...业务字段}, 事件字段面见 py 侧
+    routine/protocol.py 的事件常量, proto 层不镜像字段----加事件零重生成).
+
+    边界编解码: py json.dumps/loads (C 实现) / Go sonic(JIT) / rs
+    serde_json, 各语言内部数据流(map/dict/Value)不变. 相比
+    google.protobuf.Struct 少两层 Value 包装反射, wire 体积更小,
+    且跨语言统一 JSON string 单一格式(kernel 对 payload 按需解析).
     """
 
     def __init__(self, channel):
@@ -39,20 +44,25 @@ class RoutineServiceStub(object):
         """
         self.Req = channel.unary_unary(
                 '/routine.RoutineService/Req',
-                request_serializer=google_dot_protobuf_dot_struct__pb2.Struct.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_struct__pb2.Struct.FromString,
+                request_serializer=routine__pb2.Frame.SerializeToString,
+                response_deserializer=routine__pb2.Frame.FromString,
                 _registered_method=True)
         self.Stream = channel.stream_stream(
                 '/routine.RoutineService/Stream',
-                request_serializer=google_dot_protobuf_dot_struct__pb2.Struct.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_struct__pb2.Struct.FromString,
+                request_serializer=routine__pb2.Frame.SerializeToString,
+                response_deserializer=routine__pb2.Frame.FromString,
                 _registered_method=True)
 
 
 class RoutineServiceServicer(object):
-    """RoutineService 调度器核心(kernel)与远端 routine server 之间的 gRPC 契约.
-    与 kernel/rpc/routine.proto 同一份定义(两端各自生成).
-    通用 Req + 双向 Stream,业务语义靠 google.protobuf.Struct 里的 event 字段表达.
+    """Frame -- wire 上唯一消息类型: payload = 完整事件消息的 JSON 文本
+    (平铺 dict: {event, id, req_id, ...业务字段}, 事件字段面见 py 侧
+    routine/protocol.py 的事件常量, proto 层不镜像字段----加事件零重生成).
+
+    边界编解码: py json.dumps/loads (C 实现) / Go sonic(JIT) / rs
+    serde_json, 各语言内部数据流(map/dict/Value)不变. 相比
+    google.protobuf.Struct 少两层 Value 包装反射, wire 体积更小,
+    且跨语言统一 JSON string 单一格式(kernel 对 payload 按需解析).
     """
 
     def Req(self, request, context):
@@ -72,13 +82,13 @@ def add_RoutineServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Req': grpc.unary_unary_rpc_method_handler(
                     servicer.Req,
-                    request_deserializer=google_dot_protobuf_dot_struct__pb2.Struct.FromString,
-                    response_serializer=google_dot_protobuf_dot_struct__pb2.Struct.SerializeToString,
+                    request_deserializer=routine__pb2.Frame.FromString,
+                    response_serializer=routine__pb2.Frame.SerializeToString,
             ),
             'Stream': grpc.stream_stream_rpc_method_handler(
                     servicer.Stream,
-                    request_deserializer=google_dot_protobuf_dot_struct__pb2.Struct.FromString,
-                    response_serializer=google_dot_protobuf_dot_struct__pb2.Struct.SerializeToString,
+                    request_deserializer=routine__pb2.Frame.FromString,
+                    response_serializer=routine__pb2.Frame.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -89,9 +99,14 @@ def add_RoutineServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class RoutineService(object):
-    """RoutineService 调度器核心(kernel)与远端 routine server 之间的 gRPC 契约.
-    与 kernel/rpc/routine.proto 同一份定义(两端各自生成).
-    通用 Req + 双向 Stream,业务语义靠 google.protobuf.Struct 里的 event 字段表达.
+    """Frame -- wire 上唯一消息类型: payload = 完整事件消息的 JSON 文本
+    (平铺 dict: {event, id, req_id, ...业务字段}, 事件字段面见 py 侧
+    routine/protocol.py 的事件常量, proto 层不镜像字段----加事件零重生成).
+
+    边界编解码: py json.dumps/loads (C 实现) / Go sonic(JIT) / rs
+    serde_json, 各语言内部数据流(map/dict/Value)不变. 相比
+    google.protobuf.Struct 少两层 Value 包装反射, wire 体积更小,
+    且跨语言统一 JSON string 单一格式(kernel 对 payload 按需解析).
     """
 
     @staticmethod
@@ -109,8 +124,8 @@ class RoutineService(object):
             request,
             target,
             '/routine.RoutineService/Req',
-            google_dot_protobuf_dot_struct__pb2.Struct.SerializeToString,
-            google_dot_protobuf_dot_struct__pb2.Struct.FromString,
+            routine__pb2.Frame.SerializeToString,
+            routine__pb2.Frame.FromString,
             options,
             channel_credentials,
             insecure,
@@ -136,8 +151,8 @@ class RoutineService(object):
             request_iterator,
             target,
             '/routine.RoutineService/Stream',
-            google_dot_protobuf_dot_struct__pb2.Struct.SerializeToString,
-            google_dot_protobuf_dot_struct__pb2.Struct.FromString,
+            routine__pb2.Frame.SerializeToString,
+            routine__pb2.Frame.FromString,
             options,
             channel_credentials,
             insecure,

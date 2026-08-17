@@ -4,11 +4,11 @@ in-process RoutineHub + kernel relay client(message.send→delivered + lifecycle
 覆盖:created 后即可收 / on_message 派发 / 业务 id reorder(并发到达乱序处理).
 """
 import asyncio
+import json
 import unittest
 
 import grpc
-from google.protobuf.json_format import MessageToDict
-from google.protobuf.struct_pb2 import Struct
+from routine.protocol import dict_to_frame, frame_to_dict
 
 from routine import Routine, Routines, RoutineHub, GrpcServerTransport
 from routine.grpc import routine_pb2_grpc
@@ -96,7 +96,7 @@ class _KernelRelayClient:
     async def _read(self):
         try:
             async for msg in self._call:
-                d = MessageToDict(msg)
+                d = frame_to_dict(msg)
                 ev = d.get('event')
                 if ev == 'routine.submit':
                     self._next_id += 1
@@ -128,9 +128,9 @@ class _KernelRelayClient:
                     await self._write(d)
                     await self.events.put(d)
                 elif ev == MESSAGE_SEND:
-                    # 模拟乱序:把 id=0 的消息延迟投递,验证业务 reorder
-                    data = d.get('data') or {}
-                    seq = int(data.get('id', -1))
+                    # 模拟乱序:把 id=0 的消息延迟投递,验证业务 reorder.
+                    # frame_to_dict 后 data 已是 dict,直接读(对标真 kernel 只透传).
+                    seq = int((d.get('data') or {}).get('id', -1))
                     if seq == 0:
                         # 延迟:先投后续,再投这条
                         asyncio.create_task(self._delayed_relay(d, delay=0.1))
@@ -156,8 +156,7 @@ class _KernelRelayClient:
             await self._write(delivered)
 
     async def _write(self, d):
-        s = Struct()
-        s.update(d)
+        s = dict_to_frame(d)
         await self._call.write(s)
 
     async def create(self, id, name, kwargs=None):

@@ -3,9 +3,9 @@ use crate::{
         BaseModule, HandleReply, RouterRoutine, RoutineError, RoutineOutput,
         RoutineRegistry, RunContext, SubmitReply, WireRoutine,
     },
+    grpc::routine::Frame,
     protocol::{JsonObject, JsonValue},
 };
-use prost_types::Struct;
 use std::{
     collections::HashMap,
     sync::{
@@ -115,7 +115,7 @@ pub struct ServerRuntime {
     pub routines: RoutineRegistry,
     pub modules: Vec<Arc<dyn BaseModule>>,
     pub routers: RwLock<HashMap<String, Arc<dyn RouterRoutine>>>,
-    pub peer_to_queue: Mutex<HashMap<String, mpsc::UnboundedSender<Struct>>>,
+    pub peer_to_queue: Mutex<HashMap<String, mpsc::UnboundedSender<Frame>>>,
     pub running_instances: Mutex<HashMap<String, InvocationState>>,
     pub last_heartbeat: Mutex<HashMap<String, Instant>>,
     pub watchdog_started: AtomicBool,

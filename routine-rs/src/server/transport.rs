@@ -5,7 +5,7 @@ use crate::{
             LIFECYCLE_CREATED, LIFECYCLE_HEARTBEAT_ACK,
             LIFECYCLE_STARTED, LIFECYCLE_STOP, LIFECYCLE_STOPPED,
         },
-        json_to_struct, ControlDoneReason, JsonObject, RawWireEvent,
+        ControlDoneReason, JsonObject, RawWireEvent,
     },
     server::{ServerRuntime, ShellReqManager},
 };
@@ -105,7 +105,7 @@ impl RoutineIo for OutboundTransport {
         payload: RawWireEvent,
         peer_id: Option<&str>,
     ) -> Result<(), String> {
-        let message = json_to_struct(&payload.into_json_object());
+        let message = crate::grpc::json_to_frame(&payload.into_json_object());
         let peers = self.runtime.peer_to_queue.lock().await;
         if let Some(peer_id) = peer_id {
             if let Some(queue) = peers.get(peer_id) {

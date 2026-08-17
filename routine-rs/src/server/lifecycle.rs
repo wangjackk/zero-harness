@@ -718,7 +718,7 @@ mod tests {
                 biased;
                 _ = tokio::time::sleep_until(deadline) => break,
                 message = rx.recv() => {
-                    let event = crate::protocol::struct_to_json(&message.expect("event"));
+                    let event = crate::grpc::frame_to_json(&message.expect("event"));
                     if event.get("event").and_then(Value::as_str) == Some("lifecycle.stopped") {
                         stopped_event = Some(event);
                         break;

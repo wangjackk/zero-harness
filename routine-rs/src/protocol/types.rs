@@ -46,16 +46,36 @@ pub struct ParentRef {
     pub name: String,
 }
 
+/// is_passive wire 形态:恒为嵌套 `{flag, kwargs}`(对齐 py `passive_wire` /
+/// kernel `parsePassive`;rs 侧暂无 passive kwargs,bool 是 `{flag: b, kwargs: {}}`
+/// 的语法糖)。裸 bool 上 wire 会被 kernel parse 成 flag=false----不允许。
+fn serialize_passive<S: serde::Serializer>(flag: &bool, s: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeMap;
+    let mut map = s.serialize_map(Some(2))?;
+    map.serialize_entry("flag", flag)?;
+    map.serialize_entry("kwargs", &Map::new())?;
+    map.end()
+}
+
+fn deserialize_passive<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(v.get("flag").and_then(Value::as_bool).unwrap_or(false))
+}
+
 /// `catalog.push` / `get_routines` 返回的单条 routine 描述。
 ///
-/// 对齐 Python `query.py build_routines`:`{name, is_passive, meta}`。
+/// 对齐 Python `query.py build_routines`:`{name, is_passive: {flag, kwargs}, meta}`。
 /// modules 不在此上报 —— 实例级,由 created 回报带回(catalog 注册时无实例,
 /// 无 kwargs,静态上报对 dynamic 不准)。meta 是类级自由扩展字典,Go 侧 dumb
 /// forward 透传。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoutineCatalogEntry {
     pub name: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        serialize_with = "serialize_passive",
+        deserialize_with = "deserialize_passive"
+    )]
     pub is_passive: bool,
     #[serde(default)]
     pub meta: RoutineMeta,
@@ -93,6 +113,13 @@ impl RawWireEvent {
     pub fn with_field(mut self, key: impl Into<String>, value: Value) -> Self {
         self.fields.insert(key.into(), value);
         self
+    }
+
+    /// data 字段出站统一 JSON string(对齐 py encode_wire):
+    /// kernel 对 data 纯透传,跨语言接触面(message.*/pubsub.*/yield)只有一种格式。
+    pub fn with_data(self, data: &Value) -> Self {
+        let encoded = serde_json::to_string(data).unwrap_or_default();
+        self.with_field(envelope::ENVELOPE_DATA, Value::String(encoded))
     }
 
     pub fn id(&self) -> Option<&str> {
@@ -188,13 +215,22 @@ mod tests {
     fn routine_catalog_entry_serializes_name_is_passive_meta() {
         let entry = RoutineCatalogEntry {
             name: "edit".to_string(),
-            is_passive: false,
+            is_passive: true,
             meta: Map::new(),
         };
         let json = serde_json::to_value(&entry).unwrap();
         assert_eq!(json.get("name").and_then(Value::as_str), Some("edit"));
-        assert_eq!(json.get("is_passive").and_then(Value::as_bool), Some(false));
+        // wire 上恒为嵌套 {flag, kwargs}(对齐 py passive_wire / kernel parsePassive)
+        let passive = json.get("is_passive").unwrap();
+        assert_eq!(
+            passive.get("flag").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(passive.get("kwargs").unwrap().is_object());
         assert!(json.get("meta").unwrap().is_object());
+        // 读回嵌套形态
+        let back: RoutineCatalogEntry = serde_json::from_value(json).unwrap();
+        assert!(back.is_passive);
     }
 
     #[test]
