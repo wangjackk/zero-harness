@@ -1,0 +1,5 @@
+# zero-rs 本地配置。
+
+[play_music]
+# 音乐曲库目录(相对 zero-rs 运行目录)。play_music / list_music 共用。
+music_dir_path = "../zero-py/app/routines/user/music/assets"

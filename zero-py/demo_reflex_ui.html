@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jev Reflex Lab</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b23; --panel2: #1c222d; --line: #2a3140;
+    --text: #d6dce8; --dim: #8b94a7; --faint: #5b6478;
+    --accent: #4dd0c4; --red: #e05c6f; --green: #52c98a;
+    --amber: #d9a441; --blue: #5aa9e6; --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    padding: 10px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex: none;
+  }
+  header h1 { font-size: 16px; letter-spacing: .5px; }
+  header h1 b { color: var(--accent); font-family: var(--mono); }
+  header span { color: var(--faint); font-size: 12px; }
+  main { flex: 1; display: grid; grid-template-columns: 250px 1fr; min-height: 0; }
+
+  /* ---- 左栏: 会话列表 ---- */
+  aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 8px; }
+  aside .label { font-size: 11px; color: var(--faint); padding: 4px 8px 6px; text-transform: uppercase; letter-spacing: 1px; }
+  .sess {
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px;
+    border: 1px solid transparent;
+  }
+  .sess:hover { background: var(--panel); }
+  .sess.on { background: var(--panel2); border-color: var(--line); }
+  .sess .t { display: flex; gap: 8px; align-items: baseline; }
+  .sess .id { font-family: var(--mono); color: var(--accent); font-size: 12px; flex: none; }
+  .sess .n { color: var(--faint); font-size: 11px; margin-left: auto; flex: none; }
+  .sess .title { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+
+  /* ---- 主区 ---- */
+  #main { overflow-y: auto; padding: 18px 22px; min-width: 0; }
+  .empty { color: var(--faint); margin-top: 80px; text-align: center; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+  .card h3 { font-size: 12px; color: var(--faint); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+
+  /* 轮次选择 */
+  .turnbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .turnbar input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); }
+  .turnbar .tv { font-family: var(--mono); font-size: 20px; color: var(--accent); min-width: 42px; text-align: center; }
+  .turnbar .tv small { color: var(--faint); font-size: 12px; }
+  .field { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; }
+  .field input { width: 44px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 4px; padding: 3px 6px; font-family: var(--mono); }
+  button {
+    background: var(--accent); color: #06231f; border: none; border-radius: 6px;
+    padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+
+  /* 轮次内容 */
+  .turnview { display: grid; grid-template-columns: 1fr 1.4fr; gap: 12px; }
+  .bubble { background: var(--bg); border-radius: 6px; padding: 10px 12px; font-size: 13px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .bubble .who { font-size: 11px; color: var(--faint); margin-bottom: 6px; font-family: var(--mono); }
+
+  /* 判断面板 */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1000px) { .panels { grid-template-columns: 1fr; } }
+  .result { margin-top: 12px; }
+  .deltas { display: flex; gap: 18px; font-family: var(--mono); margin-bottom: 10px; }
+  .deltas b { font-size: 17px; }
+  .pos { color: var(--green); } .neg { color: var(--red); } .zero { color: var(--faint); }
+  .axis { margin: 8px 0; }
+  .axis .cap { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); }
+  .axis .track { height: 8px; background: var(--bg); border-radius: 4px; margin-top: 3px; position: relative; }
+  .axis .pin { position: absolute; top: -3px; width: 3px; height: 14px; border-radius: 2px; transition: left .4s ease; }
+  .levels { display: flex; gap: 4px; margin-top: 6px; align-items: flex-end; height: 44px; }
+  .levels .lv { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; font-size: 10px; color: var(--faint); text-align: center; }
+  .levels .lv i { display: block; background: var(--panel2); border-top: 2px solid var(--accent); border-radius: 2px 2px 0 0; min-height: 2px; }
+  .levels .lv.hot i { border-top-color: var(--accent); background: color-mix(in srgb, var(--accent) 30%, var(--panel2)); }
+  .levels .lv span { margin-top: 3px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip { background: var(--bg); border: 1px solid var(--line); color: var(--dim); border-radius: 20px; padding: 3px 12px; font-size: 12px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .asrrow { display: flex; gap: 8px; }
+  .asrrow input { flex: 1; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+  .asrrow input:focus { outline: none; border-color: var(--accent); }
+  .meter { margin: 10px 0; }
+  .meter .cap { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+  .meter .cap b { font-family: var(--mono); }
+  .meter .track { height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; }
+  .meter .fill { height: 100%; width: 0; border-radius: 5px; transition: width .4s ease; }
+  .badge { display: inline-block; padding: 4px 18px; border-radius: 6px; font-size: 15px; font-weight: 700; margin-top: 8px; }
+  .badge.打断 { background: var(--red); color: #fff; }
+  .badge.缓存 { background: var(--amber); color: #221a05; }
+  .badge.忽略 { background: var(--panel2); color: var(--dim); }
+
+  /* 全程回放 */
+  .reprow { display: flex; gap: 10px; align-items: center; }
+  .prog { flex: 1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+  .prog i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  #repStatus { font-size: 12px; color: var(--dim); font-family: var(--mono); min-width: 90px; text-align: right; }
+  .repbody { display: grid; grid-template-columns: 300px 1fr; gap: 14px; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  th, td { padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--line); }
+  th { color: var(--faint); font-weight: 400; }
+  td:first-child, th:first-child { text-align: left; }
+  tr.cur td { background: var(--panel2); }
+  .tblwrap { max-height: 300px; overflow-y: auto; }
+  #chart { width: 100%; height: 300px; background: var(--bg); border-radius: 6px; }
+  .legend { font-size: 11px; color: var(--dim); margin-top: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--red); color: #fff; border-radius: 6px; padding: 8px 20px;
+    font-size: 13px; display: none; z-index: 9;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><b>jev</b> reflex lab</h1>
+  <span>历史会话回放 · 情绪演化 · 打断判断（离线模拟，不进框架）</span>
+</header>
+<main>
+  <aside>
+    <div class="label">会话</div>
+    <div id="sessList"></div>
+  </aside>
+  <div id="main">
+    <div class="empty" id="empty">← 选择一个会话</div>
+    <div id="content" style="display:none">
+      <div class="card">
+        <div class="turnbar">
+          <div class="tv"><span id="tv">0</span><small id="tmax">/0</small></div>
+          <input type="range" id="slider" min="1" value="1">
+          <button class="ghost" id="btnLast">跳到最新轮</button>
+          <div class="field">窗口 <input id="win" value="3"> 轮</div>
+        </div>
+        <div class="turnview" style="margin-top:12px">
+          <div class="bubble"><div class="who">user</div><div id="uTxt"></div></div>
+          <div class="bubble"><div class="who">agent 输出（正在播报）</div><div id="aTxt"></div></div>
+        </div>
+      </div>
+
+      <div class="panels">
+        <div class="card">
+          <h3>情绪判断 · valence / arousal delta</h3>
+          <div class="reprow">
+            <button id="btnEmo">判断本轮</button>
+            <button class="ghost" id="btnEmoReset">清零</button>
+          </div>
+          <div class="result" id="emoResult" style="display:none">
+            <div class="deltas">
+              <div>Δv <b id="dv" class="zero"></b></div>
+              <div>Δa <b id="da" class="zero"></b></div>
+            </div>
+            <div class="axis"><div class="cap"><span>低落</span><span id="vNow"></span><span>开心</span></div>
+              <div class="track"><div class="pin" id="vPin" style="background:var(--green)"></div></div></div>
+            <div class="axis"><div class="cap"><span>沉静</span><span id="aNow"></span><span>活跃</span></div>
+              <div class="track"><div class="pin" id="aPin" style="background:var(--blue)"></div></div></div>
+            <div style="font-size:11px;color:var(--faint);margin:10px 0 2px">valence 档位概率</div>
+            <div class="levels" id="vLevels"></div>
+            <div style="font-size:11px;color:var(--faint);margin:8px 0 2px">arousal 档位概率</div>
+            <div class="levels" id="aLevels"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>打断判断 · 说话期 ASR</h3>
+          <div class="chips" id="chips"></div>
+          <div class="asrrow">
+            <input id="asr" placeholder="模拟 agent 播报期间收到的用户语音…">
+            <button id="btnBarge">判断</button>
+          </div>
+          <div class="result" id="bgeResult" style="display:none">
+            <div class="meter"><div class="cap"><span>interrupt 打断</span><b id="pi"></b></div>
+              <div class="track"><div class="fill" id="piF" style="background:var(--red)"></div></div></div>
+            <div class="meter"><div class="cap"><span>cache 缓存</span><b id="pc"></b></div>
+              <div class="track"><div class="fill" id="pcF" style="background:var(--amber)"></div></div></div>
+            <span class="badge" id="act"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>全程回放 · 情绪演化</h3>
+        <div class="reprow">
+          <button id="btnReplay">全程回放</button>
+          <button class="ghost" id="btnStop" disabled>停止</button>
+          <div class="prog"><i id="progBar"></i></div>
+          <span id="repStatus"></span>
+        </div>
+        <div class="repbody" id="repBody" style="display:none">
+          <div class="tblwrap"><table>
+            <thead><tr><th>turn</th><th>Δv</th><th>Δa</th><th>valence</th><th>arousal</th></tr></thead>
+            <tbody id="repRows"></tbody>
+          </table></div>
+          <div><canvas id="chart"></canvas>
+            <div class="legend"><i style="background:var(--green)"></i>valence　<i style="background:var(--blue)"></i>arousal</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const SCALES = {
+  valence: ['明显变低落','略微变低落','基本不变','略微变开心','明显变开心'],
+  arousal: ['明显变沉静','略微变沉静','基本不变','略微变活跃','明显变活跃'],
+};
+let state = { agent: null, turns: [], turn: 1, v: 0, a: 0, replaying: false };
+
+const fmt = x => (x >= 0 ? '+' : '') + x.toFixed(2);
+const cls = x => x > 0.005 ? 'pos' : x < -0.005 ? 'neg' : 'zero';
+
+async function api(url, body) {
+  const r = await fetch(url, body ? {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  } : {});
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+}
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3500);
+}
+
+// ---- 会话列表 ----
+async function loadSessions() {
+  for (const s of await api('/api/sessions')) {
+    const d = document.createElement('div');
+    d.className = 'sess'; d.dataset.agent = s.agent_id;
+    d.innerHTML = `<div class="t"><span class="id">${s.agent_id}</span><span class="n">${s.turns} 轮</span></div>
+                   <div class="title">${(s.title || '').replace(/\n/g, ' ')}</div>`;
+    d.onclick = () => selectSession(s.agent_id, d);
+    $('sessList').appendChild(d);
+  }
+}
+
+async function selectSession(agent, el) {
+  if (state.replaying) state.replaying = false;
+  document.querySelectorAll('.sess').forEach(e => e.classList.remove('on'));
+  el.classList.add('on');
+  $('empty').style.display = 'none';
+  $('content').style.display = '';
+  const data = await api('/api/turns?agent=' + encodeURIComponent(agent));
+  state = { ...state, agent, turns: data.turns, turn: data.turns.length, v: 0, a: 0, replaying: false };
+  const n = data.turns.length;
+  $('slider').max = n; $('slider').value = n;
+  $('tv').textContent = n; $('tmax').textContent = '/' + n;
+  resetPanels();
+  showTurn();
+}
+
+function resetPanels() {
+  $('emoResult').style.display = 'none'; $('bgeResult').style.display = 'none';
+  $('repBody').style.display = 'none'; $('repRows').innerHTML = ''; $('progBar').style.width = 0;
+}
+
+// ---- 轮次展示 ----
+function showTurn() {
+  const t = state.turns[state.turn - 1];
+  $('uTxt').textContent = t.user; $('aTxt').textContent = t.assistant;
+  $('tv').textContent = state.turn;
+  document.querySelectorAll('#repRows tr').forEach((r, i) => r.classList.toggle('cur', i === state.turn - 1));
+}
+
+// ---- 情绪 ----
+function levels(el, raw, scale) {
+  el.innerHTML = '';
+  const p = raw.probabilities, hot = Object.entries(p).reduce((m, [k, x]) => x > p[m] ? k : m, '0');
+  scale.forEach((name, i) => {
+    const d = document.createElement('div');
+    d.className = 'lv' + (String(i) === hot ? ' hot' : '');
+    d.innerHTML = `<i style="height:${Math.max(2, p[i] * 34)}px"></i><span>${name}</span>`;
+    el.appendChild(d);
+  });
+}
+
+async function judgeEmotion() {
+  const btn = $('btnEmo'); btn.disabled = true; btn.textContent = '判断中…';
+  try {
+    const r = await api('/api/emotion', {
+      agent: state.agent, turn: state.turn, window: +$('win').value || 3,
+      valence: state.v, arousal: state.a,
+    });
+    state.v = r.valence; state.a = r.arousal;
+    $('emoResult').style.display = '';
+    $('dv').textContent = fmt(r.v_delta); $('dv').className = cls(r.v_delta);
+    $('da').textContent = fmt(r.a_delta); $('da').className = cls(r.a_delta);
+    $('vPin').style.left = `calc(${(r.valence + 1) / 2 * 100}% - 1px)`;
+    $('aPin').style.left = `calc(${(r.arousal + 1) / 2 * 100}% - 1px)`;
+    $('vPin').style.background = r.valence >= 0 ? 'var(--green)' : 'var(--red)';
+    $('vNow').textContent = 'valence ' + fmt(r.valence) + ' · conf ' + r.v_raw.confidence.toFixed(2);
+    $('aNow').textContent = 'arousal ' + fmt(r.arousal) + ' · conf ' + r.a_raw.confidence.toFixed(2);
+    levels($('vLevels'), r.v_raw, SCALES.valence);
+    levels($('aLevels'), r.a_raw, SCALES.arousal);
+  } catch (e) { toast('情绪判断失败: ' + e.message); }
+  btn.disabled = false; btn.textContent = '判断本轮';
+}
+
+// ---- 打断 ----
+const SAMPLES = ['不对不对，你刚才说错了','停，先别说了','哦对了，等会儿提醒我去买菜','那个事不急，你接着说','（对旁人）这破天气真烦','嗯嗯，挺好的'];
+async function judgeBarge(text) {
+  if (!text.trim()) return toast('先输入或选择一段 ASR 文本');
+  const btn = $('btnBarge'); btn.disabled = true; btn.textContent = '判断中…';
+  try {
+    const r = await api('/api/barge', { agent: state.agent, turn: state.turn, asr: text });
+    $('bgeResult').style.display = '';
+    $('pi').textContent = r.interrupt.toFixed(2); $('piF').style.width = r.interrupt * 100 + '%';
+    $('pc').textContent = r.cache.toFixed(2); $('pcF').style.width = r.cache * 100 + '%';
+    const b = $('act'); b.textContent = r.action; b.className = 'badge ' + r.action;
+  } catch (e) { toast('打断判断失败: ' + e.message); }
+  btn.disabled = false; btn.textContent = '判断';
+}
+
+// ---- 全程回放 ----
+function drawChart(rows) {
+  const cv = $('chart'), dpr = devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const pad = 24, n = rows.length;
+  if (!n) return;
+  const X = i => pad + i / Math.max(1, n - 1) * (w - pad * 2);
+  const Y = v => h / 2 - v * (h / 2 - 14);
+  ctx.strokeStyle = '#2a3140'; ctx.setLineDash([3, 4]);
+  ctx.beginPath(); ctx.moveTo(pad, h / 2); ctx.lineTo(w - pad, h / 2); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const [key, color] of [['valence', '#52c98a'], ['arousal', '#5aa9e6']]) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.beginPath();
+    rows.forEach((r, i) => i ? ctx.lineTo(X(i), Y(r[key])) : ctx.moveTo(X(i), Y(r[key])));
+    ctx.stroke();
+  }
+  const last = rows[rows.length - 1];
+  for (const [key, color] of [['valence', '#52c98a'], ['arousal', '#5aa9e6']]) {
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.arc(X(n - 1), Y(last[key]), 3.2, 0, 7); ctx.fill();
+  }
+}
+
+async function replay() {
+  const n = state.turns.length;
+  if (!n || state.replaying) return;
+  state.replaying = true; state.v = 0; state.a = 0;
+  $('repBody').style.display = ''; $('repRows').innerHTML = '';
+  $('btnReplay').disabled = true; $('btnStop').disabled = false;
+  const rows = [];
+  for (let i = 1; i <= n && state.replaying; i++) {
+    $('repStatus').textContent = `turn ${i}/${n}`;
+    try {
+      const r = await api('/api/emotion', {
+        agent: state.agent, turn: i, window: +$('win').value || 3,
+        valence: state.v, arousal: state.a,
+      });
+      state.v = r.valence; state.a = r.arousal;
+      rows.push({ turn: i, dv: r.v_delta, da: r.a_delta, valence: r.valence, arousal: r.arousal });
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${i}</td><td class="${cls(r.v_delta)}">${fmt(r.v_delta)}</td>
+        <td class="${cls(r.a_delta)}">${fmt(r.a_delta)}</td><td>${fmt(r.valence)}</td><td>${fmt(r.arousal)}</td>`;
+      $('repRows').appendChild(tr);
+      drawChart(rows);
+      $('progBar').style.width = i / n * 100 + '%';
+    } catch (e) { toast('回放中断: ' + e.message); break; }
+  }
+  state.replaying = false;
+  $('btnReplay').disabled = false; $('btnStop').disabled = true;
+  $('repStatus').textContent = state.turns.length && rows.length === state.turns.length ? '完成' : '已停止';
+}
+
+// ---- 接线 ----
+$('slider').oninput = e => { state.turn = +e.target.value; showTurn(); };
+$('btnLast').onclick = () => { state.turn = state.turns.length; $('slider').value = state.turn; showTurn(); };
+$('btnEmo').onclick = judgeEmotion;
+$('btnEmoReset').onclick = () => { state.v = 0; state.a = 0; $('emoResult').style.display = 'none'; };
+$('btnBarge').onclick = () => judgeBarge($('asr').value);
+$('asr').onkeydown = e => { if (e.key === 'Enter') judgeBarge($('asr').value); };
+$('btnReplay').onclick = replay;
+$('btnStop').onclick = () => state.replaying = false;
+SAMPLES.forEach(s => {
+  const c = document.createElement('span');
+  c.className = 'chip'; c.textContent = s;
+  c.onclick = () => { $('asr').value = s; judgeBarge(s); };
+  $('chips').appendChild(c);
+});
+
+loadSessions().catch(e => toast('加载会话失败: ' + e.message));
+</script>
+</body>
+</html>

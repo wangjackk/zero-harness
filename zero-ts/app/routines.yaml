@@ -1,0 +1,15 @@
+# zero-ts 装配清单 ---- 拨入 py 侧 kernel (127.0.0.1:7795) 场景下的 TS 侧增量.
+# 条目语义与 zero/routines.yaml 相同: 文件条目 import 该模块, 目录条目
+# import 其 index.ts(ESM export 即 manifest).
+#
+# 共享 kernel 中 routine 名全局唯一: 基础设施 (web_server / send_message /
+# ipython / skills / list_models 等) 全部由 py 侧 (zero-py) 注册, TS 侧只带
+# py 侧没有的 pi 引擎包, 重名条目会被 kernel 拒绝注册.
+
+routines:
+  # pi 包: PiAgent (pi 原版引擎, 唯一工具 ipython -- 调用经 kernel 路由到
+  # py 侧 ipython routine) + 常驻 manager(被动自启) + entry routines
+  - routines/user/agents/pi/
+  # xml 包 (TS 版 xml_agent) 已下线: 验证使命完成, py 版 (kind 'xml',
+  # routines xml/agent/*) 是唯一事实源. 代码保留在 agents/xml/ 供考古.
+  # - routines/user/agents/xml/

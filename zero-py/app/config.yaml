@@ -1,0 +1,31 @@
+# zero 网络配置 ---- 唯一事实源.
+# 消费者: main.py (grpc) / web_server / flow hub; 改动重启进程生效
+# (watcher 只监听 routines.yaml 与源码, 不监听本文件).
+# 前端默认连接地址 (顶栏可切换) 需与 web_server 保持一致.
+network:
+  # 主前门: HTTP /run/* + WS /ws (prime/xml agent 的 bridge)
+  web_server:
+    host: 0.0.0.0
+    port: 7781          # 避开原 zero (7780), 两套可并行跑
+
+  # kernel dial-in server: 外部 routine hub (hub_routine skill /
+  # 远程设备 routine SDK) 主动拨入; ZERO_GRPC_ADDR 环境变量可运行时覆盖
+  grpc:
+    addr: 0.0.0.0:7777   # 远程设备 (车端 zero-rs 等) LAN 拨入
+
+  # flow 生态独立前门: frontend /flow 页面直连
+  flow:
+    host: 127.0.0.1
+    port: 7790
+
+  # 语音总线 (sherpa-onnx services zmqproxy) 订阅端, 只读不发布
+  voice_bus: tcp://192.168.1.108:6667
+
+  # 幻尔小车 rosbridge WS (ros_client 单例: 常驻连接, 感知订阅 + 车控发布)
+  ros_bridge: ws://192.168.1.108:9090
+  # rosbridge 连不上时自动拉起(SSH 免密, 冷却 60s):
+  # slam-control = 车基座全套 bringup(roscore/底盘/rosbridge, 串行防
+  # roslaunch 竞争 /run_id; ExecStop 先 pkill 全套再重来)
+  ros_bridge_start:
+    ssh: hiwonder108
+    cmd: sudo systemctl restart slam-control.service

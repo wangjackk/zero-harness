@@ -1,0 +1,13 @@
+[project]
+name = "routine"
+version = "0.2.0"
+description = "routine SDK: 业务 routine 编写面 + 内嵌 kernel (create/dial/connect)"
+requires-python = ">=3.10"
+dependencies = [
+    # grpc: kernel 的 dial-in server + hub 侧 grpc client transport
+    "grpcio>=1.71.0",
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
