@@ -1,0 +1,90 @@
+# zero 精简清单 ---- xml/pi agent 最小集 (prime 已下线).
+# 条目语义与 zero/routines.yaml 相同; 从原清单裁剪.
+
+routines:
+  # web 前门 (HTTP + WS): 前端 bridge.
+  # 监听地址在 app/config.yaml (network.web_server) ---- 网络配置唯一事实源.
+  - routines/user/web_server/server.py
+  # sys_prompt: 前端 prompt 面板拉全量快照 (/run/sys_prompt, 读 web_server 缓存)
+  - routines/user/sys_prompt.py
+
+  # agent 基础设施 (与原 zero/routines.yaml 同块整搬, 单文件零依赖):
+  # - user_agent / world_agent: passive 常驻身份 routine
+  #   (前端发消息走 /run/send_message + X-Agent-Id: user, 先解析 user 的 rid)
+  # - send_message: 前端发消息主链路
+  # - fetch_agent_state: 全部 tool 依赖(拉 agent state 拿 workspace)
+  # - routine/list / routine/doc / routine/check_name / routine/reload:
+  #   skill 库 (routine_bridge / routine-creator) 教 LLM 调用的软依赖
+  # - agent_presets: preset 列表/复制/保存/删除
+  #   (已淘汰: 组装 defaults 内联 prime manager, 预制体统一走 ~/.zero/presets)
+  # - models: 中立模型管理 hub (passive 常驻, models.yaml 唯一事实源),
+  #   req events: list/get/save/delete; 跨语言消费方经 req 访问,
+  #   前端 create agent 的模型选项走 GET /models
+  - routines/user/models.py
+  # agent_hub: agent 类型注册中心 (passive 常驻 hub 'agent_hub' + 查询
+  #   bridge 'agent_hub/types'): hub 纯被动, 各类型 manager 启动时主动
+  #   register 提交 manifest, 前端经 bridge 动态渲染创建表单
+  - routines/user/agent_hub.py
+  # agent_hub/preset/*: 中立预制体仓库 (~/.zero/presets, {kind, params}
+  #   预填创建参数; 纯文件平铺 routine 系列 list/save/delete,
+  #   前端表单预填层消费)
+  - routines/user/presets.py
+  - routines/user/ask.py
+  - routines/user/send_message.py
+  - routines/user/interrupt_agent.py
+  # show_image: 本地图片经 WS 推到前端对话栏展示
+  - routines/user/show_image.py
+  - routines/user/user_agent.py
+  - routines/user/world_agent.py
+  # agent_hub/running_agents、agent/rid、agent/state 已收编进 agent_hub.py (hub + 三个查询 bridge)
+  - routines/user/list_routines.py
+  - routines/user/check_routine_name.py
+  - routines/user/routine_doc.py
+  - routines/user/reload_routines.py
+
+  # prime agent 已下线 (pi agent 已替代): 入口/manager/condenser 注释, 代码
+  # 保留在 agents/prime/ 供考古. read_image (xml agent 白名单依赖) 已迁至
+  # routines/user/xml 包.
+  # - routines/user/agents/prime/agent.py
+  # - routines/user/agents/prime/manager.py
+  # - routines/user/agents/_core/condenser/routine.py
+
+  # xml_agent 包: XmlAgent + 常驻 manager(被动自启) + entry routines
+  #   (Stop/Resume/List/Delete 与 prime 同构, 前端按 kind 路由)
+  - routines/user/agents/xml_agent
+
+  # xml 包: Act/RunXml/Speak/Wait (xml_agent 的 act 子依赖, 漏注册则 react 报
+  #   "routine 'act' not registered")
+  - routines/user/xml
+
+  # flow agent (zero 独有, 无 TS 孪生): FlowManager 常驻 + FlowPruner
+  # - routines/user/agents/flow
+
+  # prime 工具包已随 prime 下线 (整包: file_ops / shell / remote / utils,
+  # 代码保留在 agents/tools/ 供考古); read_image 迁至 user/xml,
+  # ipython 迁至 user/ipython (pi agent 唯一工具仍依赖)
+  # - routines/user/agents/tools
+
+  # ipython 持久执行环境 (pi agent 唯一工具; 自 prime 工具包迁出)
+  - routines/user/ipython
+
+  # 通用 skill routines (整包: skills_* 家族, 合并视图 + repo CRUD + 市场搜索)
+  - routines/user/skills
+
+  # dynamic 实验场 (creator agent 实验性 routine; watcher 热重载, 改完即生效)
+  - routines/user/dynamic
+
+  # hiwonder 小车包: ros_client 传输单例(常驻 WS 自愈) + ros_bridge 感知桥
+  #   (routine 动态订阅 ROS 话题 → 同名 pubsub / 反向 publish) +
+  #   车控 routines(cmd_vel 直发); 需小车可达, 冷启动走 car/start
+  - routines/user/hiwonder
+
+  # music 包已整体迁至 zero-rs(Rust): play_music / list_music / sound_effect;
+  #   user/music 仅保留 assets/ 曲库目录(路径见 zero-rs/config.toml)
+
+  # voice 包: voice_listener 被动常驻 (sherpa-onnx 语音总线 ZMQ 只读订阅:
+  #   唤醒/识别事件 → pubsub 'voice' + 日志; 暂不转发 agent)
+  - routines/user/voice
+
+  # watcher: yaml/源码变更自动热重载 (HMR, 改 yaml 不用重启进程)
+  - routines/watcher.py

@@ -5,10 +5,19 @@ edition = "2021"
 description = "zero 的 Rust 骨架:单 routine 拨入 kernel,证明分布式跨语言。"
 
 [dependencies]
-routine = { path = "../routine-rs" }
+routine = { path = "routine-rs" }
 async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+figment = { version = "0.10", features = ["toml"] }
+futures-util = "0.3"
+regex = "1"
+rodio = "0.22.2"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }

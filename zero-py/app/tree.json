@@ -1,0 +1,14 @@
+{
+  "modules": {
+    "root":   {"name": "根", "children": ["figure", "core", "output", "ui", "audio"]},
+    "figure": {"name": "人形", "children": ["head", "body"]},
+    "head":   {},
+    "body":   {"children": ["leg"]},
+    "leg":    {},
+    "core":   {"children": ["mouth"]},
+    "mouth":  {},
+    "output": {},
+    "ui":     {},
+    "audio":  {}
+  }
+}

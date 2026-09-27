@@ -1,6 +1,6 @@
 # secrets (真实密钥文件, 只提交 models.yaml.example)
 zero/models.yaml
-zero/.env
+.env
 
 # python
 __pycache__/
@@ -30,3 +30,14 @@ Thumbs.db
 # runtime (agent 会话 skills 安装目录 / 本地会话数据)
 .agents/
 runtime/
+
+# logs / temp / local tooling
+*.log
+.tmp*
+.trae/
+.bridge/
+.snap/
+
+# 实验杂物 (不进仓库)
+others/
+image_filesapi/

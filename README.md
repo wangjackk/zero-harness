@@ -56,6 +56,6 @@ curl -X POST http://localhost:7781/run/hello -H "Content-Type: application/json"
 ## More
 
 - [zero-example](https://github.com/wangjackk/zero-example) — a complete application built on zero-harness (agents, presets, skills, TTS, frontend)
-- [routine-py/docs/](routine-py/docs/) — framework API and concepts
+- [zero2/routine/docs/](zero2/routine/docs/) — framework API and concepts
 - [zero/docs/](zero/docs/) — zero project conventions and end-to-end walkthroughs
 - [routine-rs/examples/](routine-rs/examples/) — Rust SDK examples

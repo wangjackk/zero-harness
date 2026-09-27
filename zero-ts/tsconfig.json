@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "experimentalDecorators": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["bun-types"],
+    "paths": {
+      "routine-ts": ["./routine-ts/src/index.ts"],
+      "routine-ts/*": ["./routine-ts/src/*.ts"]
+    }
+  },
+  "include": ["app"]
+}
