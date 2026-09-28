@@ -38,9 +38,13 @@ class SeedTTS(TTS):
         """声明文本输入结束，发送 sentinel 使迭代器结束。"""
         await self._queue.put(None)
 
-    def audio_chunks(self) -> AsyncIterator[AudioChunk]:
-        """返回音频块异步迭代器；调用后即开始消费 feed() 送入的文本。"""
-        return self._speaker.speak(self._text_iter())
+    def audio_chunks(self, additions: str = '') -> AsyncIterator[AudioChunk]:
+        """返回音频块异步迭代器；调用后即开始消费 feed() 送入的文本.
+
+        additions: 语音指令(Seed 2.0 context_texts, 如情绪语气指令),
+        空 = 不干预(不下发).
+        """
+        return self._speaker.speak(self._text_iter(), additions)
 
     # ── 内部 ──────────────────────────────────────────────────────────────────
 

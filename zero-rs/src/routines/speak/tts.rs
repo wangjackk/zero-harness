@@ -28,7 +28,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use routine::core::RoutineError;
 use tokio::sync::{mpsc, oneshot};
@@ -50,8 +50,14 @@ pub struct SpeakOutcome {
 /// 给 actor 的命令。所有命令携带实例 token —— actor 靠它把命令路由到
 /// 对应实例，是隔离的根基。
 enum TtsCmd {
-    /// 喂一片文本（增量）。
-    Feed { token: u64, text: String },
+    /// 喂一片文本（增量）。`additions`: 本实例的情绪指令活单元 —— run 起点经
+    /// agent/state 现取后写入; session 惰性建立于首个 Feed 的消化(受 started
+    /// 门, 晚于 run), 建立时读活单元现值, 不在 Feed 发送时刻拷贝快照.
+    Feed {
+        token: u64,
+        text: String,
+        additions: Arc<Mutex<Option<String>>>,
+    },
     /// 文本喂完，发 FinishSession 收口。
     Finish { token: u64 },
     /// 打断：cancel session + 停播放。
@@ -105,11 +111,16 @@ impl TtsHandle {
         }
     }
 
-    pub async fn feed(&self, text: &str) -> Result<(), RoutineError> {
+    pub async fn feed(
+        &self,
+        text: &str,
+        additions: Arc<Mutex<Option<String>>>,
+    ) -> Result<(), RoutineError> {
         if !text.is_empty() {
             self.send(|token| TtsCmd::Feed {
                 token,
                 text: text.to_string(),
+                additions,
             });
         }
         Ok(())
@@ -265,9 +276,19 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
         if digestible {
             if let Some(cmd) = queue.front_mut().and_then(|f| f.pending.pop_front()) {
                 match cmd {
-                    TtsCmd::Feed { text, .. } => {
+                    TtsCmd::Feed { text, additions, .. } => {
                         tracing::info!(len = text.len(), "actor Feed");
-                        if let Err(e) = ensure_session(&mut client, &mut session, &config).await {
+                        // 建 session 前读活单元现值(run 起点已写入; 重复
+                        // Feed 上 session 已存在, 现值被 ensure_session 忽略)
+                        let adds = additions.lock().unwrap().clone();
+                        if let Err(e) = ensure_session(
+                            &mut client,
+                            &mut session,
+                            &config,
+                            adds.as_deref().unwrap_or(""),
+                        )
+                        .await
+                        {
                             tracing::warn!(?e, "tts feed: ensure_session failed");
                         }
                         if let (Some(c), Some(s)) = (client.as_mut(), session.as_mut()) {
@@ -281,7 +302,8 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                         }
                     }
                     TtsCmd::Finish { .. } => {
-                        if let Err(e) = ensure_session(&mut client, &mut session, &config).await {
+                        if let Err(e) = ensure_session(&mut client, &mut session, &config, "").await
+                        {
                             tracing::warn!(?e, "tts finish: ensure_session failed");
                         }
                         if let (Some(c), Some(s)) = (client.as_mut(), session.as_mut()) {
@@ -490,6 +512,10 @@ async fn enter_finalizing(
 /// 连接复用：client 为 None 时才 connect（建连 + StartConnection 握手），
 /// 之后跨 session 常驻；session 每次都 StartSession 新建。
 ///
+/// `additions`: 情绪指令（自然语言），仅新建 session 时用（已有未结束 session
+/// 直接复用，指令被忽略）；空串 = 无指令，不下发。由首个 Feed 的活单元在建
+/// session 前读现值（run 起点已写入）。
+///
 /// **stale 连接自愈**：常驻连接空闲久了会被服务端踢，首次操作才发现。故
 /// `start_session` 失败时丢弃旧连接、重连一次再试（对齐 Python
 /// `_ensure_connected` 的 stale ws 重连）——这样触发重连的那次 Feed 也不丢文本。
@@ -497,6 +523,7 @@ async fn ensure_session(
     client: &mut Option<SeedClient>,
     session: &mut Option<Session>,
     config: &SeedConfig,
+    additions: &str,
 ) -> Result<(), RoutineError> {
     // 已有未结束的 session：直接复用。
     if let Some(s) = session.as_ref() {
@@ -511,7 +538,7 @@ async fn ensure_session(
 
     // 先试现有常驻连接 start_session。
     if let Some(c) = client.as_mut() {
-        if c.start_session(&id, &config.speaker_id, SAMPLE_RATE)
+        if c.start_session(&id, &config.speaker_id, SAMPLE_RATE, additions)
             .await
             .is_ok()
         {
@@ -536,7 +563,7 @@ async fn ensure_session(
 
     // 重连 + start_session。
     let mut c = SeedClient::connect(config).await?;
-    c.start_session(&id, &config.speaker_id, SAMPLE_RATE)
+    c.start_session(&id, &config.speaker_id, SAMPLE_RATE, additions)
         .await?;
     *client = Some(c);
     let (sink, done) = audio()

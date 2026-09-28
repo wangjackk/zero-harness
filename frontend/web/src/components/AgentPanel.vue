@@ -29,6 +29,12 @@
 
             <!-- assistant 消息 -->
             <template v-else-if="group.msg.role === 'assistant'">
+              <span
+                v-if="group.msg.emotion"
+                class="emotion-tag"
+                :class="emotionClass(group.msg.emotion)"
+                :title="emotionTip(group.msg.emotion)"
+              >{{ group.msg.emotion.instruction || '中性' }}</span>
               <details
                 v-if="group.msg.thinking && !group.msg.thinkingDone"
                 class="thinking-block"
@@ -325,6 +331,7 @@ interface PanelMessage {
   from?: string
   images?: string[]
   image?: { data: string; mime: string; caption?: string }
+  emotion?: { instruction?: string, valence?: number, arousal?: number }
 }
 
 interface StreamingState {
@@ -516,6 +523,21 @@ function toolStatusType(result: ToolResult) {
   if (result.status === 'running') return 'info'
   if (result.status === 'interrupted') return 'warning'
   return 'success'
+}
+
+// ── 情绪标签: valence 定色 (愉悦度正负), tooltip 出双轴数值 ──
+type Emotion = NonNullable<PanelMessage['emotion']>
+
+function emotionClass(e: Emotion): string {
+  const v = e.valence ?? 0
+  if (v >= 0.2) return 'emotion-pos'
+  if (v <= -0.2) return 'emotion-neg'
+  return 'emotion-neutral'
+}
+
+function emotionTip(e: Emotion): string {
+  const fmt = (n: number | undefined) => (n ?? 0) >= 0 ? `+${(n ?? 0).toFixed(2)}` : (n ?? 0).toFixed(2)
+  return `valence ${fmt(e.valence)} · arousal ${fmt(e.arousal)}`
 }
 
 /** tool-block 边框状态:running(虚线黄)/ done(实线绿)/ error(实线红). */
@@ -827,6 +849,24 @@ function cellDuration(r: ToolResult): string {
 
 /* assistant bubble */
 .msg.assistant { align-self: flex-start; max-width: 80%; display: flex; flex-direction: column; gap: 6px; }
+
+/* 情绪标签: assistant 消息顶部小徽标, valence 定色 */
+.emotion-tag {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: default;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.emotion-pos { color: #34d399; background: rgba(52, 211, 153, 0.1); }
+.emotion-neg { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+.emotion-neutral { color: #94a3b8; background: rgba(148, 163, 184, 0.1); }
 
 /* thinking block */
 .thinking-block {

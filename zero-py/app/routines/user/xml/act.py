@@ -102,7 +102,10 @@ class Act(XmlRoutine):
                 self._speak_handle = None
                 return
             if chunk.is_first:
-                self._speak_handle = await self._body_shell.push('speak')
+                # 只透传 agent 身份: 情绪是 agent 的活状态, speak 起 run
+                # 时经 agent/state 现取 tts_instruction, 不在 submit 处快照
+                self._speak_handle = await self._body_shell.push(
+                    'speak', {AGENT_ID_KEY: self._agent_id})
             if chunk.text:
                 await self.send(self._speak_handle.id, {'text': chunk.text})
         except Exception as exc:

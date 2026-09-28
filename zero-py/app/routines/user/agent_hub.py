@@ -218,6 +218,7 @@ class AgentHub(Routine):
             'skill_index_cache_dir': state.get('skill_index_cache_dir'),
             'project_root': state.get('project_root'),
             'session_id': state.get('session_id'),
+            'tts_instruction': state.get('tts_instruction'),
         }
 
 
@@ -319,6 +320,7 @@ class AgentHubStateOutput(BaseModel):
     skill_index_cache_dir: str | None = None
     project_root: str | None = None
     session_id: str | None = None
+    tts_instruction: str | None = None
     error: str | None = None
 
 

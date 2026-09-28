@@ -148,7 +148,32 @@ class XmlAgents(Routine):
         """resident: wait for stop. children outlive individual req handlers."""
         _log.info('xml agents manager started')
         asyncio.create_task(self._manifest_loop())
+        asyncio.create_task(self._resume_last_chat())
         await self._stop.wait()
+
+    async def _resume_last_chat(self) -> None:
+        """kernel 重启后恢复最近聊的 agent 并接管语音 (main).
+
+        updated_at 每次写消息都刷新, list_agents 首位即最近聊的.
+        重启后无 live agent, 语音路由没有 focus 全丢 ---- 默认拉回
+        最近那个. 空库 / resume 失败仅记日志, 不影响 manager 启动;
+        之后 UI 打开别的 agent 时 set_main 显式覆盖.
+        """
+        try:
+            agents = self._mem.list_agents()
+            if not agents:
+                return
+            latest = str(agents[0].get('agent_id') or '')
+            if not latest:
+                return
+            result = await self.on_resume(None, {'agent_id': latest})
+            if result.get('ok'):
+                _log.info('main agent restored to last chatted: %s', latest)
+            else:
+                _log.warning('resume last chatted agent %s failed: %s',
+                             latest, result.get('error'))
+        except Exception as exc:
+            _log.warning('restore last chatted agent failed: %r', exc)
 
     async def _manifest_loop(self) -> None:
         """周期 ping agent_hub (10s), 不通就重新 find + register.
@@ -231,7 +256,7 @@ class XmlAgents(Routine):
         try:
             await self.req(handle.id, 'chat_message', {
                 'content': build_content(str(data.get('text') or '')),
-                'from': 'voice',
+                'from': 'asr',
             })
         except Exception as exc:
             _log.warning('route voice to main %s failed: %r', agent_id, exc)

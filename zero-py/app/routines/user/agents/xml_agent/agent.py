@@ -136,7 +136,10 @@ class XmlAgent(Routine):
     PROMPT_ROUTINES: list[str] = ['music/play', 'music/list', 'wait',
                                   'routine/list', 'routine/doc',
                                   'agent_hub/running_agents', 'send_message',
-                                  'read_image', 'xml/agent/set_routine_alias']
+                                  'read_image', 'web_search', 'web_fetch',
+                                  'ssh/connect', 'ssh/exec', 'ssh/transfer',
+                                  'ssh/disconnect', 'ssh/list',
+                                  'xml/agent/set_routine_alias']
     # 显式预设别名 (语义清晰优先于派生); 白名单里其余含 '/' 的名走
     # '/'→'_' 派生兜底. set_routine_alias 自身即是一例: 名字含 '/' 进
     # prompt 需要备份名, set_routine_alias 比 xml_agent_set_routine_alias 清晰.
@@ -184,6 +187,26 @@ class XmlAgent(Routine):
         # 含 '/' 的全名由 on_started 预设备份名). prompt 接口表按别名渲染,
         # act 分发时映射回全名. 不持久化 (resume 丢).
         self._routine_aliases: dict[str, str] = {}
+        # --- reflex 层: act 期用户消息先过链出决策(见 reflex.py) ---
+        from .jev import JevClient
+        from .reflex import ReflexChain, barge_in_reflex, state_gate
+        self._jev = JevClient()  # 长期持有(keep-alive), stop 时 aclose
+        self._reflex = ReflexChain(state_gate, barge_in_reflex(self._jev))
+        # 判定在途 task(act 期收到消息时 spawn; 锁外跑 Jev 不堵 event_lock)
+        self._reflex_task: Optional[asyncio.Task] = None
+        # act 期间涌入的待判消息(Jev 判定回来发现新增 -> 合并重判, 自然防抖)
+        self._reflex_pending: list = []
+        # DEFER 决策的缓存消息(暂不落库, drain 时刻落库并开新轮, 见 _drain_deferred)
+        self._deferred: list = []
+        # agent 当前正在生成/播报的文本(react 流式循环维护; Jev state 的 speaking)
+        self._speaking_now: str = ''
+        # --- 情绪层: Jev 评估出增量, 代码积分持状态(见 emotion.py) ---
+        from .emotion import Temperament
+        self._temperament = Temperament()
+        self._mood: tuple[float, float] = (self._temperament.base_v,
+                                           self._temperament.base_a)
+        # 情绪评估在途 task(react 收尾后 spawn, fire-and-forget)
+        self._emotion_task: Optional[asyncio.Task] = None
 
     def _endpoint_key(self) -> str:
         """返回标识 LLM endpoint 的字符串(model key).
@@ -322,6 +345,26 @@ class XmlAgent(Routine):
         # cascade: cancel in-flight react task + stop act child before parking.
         await self._cancel_react('stop')
         await self._interrupt_act_if_needed()
+        # reflex 判定在途也一并掐(决策只是提议, stop 后一律失效)
+        task, self._reflex_task = self._reflex_task, None
+        self._reflex_pending.clear()
+        self._deferred.clear()
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        # 情绪评估在途也一并掐(mood 不更新, 回落靠下轮)
+        etask, self._emotion_task = self._emotion_task, None
+        if etask is not None and not etask.done():
+            etask.cancel()
+            try:
+                await etask
+            except asyncio.CancelledError:
+                pass
+        # Jev 连接池收尾(依赖方已 cancel, 掐在途请求无副作用)
+        await self._jev.aclose()
         self._stop.set()
 
     async def _register_with_bridge(self) -> None:
@@ -373,6 +416,15 @@ class XmlAgent(Routine):
             msg = IncomingMessage.from_payload(data)
             if not msg.text and not msg.images:
                 return
+            # act 期的用户消息先过 reflex 链(不直接打断); agent 来源消息
+            # 语义明确 + idle 消息直通(现状路径)
+            if msg.from_ == USER_SOURCE and self._react_in_flight():
+                self._reflex_pending.append(msg)
+                if self._reflex_task is None or self._reflex_task.done():
+                    task = asyncio.create_task(self._run_reflex())
+                    task.add_done_callback(self._log_reflex_error)
+                    self._reflex_task = task
+                return
             self._epoch += 1
             await self._cancel_react('user_input')
             await self._interrupt_act_if_needed()
@@ -380,7 +432,157 @@ class XmlAgent(Routine):
             self._logger.info(f'epoch -> {self._epoch} (user_input): {content!r}')
             if msg.from_ != USER_SOURCE:
                 await self._emit_incoming(content, msg.from_)
+            self._spawn_emotion(content)
             self._start_react(self._epoch)
+
+    def _react_in_flight(self) -> bool:
+        task = self._react_task
+        return task is not None and not task.done()
+
+    def _log_reflex_error(self, task: asyncio.Task) -> None:
+        """reflex 执行器崩溃兜底日志(pending 已被其取走, 崩了就是丢)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._logger.error(f'reflex executor crashed: {exc}', exc_info=exc)
+
+    async def _run_reflex(self) -> None:
+        """reflex 决策执行器: 锁外跑 Jev(不堵 event_lock), 执行时重验现场.
+
+        循环体: 拿锁清 pending + 快照现场 -> 锁外判定 -> 拿锁执行.
+        重验规则(epoch/在途快照, 决策只是提议, 过期作废):
+          - epoch 变了(中途有人打断/新输入): pending 落库不反应, 结束
+          - react 已自然结束: 决策降级 PASS(说完就接上, 不打断空气)
+          - pending 长了(判定期间用户又说话): 丢弃本次结果, 合并重判
+        Jev 失败降级 INTERRUPT(= 引入 reflex 层前的无条件打断, 宁可打断
+        不可丢消息).
+        """
+        from .reflex import Decision, ReflexState
+        while True:
+            async with self._event_lock:
+                if not self._reflex_pending:
+                    self._reflex_task = None
+                    return  # 消息被执行路径消费干净了
+                pending = self._reflex_pending
+                self._reflex_pending = []
+                epoch = self._epoch
+                in_flight = self._react_in_flight()
+                recent = self._recent_turns()
+            state = ReflexState(
+                in_flight=in_flight, speaking=self._speaking_now,
+                recent_turns=recent,
+            )
+            merged = '\n'.join(m.text for m in pending if m.text)
+            try:
+                decision = await self._reflex.run(merged, state)
+            except Exception as exc:
+                self._logger.warning(f'reflex failed, fallback interrupt: {exc}')
+                decision = Decision.INTERRUPT
+            async with self._event_lock:
+                # pending 又长了: 用户在判定期间继续说话 -> 合并重判(防抖)
+                if self._reflex_pending:
+                    self._reflex_pending = pending + self._reflex_pending
+                    continue
+                # epoch 变了: 打断/新输入已接管现场, 落库保消息, 不反应
+                if self._epoch != epoch:
+                    for m in pending:
+                        content = self._store_incoming(m)
+                        self._logger.info(f'reflex stale (epoch), stored: {content!r}')
+                    return
+                # react 自然结束: act 期决策失效, 降级 PASS(消息接上新轮)
+                if in_flight and not self._react_in_flight():
+                    decision = Decision.PASS
+                await self._execute_reflex(decision, pending, merged)
+                if self._reflex_pending:
+                    continue  # 执行瞬间又来消息 -> 再判
+                self._reflex_task = None
+                return
+
+    async def _execute_reflex(self, decision, pending, merged: str) -> None:
+        """决策 -> 动作(持锁调用, 可 await react/act 收尾). 消费规则见
+        reflex.py 模块注释."""
+        from .reflex import Decision
+        if decision is Decision.DROP:
+            self._logger.info(f'reflex drop: {merged!r}')
+            return
+        self._logger.info(f'reflex {decision.value}: {merged!r}')
+        if decision is Decision.DEFER:
+            # 只缓存不落库: 落库会排在本轮 assistant 输出之前, drain 开新轮时
+            # 尾序成 assistant -> LLM 400(无 prefill). 落库挪到 drain 时刻,
+            # 顺序变成 assistant(本轮) -> user(插话), 新轮从这里接上.
+            self._deferred.extend(pending)
+            return
+        # INTERRUPT 先打断收尾(部分输出先落库)再落新消息: history 尾序
+        # assistant(部分) -> user(新), 无 prefill 的模型也能续上新轮.
+        # (先落 user 后 cancel 会留下 user -> assistant 尾序, LLM 400)
+        if decision is Decision.INTERRUPT:
+            self._epoch += 1
+            await self._cancel_react('reflex_interrupt')
+            await self._interrupt_act_if_needed()
+        else:
+            self._epoch += 1
+        for m in pending:
+            self._store_incoming(m)
+        self._spawn_emotion(merged)
+        self._start_react(self._epoch)
+
+    def _recent_turns(self) -> list[tuple[str, str]]:
+        """尾部 1 轮对话 [(user, assistant)], Jev state 的上下文."""
+        if self._ctx is None:
+            return []
+        last_user = last_assistant = ''
+        for m in reversed(self._ctx.load_history(self._session_id)):
+            role, content = m.get('role'), m.get('content') or ''
+            if role == 'assistant' and not last_assistant:
+                last_assistant = content
+            elif role == 'user' and not last_user:
+                last_user = content
+            if last_user and last_assistant:
+                break
+        return [(last_user, last_assistant)] if (last_user or last_assistant) else []
+
+    def _spawn_emotion(self, current: str) -> None:
+        """入口情绪评估: Jev Scorex2 出增量 -> 积分 -> 更新 mood (本轮生效).
+
+        在消息落库后启动, 与 react/LLM 完全并行 ---- 落地即 publish(前端
+        徽标), TTS 指令不随 act submit 快照, 由 speak 起 run 时经
+        agent/state 现取(speak 的 session 建立晚于 speak run, 读到的一定
+        是本值). Jev 失败跳过本轮 (mood 保持, 回落靠 decay), 不阻断
+        react ---- 情绪是背景染色, 不是闸门 (对比 reflex).
+        上一轮评估在途时直接覆盖 (新一轮更相关; cancel 后旧任务不会写 mood).
+        """
+        from .emotion import (emotion_questions, fold_delta, integrate,
+                              mood_state, tts_instruction)
+
+        async def _run() -> None:
+            try:
+                # 只喂本轮输入: 历史轮次会锚定 Jev 判断(见 mood_state 实测注)
+                state = mood_state(current, *self._mood)
+                answers = await self._jev.decide(state, emotion_questions())
+                dv = fold_delta(answers['valence_shift']['score'])
+                da = fold_delta(answers['arousal_shift']['score'])
+                v, a = integrate(self._mood[0], self._mood[1], dv, da,
+                                 self._temperament)
+                self._mood = (v, a)
+                self._logger.info(
+                    f'emotion: dv={dv:+.2f} da={da:+.2f} -> '
+                    f'v={v:+.2f} a={a:+.2f}')
+                await self.publish('emotion', {
+                    'agent_id': self._agent_id,
+                    'instruction': tts_instruction(v, a),
+                    'valence': round(v, 2),
+                    'arousal': round(a, 2),
+                })
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._logger.warning(f'emotion update skipped: {exc}')
+
+        task = self._emotion_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._emotion_task = asyncio.create_task(_run())
 
     @request('interrupt')
     async def on_interrupt_req(self, source, data) -> dict:
@@ -443,6 +645,24 @@ class XmlAgent(Routine):
         exc = task.exception()
         if exc is not None:
             self._logger.error(f'react crashed (epoch={self._epoch}): {exc}', exc_info=exc)
+        # reflex DEFER drain: react 自然收尾后自动接上被缓存的消息
+        # (spawn 异步抢锁, 不在 task 回调里 await)
+        if self._deferred:
+            asyncio.create_task(self._drain_deferred())
+
+    async def _drain_deferred(self) -> None:
+        async with self._event_lock:
+            if not self._deferred or self._react_in_flight():
+                return  # 有新输入/判定在途接管了现场, deferred 留给下次收尾
+            deferred, self._deferred = self._deferred, []
+            # drain 时刻落库: 排在本轮 assistant 输出之后, 尾序 user 才能开新轮
+            for m in deferred:
+                self._store_incoming(m)
+            merged = '\n'.join(m.text for m in deferred if m.text)
+            self._epoch += 1
+            self._logger.info(f'reflex drain: {merged!r}')
+            self._spawn_emotion(merged)
+            self._start_react(self._epoch)
 
     async def _run_react(self, epoch: int) -> None:
         """epoch 内多轮迭代:react 返回 True 表示有 feedback 要再来一轮.
@@ -512,6 +732,8 @@ class XmlAgent(Routine):
             # agent_id: act 在 push 工具子前注入, tool routine 通过 agent/rid
             # 查 rid 后 ctx.req(rid, 'agent_state') 反向获取 skill_dir 等信息.
             _t = _time.perf_counter()
+            # 情绪评估在入口已并行启动(_spawn_emotion), 与 LLM 竞速; speak
+            # 起 run 时经 agent/state 现取 tts_instruction, submit 不等不快照
             act = await self.submit('act', {
                 AGENT_ID_KEY: self._agent_id,
                 # 标签映射表 {全名: 别名}: act 分发时把别名标签映射回全名 (本轮快照)
@@ -543,6 +765,8 @@ class XmlAgent(Routine):
                                 _first_token_logged = True
                             await self.ctx.send(act.id, {'text': payload})
                             text_output += payload
+                            # reflex state 的 speaking: 实时维护本轮输出
+                            self._speaking_now = text_output
                             await self._emit_output(payload, is_final=False, epoch=epoch, message_id=message_id)
                         elif kind == 'thinking' and payload:
                             await self._emit_output(payload, is_final=False, epoch=epoch, message_id=message_id, is_thinking=True)
@@ -640,6 +864,9 @@ class XmlAgent(Routine):
                 usage=round_usage,
             )
             raise
+        finally:
+            # react 结束(正常/打断/异常): speaking 现场失效
+            self._speaking_now = ''
 
         # 正常完成 -- 存 response_id(供下一轮 previous_response_id 做 prompt caching).
         self._ctx.add_message(
@@ -1192,12 +1419,14 @@ class XmlAgent(Routine):
     async def on_agent_state(self, source, data) -> dict:
         """返回 agent 运行时状态, 供 tool routine 通过 ctx.req 反向获取."""
         from ._agent_state import AgentState
+        from .emotion import tts_instruction
         return AgentState(
             agent_id=self._agent_id,
             skill_dir=str(self._workspace / 'skills') if self._workspace else None,
             skill_index_cache_dir=str(self._workspace / '.cache') if self._workspace else None,
             project_root=None,
             session_id=self._session_id,
+            tts_instruction=tts_instruction(*self._mood),
         ).model_dump()
 
     @request('set_routine_alias')
