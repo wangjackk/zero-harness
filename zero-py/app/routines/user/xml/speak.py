@@ -56,9 +56,15 @@ class Speak(Routine):
             await self._tts.feed(text)
 
     async def run(self, kwargs: Dict[str, Any]) -> dict:
-        """启动 player 播放 tts 音频流, 阻塞到推送完毕."""
-        _log.info('speak %s: tts start', self.id)
-        await self._player.play(self._tts.audio_chunks())
+        """启动 player 播放 tts 音频流, 阻塞到推送完毕.
+
+        kwargs['instruction']: 情绪语音指令(context_texts, act 注入,
+        空 = 不干预, TTS 默认语气).
+        """
+        instruction = str((kwargs or {}).get('instruction') or '')
+        _log.info('speak %s: tts start%s', self.id,
+                  f' (emotion: {instruction})' if instruction else '')
+        await self._player.play(self._tts.audio_chunks(instruction))
         _log.info('speak %s done', self.id)
         return {}
 

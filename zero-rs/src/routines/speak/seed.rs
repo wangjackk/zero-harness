@@ -109,22 +109,41 @@ impl SeedClient {
     }
 
     /// 开启一个 TTS session，配置 speaker 和音频输出格式。
+    ///
+    /// `additions`: 情绪指令（自然语言）。非空时经 `req_params.additions` 的
+    /// `context_texts` 下发（additions 字段是 JSON 编码 string，对齐 py 侧
+    /// `json.dumps({...})`）。
+    ///
+    /// additions 始终下发（即使无情绪指令）：`disable_markdown_filter: true`
+    /// 让服务端剥掉 Markdown 语法（豆包默认 false 不过滤，念成"星星你好星星"）。
     pub async fn start_session(
         &mut self,
         session_id: &str,
         speaker: &str,
         sample_rate: u32,
+        additions: &str,
     ) -> Result<(), RoutineError> {
+        let mut req_params = json!({
+            "speaker": speaker,
+            "audio_params": {
+                "format": "pcm",
+                "sample_rate": sample_rate,
+            }
+        });
+        let mut add = json!({ "disable_markdown_filter": true });
+        if !additions.is_empty() {
+            add["context_texts"] = json!([additions]);
+        }
+        let payload = serde_json::to_string(&add)
+            .map_err(|e| RoutineError::Message(format!("encode additions: {e}")))?;
+        req_params["additions"] = json!(payload);
+        if !additions.is_empty() {
+            tracing::info!(session_id, additions, "tts session: emotion additions");
+        }
         let payload = json!({
             "user": { "uid": "zero-rs" },
             "event": Event::StartSession as i32,
-            "req_params": {
-                "speaker": speaker,
-                "audio_params": {
-                    "format": "pcm",
-                    "sample_rate": sample_rate,
-                }
-            }
+            "req_params": req_params
         });
         self.send(Event::StartSession, &payload, Some(session_id))
             .await?;

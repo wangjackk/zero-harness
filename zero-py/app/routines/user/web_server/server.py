@@ -255,6 +255,11 @@ class WebServer(Routine):
     async def on_assistant_output(self, source, data: dict) -> None:
         await self._broadcast({'type': 'assistant_output', **data})
 
+    @subscribe('emotion')
+    async def on_emotion(self, source, data: dict) -> None:
+        """agent 本段输出情绪(TTS 指令 + 心境双轴) → 前端标签渲染."""
+        await self._broadcast({'type': 'emotion', **data})
+
     @subscribe('voice')
     async def on_voice(self, source, data: dict) -> None:
         """voice_listener 转发: 语音总线事件 (wake/result/aborted/state) → 前端."""

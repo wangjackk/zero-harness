@@ -10,6 +10,7 @@ SeedWSConnection — 管理一条 Seed WS 双向流连接，支持跨 session �
 """
 
 import asyncio
+import json
 import time
 import uuid
 from typing import AsyncIterator
@@ -131,9 +132,16 @@ class SeedWSConnection:
         speaker_id: str,
         text_iter: AsyncIterator[str],
         audio_params: dict | None = None,
+        additions: str = '',
     ) -> AsyncIterator[AudioChunk]:
         """
         排队执行一次 TTS session，yield AudioChunk。
+
+        additions: 语音指令(context_texts, 可空) —— 如情绪语气指令。
+
+        additions 字段始终下发: disable_markdown_filter=true 让服务端剥
+        Markdown 语法(豆包默认不过滤, 念成"星星你好星星"); 指令非空时
+        并入 context_texts。
 
         内部并发两个 task：
           sender   — 从 text_iter 消费文本并发 TaskRequest，完成后发 FinishSession
@@ -143,7 +151,8 @@ class SeedWSConnection:
         async with self._lock:
             await self._ensure_connected()
             async for chunk in self._run_session_locked(
-                speaker_id, text_iter, audio_params or _DEFAULT_AUDIO_PARAMS
+                speaker_id, text_iter, audio_params or _DEFAULT_AUDIO_PARAMS,
+                additions,
             ):
                 yield chunk
 
@@ -152,18 +161,27 @@ class SeedWSConnection:
         speaker_id: str,
         text_iter: AsyncIterator[str],
         audio_params: dict,
+        additions: str,
     ) -> AsyncIterator[AudioChunk]:
         session_id = str(uuid.uuid4())
         audio_queue: asyncio.Queue[AudioChunk | None] = asyncio.Queue()
 
         # StartSession
+        req_params = {
+            "speaker": speaker_id,
+            "audio_params": audio_params,
+        }
+        # additions 是 JSON 编码 string: 始终带 disable_markdown_filter(剥 MD),
+        # 指令非空时并入 context_texts。
+        add: dict = {"disable_markdown_filter": True}
+        if additions:
+            add["context_texts"] = [additions]
+            logger.info("session %s: emotion additions=%r", session_id, additions)
+        req_params["additions"] = json.dumps(add, ensure_ascii=False)
         start_payload = {
             "user": {"uid": "zero"},
             "event": int(Event.StartSession),
-            "req_params": {
-                "speaker": speaker_id,
-                "audio_params": audio_params,
-            },
+            "req_params": req_params,
         }
         await self._send_frame(build_frame(Event.StartSession, start_payload, session_id))
         await self._wait_event(Event.SessionStarted)

@@ -25,9 +25,12 @@ class Speaker:
     def speaker_id(self) -> str:
         return self._speaker_id
 
-    def speak(self, text_iter: AsyncIterator[str]) -> AsyncIterator[AudioChunk]:
+    def speak(self, text_iter: AsyncIterator[str],
+              additions: str = '') -> AsyncIterator[AudioChunk]:
         """
         将文本流送入 TTS，返回音频块异步迭代器。
+
+        additions: 语音指令(context_texts, 可空), 透传给连接层.
 
         run_session 本身是 async generator，直接返回其迭代器对象，
         调用方可直接 `async for chunk in speaker.speak(...):`。
@@ -36,4 +39,5 @@ class Speaker:
             speaker_id=self._speaker_id,
             text_iter=text_iter,
             audio_params=self._audio_params,
+            additions=additions,
         )

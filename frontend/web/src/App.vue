@@ -310,6 +310,7 @@ interface PanelMessage {
   from?: string
   images?: string[]
   image?: { data: string; mime: string; caption?: string }
+  emotion?: { instruction?: string, valence?: number, arousal?: number }
 }
 
 interface ToolFeedback {
@@ -908,6 +909,10 @@ interface StreamBuf {
 }
 const streamBuf = new Map<string, StreamBuf>()
 
+// 本段情绪: emotion 事件先于首帧 assistant_output 到达 (agent submit 前 publish),
+// 暂存于此, flushStream 建新 assistant entry 时盖章为该段的情绪标签
+const pendingEmotion = new Map<string, PanelMessage['emotion']>()
+
 function cancelStreamBuf(agentId: string) {
   const buf = streamBuf.get(agentId)
   if (!buf) return
@@ -927,7 +932,8 @@ function flushStream(agentId: string, isFinal = false) {
   // 态后, 同 id 的后续帧更新既有 entry 而不是带全量累计文本重建新条目 (防重复).
   let entry = panels[agentId].find(m => m.id === buf.messageId)
   if (!entry) {
-    entry = { id: buf.messageId, role: 'assistant', text: '', thinking: undefined, final: false }
+    entry = { id: buf.messageId, role: 'assistant', text: '', thinking: undefined, final: false,
+              emotion: pendingEmotion.get(agentId) }
     panels[agentId].push(entry)
   }
   streaming[agentId] = { messageId: buf.messageId, entryId: buf.messageId, text: buf.text, thinking: buf.thinking }
@@ -1001,6 +1007,17 @@ on('assistant_output', (msg) => {
       if (streamBuf.get(agent_id) === buf) flushStream(agent_id)
     })
   }
+})
+
+// 收到本段情绪 (TTS 指令 + 心境双轴), 暂存待首帧到达盖章
+on('emotion', (msg) => {
+  const agent_id = (msg.agent_id as string | undefined) ?? ''
+  if (!agent_id) return
+  pendingEmotion.set(agent_id, {
+    instruction: String(msg.instruction ?? ''),
+    valence: msg.valence as number | undefined,
+    arousal: msg.arousal as number | undefined,
+  })
 })
 
 // 收到工具反馈
