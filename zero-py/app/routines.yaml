@@ -60,10 +60,10 @@ routines:
   # flow agent (zero 独有, 无 TS 孪生): FlowManager 常驻 + FlowPruner
   # - routines/user/agents/flow
 
-  # prime 工具包已随 prime 下线 (整包: file_ops / shell / remote / utils,
-  # 代码保留在 agents/tools/ 供考古); read_image 迁至 user/xml,
-  # ipython 迁至 user/ipython (pi agent 唯一工具仍依赖)
-  # - routines/user/agents/tools
+  # remote 工具回归 (prime 下线时整包误伤): ssh/connect/exec/transfer/
+  #   disconnect/list + web_search/web_fetch. file_ops/shell/utils 仍下线
+  #   (代码留 agents/tools/ 各子包考古, tools manifest 只 re-export remote).
+  - routines/user/agents/tools
 
   # ipython 持久执行环境 (pi agent 唯一工具; 自 prime 工具包迁出)
   - routines/user/ipython

@@ -38,7 +38,7 @@ class _SshBase(Routine):
     async def _ctx(self, kwargs: Dict[str, Any]) -> tuple[str, str | None]:
         agent_id = kwargs.pop(AGENT_ID_KEY, '')
         if agent_id:
-            state = await self.call('fetch_agent_state', {'agent_id': agent_id})
+            state = await self.call('agent/state', {'agent_id': agent_id})
             session_id = state.get('session_id') or ''
             project_root = state.get('project_root')
         else:
@@ -65,13 +65,13 @@ class SshConnectInput(BaseModel):
 class SshConnect(_SshBase):
     """Open a persistent SSH connection with a long-lived /bin/sh shell."""
 
-    name = 'ssh_connect'
+    name = 'ssh/connect'
 
     meta: ClassVar[Dict[str, Any]] = {
         'readonly': False,
         'input_schema': SshConnectInput.model_json_schema(),
         'output_schema': {'type': 'string', 'description': 'Connection result.'},
-        'description': 'Open a persistent SSH connection. Pass an alias (e.g. robot/server) and target (e.g. root@1.2.3.4). The alias identifies this connection in later ssh_exec/ssh_transfer/ssh_disconnect calls.',
+        'description': 'Open a persistent SSH connection. Pass an alias (e.g. robot/server) and target (e.g. root@1.2.3.4). The alias identifies this connection in later ssh/exec, ssh/transfer and ssh/disconnect calls.',
     }
 
     async def run(self, kwargs: Dict[str, Any]) -> str:
@@ -89,7 +89,7 @@ class SshConnect(_SshBase):
         )
 
         if SshRegistry.get(session_id, alias):
-            raise ValueError(f'alias 已存在: {alias} (请先 ssh_disconnect 或换一个别名)')
+            raise ValueError(f'alias 已存在: {alias} (请先 ssh/disconnect 或换一个别名)')
 
         connection = await asyncio.wait_for(asyncssh.connect(host, **connect_kwargs), timeout=timeout)
         process = await asyncio.wait_for(connection.create_process(SHELL_PATH), timeout=timeout)
@@ -133,7 +133,7 @@ class SshExecInput(BaseModel):
 class SshExec(_SshBase):
     """Run a command inside an existing SSH shell."""
 
-    name = 'ssh_exec'
+    name = 'ssh/exec'
 
     meta: ClassVar[Dict[str, Any]] = {
         
@@ -182,7 +182,7 @@ class SshTransferInput(BaseModel):
 class SshTransfer(_SshBase):
     """Upload or download files/directories over an existing SSH connection."""
 
-    name = 'ssh_transfer'
+    name = 'ssh/transfer'
 
     meta: ClassVar[Dict[str, Any]] = {
         
@@ -238,7 +238,7 @@ class SshDisconnectInput(BaseModel):
 class SshDisconnect(_SshBase):
     """Close an SSH connection by alias (or active one if omitted)."""
 
-    name = 'ssh_disconnect'
+    name = 'ssh/disconnect'
 
     meta: ClassVar[Dict[str, Any]] = {
         
@@ -270,7 +270,7 @@ class SshListInput(BaseModel):
 class SshList(_SshBase):
     """List all active SSH connections in the current agent session."""
 
-    name = 'ssh_list'
+    name = 'ssh/list'
 
     meta: ClassVar[Dict[str, Any]] = {
         'readonly': True,
