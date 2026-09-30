@@ -29,6 +29,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use routine::core::RoutineError;
 use tokio::sync::{mpsc, oneshot};
@@ -39,6 +40,20 @@ use crate::audio::service::{audio, AudioOutcome, PcmSink};
 use super::protocol::{Event, Frame, FrameKind};
 use super::seed::{SeedClient, SeedConfig};
 use super::{CHANNELS, SAMPLE_RATE};
+
+/// Seed 连接/建会话的硬超时: 死连接(接通但不回包/黑洞路由)会让裸 await 永挂,
+/// actor 是全实例串行的单任务 ---- 挂在这一处等于整条 TTS 流水线饿死
+/// (act 等不到 speak 完成, agent 随之卡死). 超时 = 判连接死刑(client 置
+/// None), 本段丢弃, 下一段 Feed 自动重连自愈.
+const NET_OP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 收口 drain 的空闲上限: finish 后 PCM 帧应持续到达, 空闲超过它 = 连接
+/// 半死(不再出帧也不报错), 按收口处理防无限打转.
+const DRAIN_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Finalizing(audio 播完中)的总上限: 从进入 Finalizing 起算, 超过它 audio
+/// 仍未报 done = 音频服务侧异常, 停音频兜底回包, actor 绝不永挂.
+const FINALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// 一次合成的结果。
 #[derive(Debug, Clone, Default)]
@@ -195,6 +210,8 @@ struct Finalizing {
     sink: PcmSink,
     frames: usize,
     interrupted: bool,
+    /// 进入 Finalizing 的时刻: audio 总时长上限(FINALIZE_TIMEOUT)的起算点.
+    entered: Instant,
     /// WaitDone / Finish(pending_wait) 的回复端。取走即置 None，防 Cancel+done 重复回。
     reply: Option<oneshot::Sender<SpeakOutcome>>,
 }
@@ -242,8 +259,10 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                             let _ = fin.reply.take().map(|r| r.send(SpeakOutcome {
                                 frames: fin.frames, interrupted: true,
                             }));
-                            // 等 done 收尾（很快），避免泄漏 oneshot；丢弃结果。
-                            let _ = fin.done_rx.await;
+                            // 等 done 收尾（上限 1s 兜底: audio 服务异常时不让
+                            // actor 永挂; 丢弃结果）。
+                            let _ = tokio::time::timeout(
+                                Duration::from_secs(1), &mut fin.done_rx).await;
                             tracing::info!("finalize cancelled: audio stopped");
                             pop_front(&mut queue);
                         } else {
@@ -261,7 +280,19 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                     }));
                     tracing::info!(interrupted, "finalize done: audio finished");
                     pop_front(&mut queue);
-                }
+                },
+                // audio 总时长兜底: audio 迟迟不报 done(服务侧异常)时停
+                // 音频回包, 防 actor 永挂. sleep_until 以 entered 为锚,
+                // select 重入不会重新计时.
+                _ = tokio::time::sleep_until(
+                    tokio::time::Instant::from_std(fin.entered + FINALIZE_TIMEOUT)) => {
+                    tracing::warn!("finalize timeout: audio did not finish in time, forcing stop");
+                    fin.sink.stop();
+                    let _ = fin.reply.take().map(|r| r.send(SpeakOutcome {
+                        frames: fin.frames, interrupted: true,
+                    }));
+                    pop_front(&mut queue);
+                },
             }
             continue;
         }
@@ -281,37 +312,81 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                         // 建 session 前读活单元现值(run 起点已写入; 重复
                         // Feed 上 session 已存在, 现值被 ensure_session 忽略)
                         let adds = additions.lock().unwrap().clone();
-                        if let Err(e) = ensure_session(
-                            &mut client,
-                            &mut session,
-                            &config,
-                            adds.as_deref().unwrap_or(""),
+                        let adds_str = adds.as_deref().unwrap_or("");
+                        // 硬超时包住建连/建会话: connect + 握手 + StartSession
+                        // 都是网络裸等, 死连接会永挂 actor. 超时判连接死刑.
+                        match tokio::time::timeout(
+                            NET_OP_TIMEOUT,
+                            ensure_session(&mut client, &mut session, &config, adds_str),
                         )
                         .await
                         {
-                            tracing::warn!(?e, "tts feed: ensure_session failed");
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::warn!(?e, "tts feed: ensure_session failed")
+                            }
+                            Err(_) => {
+                                tracing::warn!("tts feed: ensure_session timed out, dropping connection");
+                                client = None;
+                            }
                         }
                         if let (Some(c), Some(s)) = (client.as_mut(), session.as_mut()) {
-                            if let Err(e) = c.send_text(&s.id, &text).await {
-                                tracing::warn!(?e, "tts send_text failed");
-                                // 连接可能已断：置 None，下次 ensure_session 重连。
-                                client = None;
+                            // 发文本同样限时: 半死连接写不出去也读不回来.
+                            match tokio::time::timeout(
+                                NET_OP_TIMEOUT,
+                                c.send_text(&s.id, &text),
+                            )
+                            .await
+                            {
+                                Ok(Ok(())) => {}
+                                Ok(Err(e)) => {
+                                    tracing::warn!(?e, "tts send_text failed");
+                                    // 连接可能已断：置 None，下次 ensure_session 重连。
+                                    client = None;
+                                }
+                                Err(_) => {
+                                    tracing::warn!("tts send_text timed out, dropping connection");
+                                    client = None;
+                                }
                             }
                         } else {
                             tracing::warn!("actor Feed: session is None after ensure_session");
                         }
                     }
                     TtsCmd::Finish { .. } => {
-                        if let Err(e) = ensure_session(&mut client, &mut session, &config, "").await
+                        match tokio::time::timeout(
+                            NET_OP_TIMEOUT,
+                            ensure_session(&mut client, &mut session, &config, ""),
+                        )
+                        .await
                         {
-                            tracing::warn!(?e, "tts finish: ensure_session failed");
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::warn!(?e, "tts finish: ensure_session failed")
+                            }
+                            Err(_) => {
+                                tracing::warn!("tts finish: ensure_session timed out, dropping connection");
+                                client = None;
+                            }
                         }
                         if let (Some(c), Some(s)) = (client.as_mut(), session.as_mut()) {
                             if !s.finish_sent {
                                 s.finish_sent = true;
-                                if let Err(e) = c.finish_session(&s.id).await {
-                                    tracing::warn!(?e, "tts finish_session failed");
-                                    client = None;
+                                match tokio::time::timeout(
+                                    NET_OP_TIMEOUT,
+                                    c.finish_session(&s.id),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(e)) => {
+                                        tracing::warn!(?e, "tts finish_session failed");
+                                        client = None;
+                                    }
+                                    Err(_) => {
+                                        tracing::warn!("tts finish_session timed out, dropping connection");
+                                        client = None;
+                                    }
                                 }
                             }
                         }
@@ -338,7 +413,12 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                             s.interrupted = true;
                             s.sink.stop();
                             if let Some(c) = client.as_mut() {
-                                let _ = c.cancel_session(&s.id).await;
+                                // cancel_session 限时: 半死连接上同样写不出去.
+                                let _ = tokio::time::timeout(
+                                    NET_OP_TIMEOUT,
+                                    c.cancel_session(&s.id),
+                                )
+                                .await;
                                 let _ = wait_for_terminal_event(c).await;
                             } else {
                                 // 连接已断：cancel 无意义，session 直接弃。
@@ -490,7 +570,7 @@ async fn enter_finalizing(
     if !s.finish_sent {
         s.finish_sent = true;
         if let Some(c) = client.as_mut() {
-            let _ = c.finish_session(&s.id).await;
+            let _ = tokio::time::timeout(NET_OP_TIMEOUT, c.finish_session(&s.id)).await;
         }
     }
     let t0 = std::time::Instant::now();
@@ -503,6 +583,7 @@ async fn enter_finalizing(
         sink: s.sink,
         frames: s.frames,
         interrupted: s.interrupted,
+        entered: Instant::now(),
         reply: Some(reply),
     })
 }
@@ -621,20 +702,29 @@ fn handle_frame(s: &mut Session, frame: Result<Frame, RoutineError>) {
 }
 
 /// 持续收 PCM 直到 SessionFinished（或被打断）。
+///
+/// 空闲兜底: finish 后 PCM 帧应持续到达, 空闲超过 `DRAIN_IDLE_TIMEOUT`
+/// = 连接半死(不再出帧也不报错), 按收口处理 ---- 否则这里会无限打转,
+/// 挂死整个 actor.
 async fn drain_until_finished(client: Option<&mut SeedClient>, s: &mut Session) {
     let Some(c) = client else {
         // 连接已断：无法继续 drain，直接收口。
         s.finished = true;
         return;
     };
+    let mut last_event = Instant::now();
     while !s.finished {
         tokio::select! {
             biased;
             frame = c.next_event() => {
+                last_event = Instant::now();
                 handle_frame(s, frame);
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
-                // 兜底：避免无限等待（SessionFinished 漏发等异常）。
+                if last_event.elapsed() > DRAIN_IDLE_TIMEOUT {
+                    tracing::warn!("drain idle timeout, treating session as finished");
+                    s.finished = true;
+                }
             }
         }
     }
