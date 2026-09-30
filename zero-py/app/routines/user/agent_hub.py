@@ -13,7 +13,8 @@ agent_hub/running_agents / send_message 等 rid 解析方只需问 hub 一跳
       注册表, req events: register {manifest} (upsert) / unregister {kind}
       / list / live_agents (聚合各 manager + passive 常驻 agent) /
       agent_rid {agent_id} (反查单个 agent 的 rid) / agent_state {agent_id}
-      (转发目标 agent 的 agent_state, 运行时状态)
+      (转发目标 agent 的 agent_state, 运行时状态) / agent_history {agent_id}
+      (转发目标 agent 的 get_history, 会话历史)
   - AgentHubTypes (name 'agent_hub/types', 一次性 bridge): run 内解析
       hub rid 后 req 转发 list ---- 前端统一按 name call.
   - AgentHubRunningAgents (name 'agent_hub/running_agents', 一次性 bridge):
@@ -22,6 +23,8 @@ agent_hub/running_agents / send_message 等 rid 解析方只需问 hub 一跳
       按 agent_id 反查 routine_id.
   - AgentHubState (name 'agent/state', 一次性 bridge): 同上转发
       agent_state ---- 按 agent_id 拿运行时状态.
+  - AgentHubHistory (name 'agent/history', 一次性 bridge): 同上转发
+      agent_history ---- 按 agent_id 拿会话历史.
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ from pydantic import BaseModel, Field
 from routine import Routine, request
 
 __all__ = ['AgentHub', 'AgentHubTypes', 'AgentHubRunningAgents',
-           'AgentHubRid', 'AgentHubState']
+           'AgentHubRid', 'AgentHubState', 'AgentHubHistory']
 
 # passive 常驻 agent: routine name 即 agent_id 即 agent_type (无 manager 归属,
 # hub 聚合时直接按 name 查 running).
@@ -221,6 +224,32 @@ class AgentHub(Routine):
             'tts_instruction': state.get('tts_instruction'),
         }
 
+    @request('agent_history')
+    async def on_agent_history(self, source, data) -> Dict[str, Any]:
+        """按 agent_id 拿会话历史 (转发目标 agent 的 get_history, 读库现值)."""
+        agent_id = str((data or {}).get('agent_id') or '').strip()
+        if not agent_id:
+            raise ValueError('agent_id: non-empty string required')
+        rid = (await self.on_agent_rid(source, data)).get('routine_id')
+        if not rid:
+            return {'ok': False,
+                    'error': f'agent {agent_id} not live or not found'}
+        try:
+            history = await self.req(rid, 'get_history', {}, timeout=5.0)
+        except Exception as exc:
+            return {'ok': False,
+                    'error': f'req get_history failed: {exc}'}
+        if not isinstance(history, dict) or not history.get('ok'):
+            return {'ok': False,
+                    'error': f'get_history failed: {history!r}'}
+        return {
+            'ok': True,
+            'agent_id': agent_id,
+            'session_id': history.get('session_id'),
+            'messages': history.get('messages', []),
+            'usage': history.get('usage'),
+        }
+
 
 class AgentHubTypes(Routine):
     """查 agent 类型清单 (agent_hub 查询 bridge): 各类型 manager 自声明 manifest."""
@@ -343,6 +372,34 @@ class AgentHubState(Routine):
             rid = await _find_rid_by_name(self, AgentHub.name)
             if rid:
                 return await self.req(rid, 'agent_state',
+                                      {'agent_id': inp.agent_id})
+            await asyncio.sleep(0.1)
+        raise RuntimeError(
+            'agent_hub routine not running (name: agent_hub)')
+
+
+class AgentHubHistoryInput(BaseModel):
+    agent_id: str = Field(description='agent 的唯一身份id')
+
+
+class AgentHubHistory(Routine):
+    """按 agent_id 拿 agent 会话历史 ---- agent_hub 查询 bridge."""
+
+    name = 'agent/history'
+    meta: ClassVar[Dict[str, Any]] = {
+        'description': (
+            '按 agent_id 拿会话历史 (messages, 读库现值). 内部经 agent/rid '
+            '查 rid 再 req 目标 agent 的 get_history.'
+        ),
+        'input_schema': AgentHubHistoryInput.model_json_schema(),
+    }
+
+    async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        inp = AgentHubHistoryInput.model_validate(kwargs)
+        for _ in range(30):
+            rid = await _find_rid_by_name(self, AgentHub.name)
+            if rid:
+                return await self.req(rid, 'agent_history',
                                       {'agent_id': inp.agent_id})
             await asyncio.sleep(0.1)
         raise RuntimeError(
