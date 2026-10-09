@@ -165,7 +165,7 @@ class PlayMusic(Routine):
 | `'stop'` | 收到 `lifecycle.stop` 请求(`stop()` 被调) |
 | `'error'` | `run` 抛异常 |
 | `'cancel'` | task 被 cancel |
-| `'force'` | 被别的 routine `force_acquire` / `force_release` / `force_start` 驱逐 |
+| `'force'` | 被别的 routine 高优 `start(priority)` / `force_acquire` / `force_release` 驱逐 |
 | `'disconnect'` | 父连接断开,级联清理 |
 
 ## 通信装饰器

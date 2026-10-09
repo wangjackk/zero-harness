@@ -34,10 +34,10 @@ LIFECYCLE_STOPPED = 'lifecycle.stopped'      # hub→kernel 已停止(带 reason
 ROUTINE_SUBMIT = 'routine.submit'
 ROUTINE_SUBMITTED = 'routine.submitted'
 ROUTINE_REJECTED = 'routine.rejected'
-ROUTINE_START = 'routine.start'
+ROUTINE_START = 'routine.start'      # 带可选 priority(int, 默认 0): 冲突时
+                                      # incoming > holder 才驱逐后 start
 ROUTINE_STOP = 'routine.stop'
 ROUTINE_UNSUBMIT = 'routine.unsubmit'
-ROUTINE_FORCE_START = 'routine.force_start'
 ROUTINE_ACQUIRE = 'routine.acquire'
 ROUTINE_ACQUIRED = 'routine.acquired'
 ROUTINE_RELEASE = 'routine.release'

@@ -44,7 +44,7 @@ from ..protocol import (
     PUBSUB_DELIVERED, PUBSUB_PUBLISH, PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE,
     REQ_GET_MODULE_TREE, REQ_GET_ROUTINES, REQ_GET_RUNNING,
     ROUTINE_ACQUIRE, ROUTINE_ACQUIRED, ROUTINE_FORCE_ACQUIRE,
-    ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_START, ROUTINE_LOAD_MODULE,
+    ROUTINE_FORCE_RELEASE, ROUTINE_LOAD_MODULE,
     ROUTINE_MODULE_LOADED, ROUTINE_RELEASE, ROUTINE_RELEASED,
     ROUTINE_START, ROUTINE_STOP, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
     ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_UNSUBMIT,
@@ -109,12 +109,14 @@ class Node:
 
     __slots__ = ('cmd', 'parent', 'children', 'declared', 'created_fut',
                  'started_fut', 'stopped_fut', 'created_done', 'created_sent',
-                 'stopping', 'stop_reason', 'stop_by', 'owner', 'stop_sent')
+                 'stopping', 'stop_reason', 'stop_by', 'owner', 'stop_sent',
+                 'priority')
 
     def __init__(self, cmd: Command, parent: Optional['Node']):
         self.cmd = cmd
         self.parent = parent
         self.owner = 'local'  # 该 routine 实例归属的 hub 身份(事件出站路由依据)
+        self.priority: int = 0  # start 时的优先级(冲突驱逐裁决用)
         self.children: List[Node] = []
         self.declared: List[str] = []
         loop = asyncio.get_running_loop()
@@ -734,13 +736,41 @@ class Kernel:
                                 source: str) -> None:
         child_id = _to_int(msg.get('child_id')) or 0
         try_ = bool(msg.get('try'))
+        priority = max(0, _to_int(msg.get('priority')) or 0)
         try:
-            self._require_parent_running(child_id, 'start')
-            self._start(child_id)
-            log.info('▶️ %s try_start' if try_ else '▶️ %s start',
-                     self.nodes[child_id].cmd)
+            n = self._require_parent_running(child_id, 'start')
+            n.priority = priority
+            try:
+                self._start(child_id)
+            except ConflictError as ce:
+                # 优先级仲裁: incoming 严格大于全部第三方 holder 才驱逐他们
+                # 后重试 start;平级/更低(含 priority=0 的常规 start)不抢,
+                # 原样拒(与旧 call 语义一致).
+                if priority <= 0:
+                    raise
+                # 驱逐要等 holder 的 stopped 回报(回经本 dispatch 队列),
+                # 内联 await 即自死锁 ---- 挪独立 task(对齐 force_acquire).
+                asyncio.create_task(self._evict_and_start(
+                    n, priority, ce, child_id, try_, source))
+                return
+            log.info('▶️ %s try_start' if try_ else '▶️ %s start', n.cmd)
         except ConflictError as ce:
             self._reject_start(source, child_id, try_, self._conflict_msg(ce))
+        except Exception as exc:
+            if not try_:
+                self._cleanup_failed_start(child_id)
+            self._reject_start(source, child_id, try_, str(exc))
+
+    async def _evict_and_start(self, n: Node, priority: int, ce: ConflictError,
+                               child_id: int, try_: bool, source: str) -> None:
+        """routine.start 的驱逐分支(独立 task): 驱逐低优 holder 后重试 start,
+        结果走同一套 reject 通道."""
+        try:
+            await self._evict_lower_holders(n, priority, ce)
+            self._start(child_id)
+            log.info('▶️ %s try_start' if try_ else '▶️ %s start', n.cmd)
+        except ConflictError as exc:
+            self._reject_start(source, child_id, try_, self._conflict_msg(exc))
         except Exception as exc:
             if not try_:
                 self._cleanup_failed_start(child_id)
@@ -908,25 +938,29 @@ class Kernel:
             await self._stop_node(hn, cascade=True, force_by=rid)
         return len(holders)
 
-    async def _on_routine_force_start(self, msg: Dict[str, Any],
-                                      source: str) -> None:
-        child_id = _to_int(msg.get('child_id')) or 0
+    async def _evict_lower_holders(self, n: Node, priority: int,
+                                   ce: ConflictError) -> None:
+        """优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 start
+        才逐个 cascade stop(reason='force')后返回;存在 >= 本优先级的 holder
+        时不驱逐任何节点, 直接抛原 ConflictError(平级不抢).
 
-        async def _evict_and_start() -> None:
-            try:
-                n = self._require_parent_running(child_id, 'force_start')
-                log.info('⚡ force_start %s', n.cmd)
-                await self._evict_holders(n, list(n.declared), child_id)
-                self._start(child_id)
-            except Exception as exc:
-                err = (self._conflict_msg(exc)
-                       if isinstance(exc, ConflictError) else str(exc))
-                self._send_to(source, {'event': ROUTINE_REJECTED,
-                                       'op': 'force_start',
-                                       'child_id': str(child_id),
-                                       'error': err})
-
-        asyncio.create_task(_evict_and_start())
+        优先级只裁第三方(排除自己/祖先, 与 evictable_holders 一致);
+        父子级联停走树权威, 不参与比较.
+        """
+        ancestors = self._ancestor_ids(n)
+        holders = self.tree.evictable_holders(list(n.declared), ancestors,
+                                              n.cmd.id)
+        for h in holders:
+            hn = self.nodes.get(h)
+            if hn is not None and hn.priority >= priority:
+                raise ce   # 有 >= 平级/更高 holder: 不抢
+        log.info('⚡ start %s (priority=%d) evicting %d holder(s)',
+                 n.cmd, priority, len(holders))
+        for h in holders:
+            hn = self.nodes.get(h)
+            if hn is None:
+                continue
+            await self._stop_node(hn, cascade=True, force_by=n.cmd.id)
 
     async def _on_routine_load_module(self, msg: Dict[str, Any],
                                       source: str) -> None:
@@ -1384,7 +1418,6 @@ Kernel._DISPATCH = {
     ROUTINE_RELEASE: Kernel._on_routine_release,
     ROUTINE_FORCE_ACQUIRE: Kernel._on_routine_force_acquire,
     ROUTINE_FORCE_RELEASE: Kernel._on_routine_force_release,
-    ROUTINE_FORCE_START: Kernel._on_routine_force_start,
     ROUTINE_LOAD_MODULE: Kernel._on_routine_load_module,
     ROUTINE_UNLOAD_MODULE: Kernel._on_routine_unload_module,
     MESSAGE_SEND: Kernel._on_message,

@@ -23,6 +23,15 @@ from .protocol import (
     ENVELOPE_STREAM_ID, MESSAGE_REQ_REPLY, MESSAGE_STREAM_DATA,
 )
 
+# --- start 优先级常量(模块冲突时的抢占裁决, 只在 start 上生效) ---
+# 规则: incoming.priority > holder.priority 才驱逐(严格大于, 平级不抢);
+# <= 直接 StartError. 语义分层: NORMAL=常规业务(默认) / USER=用户显式
+# 意图(抢占在跑的常规动作, 如唤醒转向打断当前跟踪) / SAFETY=安全兜底
+# (抢占一切, 如急停). 业务代码只允许用这三个常量, 不裸写 int.
+PRI_NORMAL = 0
+PRI_USER = 20
+PRI_SAFETY = 100
+
 
 class Modules(list):
     """routine 声明占用的模块列表(``on_created()`` 返回值).
@@ -194,14 +203,10 @@ class Routine(ABC):
         return await self.ctx.submit(routine_name, kwargs)
 
     async def call(self, routine_name: str,
-                   kwargs: Optional[Dict[str, Any]] = None) -> Any:
+                   kwargs: Optional[Dict[str, Any]] = None,
+                   priority: int = PRI_NORMAL) -> Any:
         """同步拿子 routine 结果(submit→start→wait 一步到位).详见 ``ctx.call``."""
-        return await self.ctx.call(routine_name, kwargs)
-
-    async def force_call(self, routine_name: str,
-                         kwargs: Optional[Dict[str, Any]] = None) -> Any:
-        """抢占式拿子 routine 结果(submit→force_start→wait).详见 ``ctx.force_call``."""
-        return await self.ctx.force_call(routine_name, kwargs)
+        return await self.ctx.call(routine_name, kwargs, priority)
 
     # --- 运行时模块占领/释放(跟类静态声明同一底层 TryAcquire/Release) ---
 

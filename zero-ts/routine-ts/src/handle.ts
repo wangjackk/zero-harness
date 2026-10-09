@@ -10,6 +10,7 @@ import { AsyncEvent, AsyncQueue, withTimeout } from './async'
 import { StartError } from './errors'
 import type { Msg } from './protocol'
 import type { RunContext } from './ctx'
+import { PRI_NORMAL } from './routine'
 
 // body 迭代终结哨兵(distinguish from yielded null / result)
 const BODY_DONE = Symbol('routine.bodyDone')
@@ -34,7 +35,7 @@ export class RoutineHandle {
   private _ctx: RunContext | null
   private _started = new AsyncEvent()
   private _done = new AsyncEvent()
-  /** start/try_start/force_start/stop/unsubmit 的 ack future.hub.onInbound 收
+  /** start/try_start/stop/unsubmit 的 ack future.hub.onInbound 收
    * lifecycle.started/stopped / routine.rejected 时按 child_id 找到本 handle,
    * 调 resolveAck/rejectAck 唤醒. */
   private _ack: DeferredLike | null = null
@@ -99,7 +100,7 @@ export class RoutineHandle {
     }
   }
 
-  /** start/try_start/force_start 公共骨架.try_mode=true 失败返回 StartError
+  /** start/try_start 公共骨架.try_mode=true 失败返回 StartError
    * (null=成功,保留可重试);false 失败 raise StartError. */
   private async startCommon(op: string, send: () => Promise<void>, tryMode: boolean): Promise<StartError | null> {
     if (!this._ctx) throw new Error(`${this}: no ctx bound, cannot ${op}`)
@@ -112,25 +113,24 @@ export class RoutineHandle {
     throw se
   }
 
+  /** 让 kernel start 子命令(占模块+运行),全有或全无----失败时 kernel 清
+   * node+订阅,本侧清 created instance(handle 失效不可重试).失败 raise
+   * StartError.
+   *
+   * priority(模块冲突时的抢占裁决): incoming 严格大于全部第三方 holder
+   * 才逐个驱逐(cascade stop,reason='force' 透传)后 start;存在 >= 平级
+   * holder 时不驱逐任何节点,原样拒(平级不抢).0(默认)= 冲突即拒.只裁
+   * 第三方(永不驱逐自己/祖先). */
+  async start(priority: number = PRI_NORMAL): Promise<void> {
+    await this.startCommon('start',
+      () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: false, priority }), false)
+  }
+
   /** 让 kernel start 子命令(占模块+运行),失败时保留可重试.失败返回
-   * StartError(null=成功),不抛. */
+   * StartError(null=成功),不抛.不带 priority(礼貌语义,冲突可重试). */
   async tryStart(): Promise<StartError | null> {
     return await this.startCommon('start',
       () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: true }), true)
-  }
-
-  /** 让 kernel start 子命令,全有或全无----失败时 kernel 清 node+订阅,本侧清
-   * created instance(handle 失效不可重试).失败 raise StartError. */
-  async start(): Promise<void> {
-    await this.startCommon('start',
-      () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: false }), false)
-  }
-
-  /** 抢占式 start:kernel 驱逐占住子 declared 模块的第三方(cascade stop,
-   * reason='force' 透传)后 start.失败 raise StartError. */
-  async forceStart(): Promise<void> {
-    await this.startCommon('force_start',
-      () => this._ctx!._io.sendRoutineForceStart({ childId: this.id }), false)
   }
 
   /** 让 kernel stop 子命令(级联).fire=false(默认)等 lifecycle.stopped 回执

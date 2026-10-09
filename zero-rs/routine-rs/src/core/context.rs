@@ -27,6 +27,12 @@ pub type HandleReply = Result<Value, String>;
 /// p2p req 回执等待者: result value 或 error.
 pub type ReqReply = Result<Value, String>;
 
+// --- start 优先级常量(与 py routine.PRI_* 同值同语义) ---
+// 模块冲突时 incoming > 全部 holder 才驱逐后 start(严格大于, 平级不抢).
+pub const PRI_NORMAL: i64 = 0;
+pub const PRI_USER: i64 = 20;
+pub const PRI_SAFETY: i64 = 100;
+
 #[async_trait]
 pub trait RoutineIo: Send + Sync {
     async fn send_raw_event(
@@ -353,14 +359,16 @@ impl RunContext {
         result
     }
 
-    /// 启动已 submit 的子 routine: 发 routine.start{child_id} 给 kernel.
+    /// 启动已 submit 的子 routine: 发 routine.start{child_id, priority} 给 kernel.
     /// 不等 lifecycle.started (简化:直接进 wait,stopped 会带 error 若 start 失败).
-    pub async fn start_child(&self, child_id: &str) -> Result<(), String> {
-        self.send_raw_event(
-            RawWireEvent::new(ROUTINE_START)
-                .with_field("child_id", Value::String(child_id.to_string())),
-        )
-        .await
+    /// priority: 模块冲突时 > 全部 holder 才驱逐后 start(平级不抢); 0=常规.
+    pub async fn start_child(&self, child_id: &str, priority: i64) -> Result<(), String> {
+        let mut event = RawWireEvent::new(ROUTINE_START)
+            .with_field("child_id", Value::String(child_id.to_string()));
+        if priority > 0 {
+            event = event.with_field("priority", Value::Number(priority.into()));
+        }
+        self.send_raw_event(event).await
     }
 
     /// 等子 routine 完成: 注册 handle waiter, 等 lifecycle.stopped 中转回.
@@ -378,14 +386,15 @@ impl RunContext {
     }
 
     /// 同步拿子 routine 结果: submit → start → wait 一步到位.
-    /// 对齐 Python `self.call(name, kwargs)`.
+    /// 对齐 Python `self.call(name, kwargs, priority)`.
     pub async fn call(
         &self,
         name: &str,
         kwargs: Option<JsonObject>,
+        priority: i64,
     ) -> Result<Value, String> {
         let (child_id, _modules) = self.submit(name, kwargs).await?;
-        self.start_child(&child_id).await?;
+        self.start_child(&child_id, priority).await?;
         // 600s 超时对齐 HTTP /run 接口 (fetch_agent_state 等可能涉及外部调用)
         self.wait_child(&child_id, 600).await
     }

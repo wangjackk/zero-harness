@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use routine::{
     core::{
-        Routine, RoutineError, RoutineFactory, RoutineInfo, RoutineOutput, RoutineRegistry,
-        RunContext,
+        PRI_NORMAL, Routine, RoutineError, RoutineFactory, RoutineInfo, RoutineOutput,
+        RoutineRegistry, RunContext,
     },
     kernel,
     protocol::JsonObject,
@@ -73,7 +73,7 @@ impl Routine for SmokeCaller {
             .submit("smoke_target", None)
             .await
             .map_err(RoutineError::Message)?;
-        ctx.start_child(&child_id)
+        ctx.start_child(&child_id, PRI_NORMAL)
             .await
             .map_err(RoutineError::Message)?;
 

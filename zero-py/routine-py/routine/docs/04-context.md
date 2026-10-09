@@ -38,22 +38,22 @@ handle = await self.ctx.submit('echo', {'text': 'hi'})
 # handle.modules = 子 routine on_created() 返回的占用 modules
 ```
 
-### `await ctx.call(name, kwargs=None) -> Any`
+### `await ctx.call(name, kwargs=None, priority=PRI_NORMAL) -> Any`
 
-同步拿子 routine 结果:submit → start → wait 一步到位。**要求父 started**。
+同步拿子 routine 结果:submit → start(priority) → wait 一步到位。**要求父 started**。
 
 ```python
 result = await self.ctx.call('echo', {'text': 'hi'})
+
+# 抢占式: 冲突时 incoming priority 严格大于全部第三方 holder 才驱逐后
+# start;平级/更低原样抛 StartError(priority 语义同 handle.start)
+result = await self.ctx.call('car/track', {}, priority=PRI_USER)
 ```
 
 失败语义:
 - start 失败(模块冲突/父未 started):抛 `StartError`
 - 子 routine 异常停止:抛 `RuntimeError(error)`
 - 子正常 return:返回 result
-
-### `await ctx.force_call(name, kwargs=None) -> Any`
-
-抢占式 call:start 换成 `force_start`——子要占的模块被第三方占时,先打断第三方再 start。
 
 ## 3. 模块操作
 
@@ -204,7 +204,7 @@ async def run(self, kwargs):
 | `acquire` / `release` / `force_*` | ❌ | ✅ |
 | `load_module` / `unload_module` | ❌ | ✅ |
 | `handle.start()` / `handle.stop()` | ❌ | ✅ |
-| `call` / `force_call` | ❌ | ✅ |
+| `call`(可带 priority) | ❌ | ✅ |
 
 > `@subscribe` 装饰器的自动订阅在 `_auto_subscribe()` 里发,**`_auto_subscribe` 在 created 回报前同步调**(见 `lifecycle.py` handle_created)——保证 kernel 订阅表在 created 时已更新,避免 publish race,所以装饰器订阅 created 后即可收到消息。
 

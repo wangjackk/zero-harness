@@ -22,7 +22,7 @@ import {
   type Msg, type Payload,
 } from './protocol'
 import { RoutineHandle } from './handle'
-import type { Routine, SubscribeHandler } from './routine'
+import { PRI_NORMAL, type Routine, type SubscribeHandler } from './routine'
 import type { ServerRuntime } from './runtime'
 import type { RoutineHub } from './hub'
 import type { Transport } from './transport'
@@ -103,22 +103,14 @@ export class RunContext {
     return handle
   }
 
-  /** 同步拿子 routine 结果:submit → start → wait 一步到位.
-   * start 失败抛 StartError;子异常停止抛 Error;正常返回 result. */
-  async call(name: string, kwargs: Payload | null = null): Promise<any> {
+  /** 同步拿子 routine 结果:submit → start(priority) → wait 一步到位.
+   * start 失败抛 StartError;子异常停止抛 Error;正常返回 result.
+   * priority>0 时冲突驱逐裁决(语义同 handle.start). */
+  async call(name: string, kwargs: Payload | null = null, priority: number = PRI_NORMAL): Promise<any> {
     this.requireStarted('call()')
     const kw: Payload = { ...(kwargs ?? {}) }
     const handle = await this.submit(name, kw)
-    await handle.start()
-    return await handle.wait()
-  }
-
-  /** 同步抢占式拿子 routine 结果:submit → forceStart → wait 一步到位. */
-  async forceCall(name: string, kwargs: Payload | null = null): Promise<any> {
-    this.requireStarted('force_call()')
-    const kw: Payload = { ...(kwargs ?? {}) }
-    const handle = await this.submit(name, kw)
-    await handle.forceStart()
+    await handle.start(priority)
     return await handle.wait()
   }
 

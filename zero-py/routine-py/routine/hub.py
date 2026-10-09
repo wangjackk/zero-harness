@@ -33,7 +33,7 @@ from .protocol import (
     MESSAGE_STREAM_CANCEL_DELIVERED, MESSAGE_STREAM_DATA_DELIVERED,
     MESSAGE_STREAM_OPEN_DELIVERED, PUBSUB_DELIVERED, PUBSUB_PUBLISH,
     PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE, ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
-    ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_ACQUIRE, ROUTINE_FORCE_START,
+    ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_ACQUIRE,
     ROUTINE_LOAD_MODULE, ROUTINE_MODULE_LOADED, ROUTINE_MODULE_UNLOADED,
     ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
     ROUTINE_REJECTED, ROUTINE_START, ROUTINE_STOP, ROUTINE_UNLOAD_MODULE,
@@ -172,10 +172,13 @@ class RoutineHub:
         })
 
     async def send_routine_start(self, *, child_id: str,
-                                 try_start: bool = False) -> None:
+                                 try_start: bool = False,
+                                 priority: int = 0) -> None:
         payload: Dict[str, Any] = {'event': ROUTINE_START, 'child_id': child_id}
         if try_start:
             payload['try'] = True
+        if priority:
+            payload['priority'] = priority
         await self._send_event(payload)
 
     async def send_routine_stop(self, *, child_id: str) -> None:
@@ -219,9 +222,6 @@ class RoutineHub:
             'id': id,
             'modules': modules,
         })
-
-    async def send_routine_force_start(self, *, child_id: str) -> None:
-        await self._send_event({'event': ROUTINE_FORCE_START, 'child_id': child_id})
 
     async def send_routine_load_module(self, *, req_id: str, parent_id: str,
                                        child_id: str, name: str = '') -> None:
@@ -518,9 +518,9 @@ class RoutineHub:
         err = str(msg.get('error', 'rejected'))
         op = str(msg.get('op', ''))
         handle = self.runtime.get_handle(cid)
-        if op in ('start', 'force_start'):
-            # start/try_start/force_start 失败:resolve str error(调方包成
-            # StartError).start/force_start(非 try)失败:kernel 已清 node,本侧
+        if op == 'start':
+            # start/try_start 失败:resolve str error(调方包成
+            # StartError).start(非 try)失败:kernel 已清 node,本侧
             # 清 created instance(handle 失效不可重试).try 失败:保留可重试.
             if handle is not None:
                 handle._resolve_ack(err)

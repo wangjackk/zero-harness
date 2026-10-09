@@ -31,7 +31,7 @@ import {
   PUBSUB_DELIVERED, PUBSUB_PUBLISH, PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE,
   REQ_GET_MODULE_TREE, REQ_GET_ROUTINES, REQ_GET_RUNNING,
   ROUTINE_ACQUIRE, ROUTINE_ACQUIRED, ROUTINE_FORCE_ACQUIRE,
-  ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_START, ROUTINE_LOAD_MODULE,
+  ROUTINE_FORCE_RELEASE, ROUTINE_LOAD_MODULE,
   ROUTINE_MODULE_LOADED, ROUTINE_RELEASE, ROUTINE_RELEASED,
   ROUTINE_START, ROUTINE_STOP, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
   ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_UNSUBMIT,
@@ -81,6 +81,8 @@ export class Node {
   stopBy = 0
   /** lifecycle 终止帧已发标志(一个 node 恰一帧 stopped/destroyed). */
   stopSent = false
+  /** start 时的优先级(冲突驱逐裁决用). */
+  priority = 0
 
   constructor(readonly cmd: Command, readonly parent: Node | null) {
     this.createdFut = new Deferred()
@@ -136,7 +138,6 @@ export class Kernel {
       [ROUTINE_RELEASE, (m, s) => this.onRoutineRelease(m, s)],
       [ROUTINE_FORCE_ACQUIRE, (m, s) => this.onRoutineForceAcquire(m, s)],
       [ROUTINE_FORCE_RELEASE, (m, s) => this.onRoutineForceRelease(m, s)],
-      [ROUTINE_FORCE_START, (m, s) => this.onRoutineForceStart(m, s)],
       [ROUTINE_LOAD_MODULE, (m, s) => this.onRoutineLoadModule(m, s)],
       [ROUTINE_UNLOAD_MODULE, (m, s) => this.onRoutineUnloadModule(m, s)],
       [MESSAGE_SEND, (m, s) => this.onMessage(m, s)],
@@ -646,9 +647,23 @@ export class Kernel {
   private async onRoutineStart(msg: Msg, source: string): Promise<void> {
     const childId = toInt(msg.child_id) || 0
     const isTry = Boolean(msg.try)
+    const priority = Math.max(0, toInt(msg.priority) || 0)
     try {
-      this.requireParentRunning(childId, 'start')
-      this.startRoutine(childId)
+      const n = this.requireParentRunning(childId, 'start')
+      n.priority = priority
+      try {
+        this.startRoutine(childId)
+      } catch (e: any) {
+        if (!(e instanceof ConflictError)) throw e
+        // 优先级仲裁: incoming 严格大于全部第三方 holder 才驱逐他们后重试
+        // start;平级/更低(含 priority=0 常规 start)不抢,原样拒(旧语义).
+        if (priority <= 0) throw e
+        // 驱逐要等 holder 的 stopped 回报(回经本 dispatch 队列),内联 await
+        // 即自死锁 ---- 挪独立 task(对齐 force_acquire).
+        this.evictAndStart(n, priority, e, childId, isTry, source)
+          .catch(e2 => log.error(`priority start failed: ${e2?.stack ?? e2}`))
+        return
+      }
       log.info(`▶️ ${this.nodes.get(childId)!.cmd} ${isTry ? 'try_start' : 'start'}`)
     } catch (e: any) {
       if (e instanceof ConflictError) {
@@ -656,6 +671,43 @@ export class Kernel {
       } else {
         this.rejectStart(source, childId, isTry, String(e?.message ?? e))
       }
+    }
+  }
+
+  /** routine.start 的驱逐分支(独立 task): 驱逐低优 holder 后重试 start,
+   * 结果走同一套 reject 通道. */
+  private async evictAndStart(n: Node, priority: number, ce: ConflictError,
+                              childId: number, isTry: boolean, source: string): Promise<void> {
+    try {
+      await this.evictLowerHolders(n, priority, ce)
+      this.startRoutine(childId)
+      log.info(`▶️ ${this.nodes.get(childId)!.cmd} ${isTry ? 'try_start' : 'start'}`)
+    } catch (e: any) {
+      if (e instanceof ConflictError) {
+        this.rejectStart(source, childId, isTry, this.conflictMsg(e))
+      } else {
+        if (!isTry) this.cleanupFailedStart(childId)
+        this.rejectStart(source, childId, isTry, String(e?.message ?? e))
+      }
+    }
+  }
+
+  /** 优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 start 才逐个
+   * cascade stop(reason='force')后返回;存在 >= 本优先级的 holder 时不驱逐
+   * 任何节点, 直接抛原 ConflictError(平级不抢).优先级只裁第三方(排除
+   * 自己/祖先);父子级联停走树权威, 不参与比较. */
+  private async evictLowerHolders(n: Node, priority: number, ce: ConflictError): Promise<void> {
+    const ancestors = this.ancestorIds(n)
+    const holders = this.tree.evictableHolders([...n.declared], ancestors, n.cmd.id)
+    for (const h of holders) {
+      const hn = this.nodes.get(h)
+      if (hn && hn.priority >= priority) throw ce   // 有 >= 平级/更高 holder: 不抢
+    }
+    log.info(`⚡ start ${n.cmd} (priority=${priority}) evicting ${holders.length} holder(s)`)
+    for (const h of holders) {
+      const hn = this.nodes.get(h)
+      if (!hn) continue
+      await this.stopNode(hn, true, n.cmd.id)
     }
   }
 
@@ -807,24 +859,6 @@ export class Kernel {
       await this.stopNode(hn, true, rid)
     }
     return holders.length
-  }
-
-  private onRoutineForceStart(msg: Msg, source: string): Promise<void> {
-    const childId = toInt(msg.child_id) || 0
-
-    const evictAndStart = async () => {
-      try {
-        const n = this.requireParentRunning(childId, 'force_start')
-        log.info(`⚡ force_start ${n.cmd}`)
-        await this.evictHolders(n, [...n.declared], childId)
-        this.startRoutine(childId)
-      } catch (e: any) {
-        const err = e instanceof ConflictError ? this.conflictMsg(e) : String(e?.message ?? e)
-        this.sendTo(source, { event: ROUTINE_REJECTED, op: 'force_start', child_id: String(childId), error: err })
-      }
-    }
-    evictAndStart().catch(e => log.error(`force_start failed: ${e?.stack ?? e}`))
-    return Promise.resolve()
   }
 
   private onRoutineLoadModule(msg: Msg, source: string): Promise<void> {
