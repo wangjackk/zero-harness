@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use routine::{
     core::{
-        PRI_NORMAL, Routine, RoutineError, RoutineInfo, RoutineOutput, RoutineSource,
+        Routine, RoutineError, RoutineInfo, RoutineOutput, RoutineSource,
         RunContext,
     },
     protocol::{JsonObject, JsonValue},
@@ -185,7 +185,7 @@ async fn fetch_instruction(
     let mut kwargs = JsonObject::new();
     kwargs.insert("agent_id".to_string(), json!(agent_id));
     let (child, _) = ctx.submit("agent/state", Some(kwargs)).await?;
-    ctx.start_child(&child, PRI_NORMAL).await?;
+    ctx.start_child(&child, 10).await?;   // 10 = 常规默认档
     let state = ctx.wait_child(&child, 2).await?;
     Ok(state
         .get("tts_instruction")

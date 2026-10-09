@@ -26,7 +26,7 @@ export {
 } from './kernel/launch'
 export { ModuleTree } from './moduleTree'
 export {
-  type Modules, PassiveConfig, PRI_NORMAL, PRI_SAFETY, PRI_USER,
+  type Modules, PassiveConfig,
   type RoutineClass, Routine, type RoutineSource,
   Routines, passiveWire, request, routineNameOf, stream, subscribe,
 } from './routine'

@@ -43,8 +43,8 @@ from ..protocol import (
     MESSAGE_STREAM_OPEN, MESSAGE_STREAM_OPEN_DELIVERED, MODULE_TREE,
     PUBSUB_DELIVERED, PUBSUB_PUBLISH, PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE,
     REQ_GET_MODULE_TREE, REQ_GET_ROUTINES, REQ_GET_RUNNING,
-    ROUTINE_ACQUIRE, ROUTINE_ACQUIRED, ROUTINE_FORCE_ACQUIRE,
-    ROUTINE_FORCE_RELEASE, ROUTINE_LOAD_MODULE,
+    ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
+    ROUTINE_LOAD_MODULE,
     ROUTINE_MODULE_LOADED, ROUTINE_RELEASE, ROUTINE_RELEASED,
     ROUTINE_START, ROUTINE_STOP, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
     ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_UNSUBMIT,
@@ -68,8 +68,15 @@ class CreatedResult:
 class Route:
     is_passive: bool = False
     passive_kwargs: Dict[str, Any] = field(default_factory=dict)
+    passive_priority: int = 10  # passive 拉起优先级(声明处即调用点; 档位同 start)
     meta: Dict[str, Any] = field(default_factory=dict)
     owner: str = 'local'  # 提供该 routine 的 hub 身份(catalog.push 的 hub_id)
+
+
+def _passive_priority(ip: Dict[str, Any]) -> int:
+    """is_passive wire 的 priority 字段解析: 缺省 10(常规默认档), 负数/非法钳 0."""
+    raw = ip.get('priority')
+    return 10 if raw is None else max(0, _to_int(raw))
 
 
 @dataclass
@@ -289,7 +296,8 @@ class Kernel:
         if event == REQ_GET_ROUTINES:
             return {'routines': [
                 {'name': name, 'hub_id': r.owner,
-                 'is_passive': {'flag': r.is_passive, 'kwargs': r.passive_kwargs},
+                 'is_passive': {'flag': r.is_passive, 'kwargs': r.passive_kwargs,
+                                'priority': r.passive_priority},
                  'meta': r.meta}
                 for name, r in self.routes.items()]}
         return {}
@@ -736,7 +744,9 @@ class Kernel:
                                 source: str) -> None:
         child_id = _to_int(msg.get('child_id')) or 0
         try_ = bool(msg.get('try'))
-        priority = max(0, _to_int(msg.get('priority')) or 0)
+        raw = msg.get('priority')
+        # 字段缺省 -> 10(常规默认档); 显式负数/非法钳 0(最低档)
+        priority = 10 if raw is None else max(0, _to_int(raw))
         try:
             n = self._require_parent_running(child_id, 'start')
             n.priority = priority
@@ -744,12 +754,12 @@ class Kernel:
                 self._start(child_id)
             except ConflictError as ce:
                 # 优先级仲裁: incoming 严格大于全部第三方 holder 才驱逐他们
-                # 后重试 start;平级/更低(含 priority=0 的常规 start)不抢,
-                # 原样拒(与旧 call 语义一致).
+                # 后重试 start;平级/更低不抢,原样拒(与旧 call 语义一致).
+                # priority=0 是最低档, 不存在比它更低的 holder, 短路拒绝.
                 if priority <= 0:
                     raise
                 # 驱逐要等 holder 的 stopped 回报(回经本 dispatch 队列),
-                # 内联 await 即自死锁 ---- 挪独立 task(对齐 force_acquire).
+                # 内联 await 即自死锁 ---- 挪独立 task(对齐 acquire 驱逐分支).
                 asyncio.create_task(self._evict_and_start(
                     n, priority, ce, child_id, try_, source))
                 return
@@ -766,7 +776,7 @@ class Kernel:
         """routine.start 的驱逐分支(独立 task): 驱逐低优 holder 后重试 start,
         结果走同一套 reject 通道."""
         try:
-            await self._evict_lower_holders(n, priority, ce)
+            await self._evict_lower_holders(n, list(n.declared), priority, ce)
             self._start(child_id)
             log.info('▶️ %s try_start' if try_ else '▶️ %s start', n.cmd)
         except ConflictError as exc:
@@ -853,14 +863,48 @@ class Kernel:
             self.tree.try_acquire(rid, modules, self._ancestor_ids(n))
             n.cmd.add_modules(modules)
             ok, error = True, None
+        except ConflictError as ce:
+            # 撞车走优先级裁决: 本 routine 的 start 档位(Node.priority)
+            # 严格大于全部撞车 holder 才驱逐后重试; 平级/更低原样拒
+            # (try 语义由调用方 catch AcquireError 自行实现).
+            n = self.nodes.get(rid)
+            if n is None or n.priority <= 0:
+                self._send_to(source, {'event': ROUTINE_ACQUIRED,
+                                       'req_id': req_id, 'ok': False,
+                                       'error': self._conflict_msg(ce)})
+            else:
+                # 驱逐要等 holder 的 stopped 回报(回经本 dispatch 队列),
+                # 内联 await 即自死锁 ---- 挪独立 task.
+                asyncio.create_task(self._evict_and_acquire(
+                    n, modules, n.priority, ce, req_id, source))
+            return
         except Exception as exc:
-            ok, error = False, (
-                self._conflict_msg(exc) if isinstance(exc, ConflictError) else str(exc))
+            ok, error = False, str(exc)
         reply: Dict[str, Any] = {'event': ROUTINE_ACQUIRED, 'req_id': req_id,
                                  'ok': ok}
         if error:
             reply['error'] = error
         self._send_to(source, reply)
+
+    async def _evict_and_acquire(self, n: Node, modules: List[str],
+                                 priority: int, ce: ConflictError,
+                                 req_id: str, source: str) -> None:
+        """routine.acquire 的驱逐分支(独立 task): 驱逐低优 holder 后重试,
+        结果走同一套 acquired ack 通道."""
+        try:
+            await self._evict_lower_holders(n, modules, priority, ce)
+            self.tree.try_acquire(n.cmd.id, modules, self._ancestor_ids(n))
+            n.cmd.add_modules(modules)
+            log.info('⚡ acquire %s ← %s (priority=%d evicted)',
+                     n.cmd, modules, priority)
+            self._send_to(source, {'event': ROUTINE_ACQUIRED,
+                                   'req_id': req_id, 'ok': True})
+        except Exception as exc:
+            err = (self._conflict_msg(exc)
+                   if isinstance(exc, ConflictError) else str(exc))
+            self._send_to(source, {'event': ROUTINE_ACQUIRED,
+                                   'req_id': req_id, 'ok': False,
+                                   'error': err})
 
     async def _on_routine_release(self, msg: Dict[str, Any],
                                   source: str) -> None:
@@ -880,82 +924,25 @@ class Kernel:
             reply['error'] = error
         self._send_to(source, reply)
 
-    async def _on_routine_force_acquire(self, msg: Dict[str, Any],
-                                        source: str) -> None:
-        rid = _to_int(msg.get('id')) or 0
-        req_id = str(msg.get('req_id', ''))
-        modules = [str(m) for m in (msg.get('modules') or [])]
-
-        async def _evict_and_acquire() -> None:
-            try:
-                n = self._require_self_running(rid, 'force_acquire')
-                await self._evict_holders(n, modules, rid)
-                self.tree.try_acquire(rid, modules, self._ancestor_ids(n))
-                n.cmd.add_modules(modules)
-                log.info('⚡ force_acquire %s ← %s', n.cmd, modules)
-                self._send_to(source, {'event': ROUTINE_ACQUIRED,
-                                       'req_id': req_id, 'ok': True})
-            except Exception as exc:
-                err = (self._conflict_msg(exc)
-                       if isinstance(exc, ConflictError) else str(exc))
-                self._send_to(source, {'event': ROUTINE_ACQUIRED,
-                                       'req_id': req_id, 'ok': False,
-                                       'error': err})
-
-        asyncio.create_task(_evict_and_acquire())
-
-    async def _on_routine_force_release(self, msg: Dict[str, Any],
-                                        source: str) -> None:
-        rid = _to_int(msg.get('id')) or 0
-        req_id = str(msg.get('req_id', ''))
-        modules = [str(m) for m in (msg.get('modules') or [])]
-
-        async def _evict() -> None:
-            try:
-                n = self._require_self_running(rid, 'force_release')
-                count = await self._evict_holders(n, modules, rid)
-                log.info('⚡ force_release %s ← %s (evicted %d, not acquired)',
-                         n.cmd, modules, count)
-                self._send_to(source, {'event': ROUTINE_RELEASED,
-                                       'req_id': req_id, 'ok': True})
-            except Exception as exc:
-                self._send_to(source, {'event': ROUTINE_RELEASED,
-                                       'req_id': req_id, 'ok': False,
-                                       'error': str(exc)})
-
-        asyncio.create_task(_evict())
-
-    async def _evict_holders(self, n: Node, modules: List[str],
-                             rid: int) -> int:
-        """驱逐 cone 内第三方 holder(cascade stop,reason=force).返回驱逐数."""
-        ancestors = self._ancestor_ids(n)
-        holders = self.tree.evictable_holders(modules, ancestors, rid)
-        for h in holders:
-            hn = self.nodes.get(h)
-            if hn is None:
-                continue
-            log.info('🛑 stop %s (force, evicting for %s)', hn.cmd, n.cmd)
-            await self._stop_node(hn, cascade=True, force_by=rid)
-        return len(holders)
-
-    async def _evict_lower_holders(self, n: Node, priority: int,
-                                   ce: ConflictError) -> None:
-        """优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 start
+    async def _evict_lower_holders(self, n: Node, modules: List[str],
+                                   priority: int, ce: ConflictError) -> None:
+        """优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 routine
         才逐个 cascade stop(reason='force')后返回;存在 >= 本优先级的 holder
         时不驱逐任何节点, 直接抛原 ConflictError(平级不抢).
 
+        modules 是要清场的模块集(start 裁决传 declared, acquire 传目标 modules).
         优先级只裁第三方(排除自己/祖先, 与 evictable_holders 一致);
         父子级联停走树权威, 不参与比较.
         """
         ancestors = self._ancestor_ids(n)
-        holders = self.tree.evictable_holders(list(n.declared), ancestors,
-                                              n.cmd.id)
+        holders = self.tree.evictable_holders(list(modules), ancestors,
+                                               n.cmd.id)
         for h in holders:
             hn = self.nodes.get(h)
             if hn is not None and hn.priority >= priority:
                 raise ce   # 有 >= 平级/更高 holder: 不抢
-        log.info('⚡ start %s (priority=%d) evicting %d holder(s)',
-                 n.cmd, priority, len(holders))
+        log.info('⚡ %s (priority=%d) evicting %d holder(s) for %s',
+                 n.cmd, priority, len(holders), modules)
         for h in holders:
             hn = self.nodes.get(h)
             if hn is None:
@@ -1197,6 +1184,7 @@ class Kernel:
             self.routes[name] = Route(
                 is_passive=bool(ip.get('flag')),
                 passive_kwargs=ip.get('kwargs') or {},
+                passive_priority=_passive_priority(ip),
                 meta=item.get('meta') or {},
                 owner=hub_id)
             registered.append(name)
@@ -1229,7 +1217,17 @@ class Kernel:
                 if r.error:
                     raise RuntimeError(r.error)
                 n.declared = r.modules
-                self._start(n.cmd.id)
+                # 声明优先级仲裁: passive 无 call-site, 声明处即调用点.
+                # auto_start 本就是独立 task, 内联 await 驱逐不堵 dispatch.
+                n.priority = route.passive_priority
+                try:
+                    self._start(n.cmd.id)
+                except ConflictError as ce:
+                    if route.passive_priority <= 0:
+                        raise
+                    await self._evict_lower_holders(
+                        n, list(n.declared), route.passive_priority, ce)
+                    self._start(n.cmd.id)
             except Exception as exc:
                 self._passive_started.discard(key)
                 self._remove_node_by_name(name)
@@ -1265,6 +1263,7 @@ class Kernel:
         self.routes[name] = Route(
             is_passive=bool(ip.get('flag')),
             passive_kwargs=ip.get('kwargs') or {},
+            passive_priority=_passive_priority(ip),
             meta=msg.get('meta') or {},
             owner=self._hub_of(source))
         # 回执必须先于 auto-start 的 lifecycle.created 发出(对齐 Go
@@ -1291,6 +1290,7 @@ class Kernel:
         self.routes[name] = Route(
             is_passive=bool(ip.get('flag')),
             passive_kwargs=ip.get('kwargs') or {},
+            passive_priority=_passive_priority(ip),
             meta=msg.get('meta') or {},
             owner=self._hub_of(source))
         # 回执先于 auto-start 的 created(同 register 语义).
@@ -1416,8 +1416,6 @@ Kernel._DISPATCH = {
     ROUTINE_UNSUBMIT: Kernel._on_routine_unsubmit,
     ROUTINE_ACQUIRE: Kernel._on_routine_acquire,
     ROUTINE_RELEASE: Kernel._on_routine_release,
-    ROUTINE_FORCE_ACQUIRE: Kernel._on_routine_force_acquire,
-    ROUTINE_FORCE_RELEASE: Kernel._on_routine_force_release,
     ROUTINE_LOAD_MODULE: Kernel._on_routine_load_module,
     ROUTINE_UNLOAD_MODULE: Kernel._on_routine_unload_module,
     MESSAGE_SEND: Kernel._on_message,

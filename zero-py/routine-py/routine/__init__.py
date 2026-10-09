@@ -32,7 +32,6 @@ from .kernel import (
 from .logger import configure_root, setup_logger
 from .module_tree import ModuleTree
 from .routine import (
-    PRI_NORMAL, PRI_SAFETY, PRI_USER,
     Modules, PassiveConfig, Routine, RoutineSource, Routines, passive_wire,
     request, stream, subscribe,
 )
@@ -48,7 +47,6 @@ __all__ = [
     'ModuleTree',
     'Connection', 'GrpcKernelServer', 'InprocKernel', 'KernelRef',
     'RemoteKernel', 'connect',
-    'PRI_NORMAL', 'PRI_SAFETY', 'PRI_USER',
     'Modules', 'PassiveConfig', 'Routine', 'RoutineSource', 'Routines',
     'passive_wire', 'request', 'stream', 'subscribe',
     'configure_root', 'setup_logger',

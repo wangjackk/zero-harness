@@ -38,7 +38,7 @@ handle = await self.ctx.submit('echo', {'text': 'hi'})
 # handle.modules = 子 routine on_created() 返回的占用 modules
 ```
 
-### `await ctx.call(name, kwargs=None, priority=PRI_NORMAL) -> Any`
+### `await ctx.call(name, kwargs=None, priority=10) -> Any`
 
 同步拿子 routine 结果:submit → start(priority) → wait 一步到位。**要求父 started**。
 
@@ -47,7 +47,7 @@ result = await self.ctx.call('echo', {'text': 'hi'})
 
 # 抢占式: 冲突时 incoming priority 严格大于全部第三方 holder 才驱逐后
 # start;平级/更低原样抛 StartError(priority 语义同 handle.start)
-result = await self.ctx.call('car/track', {}, priority=PRI_USER)
+result = await self.ctx.call('car/track', {}, priority=20)
 ```
 
 失败语义:
@@ -61,10 +61,8 @@ result = await self.ctx.call('car/track', {}, priority=PRI_USER)
 
 | 方法 | 说明 | 异常 |
 |---|---|---|
-| `await ctx.acquire(modules)` | 运行时占领模块(冲突抛 `AcquireError`) | `RuntimeError`(未 started) / `AcquireError` |
+| `await ctx.acquire(modules)` | 运行时占领模块(撞车按本 routine 的 start 档位裁决) | `RuntimeError`(未 started) / `AcquireError` |
 | `await ctx.release(modules)` | 释放指定模块(不全量) | `RuntimeError` / `ReleaseError` |
-| `await ctx.force_acquire(modules)` | 驱逐 cone 内第三方后自己占住 | `RuntimeError` / `AcquireError` |
-| `await ctx.force_release(modules)` | 驱逐 cone 内第三方后空出(不自己占) | `RuntimeError` / `ReleaseError` |
 | `await ctx.load_module(parent, child, name='')` | 加载子模块(只挂树不占用) | `RuntimeError` / `LoadModuleError` |
 | `await ctx.unload_module(child)` | 卸载子模块(有子/被占拒绝) | `RuntimeError` / `UnloadModuleError` |
 | `ctx.conflict(mods_a, mods_b) -> bool` | **纯本地**算两组 modules 是否冲突(cone 交集非空) | `RuntimeError`(tree 未缓存) |

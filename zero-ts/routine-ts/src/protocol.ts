@@ -33,15 +33,13 @@ export const LIFECYCLE_STOPPED = 'lifecycle.stopped'      // hub→kernel 已停
 export const ROUTINE_SUBMIT = 'routine.submit'
 export const ROUTINE_SUBMITTED = 'routine.submitted'
 export const ROUTINE_REJECTED = 'routine.rejected'
-export const ROUTINE_START = 'routine.start'   // 带可选 priority(number, 默认 0): 冲突时 incoming > holder 才驱逐后 start
+export const ROUTINE_START = 'routine.start'   // 带可选 priority(number, 缺省 10=常规默认档; 0~9 低档): 冲突时 incoming > holder 才驱逐后 start
 export const ROUTINE_STOP = 'routine.stop'
 export const ROUTINE_UNSUBMIT = 'routine.unsubmit'
 export const ROUTINE_ACQUIRE = 'routine.acquire'
 export const ROUTINE_ACQUIRED = 'routine.acquired'
 export const ROUTINE_RELEASE = 'routine.release'
 export const ROUTINE_RELEASED = 'routine.released'
-export const ROUTINE_FORCE_ACQUIRE = 'routine.force_acquire'   // ack 复用 routine.acquired
-export const ROUTINE_FORCE_RELEASE = 'routine.force_release'   // ack 复用 routine.released
 export const ROUTINE_LOAD_MODULE = 'routine.load_module'
 export const ROUTINE_MODULE_LOADED = 'routine.module_loaded'
 export const ROUTINE_UNLOAD_MODULE = 'routine.unload_module'

@@ -82,10 +82,6 @@ pub const ROUTINE_ACQUIRE: &str = "routine.acquire";
 pub const ROUTINE_ACQUIRED: &str = "routine.acquired";
 pub const ROUTINE_RELEASE: &str = "routine.release";
 pub const ROUTINE_RELEASED: &str = "routine.released";
-/// 强制释放模块(驱逐 cone 内第三方 holder 后空出,不自己占)
-pub const ROUTINE_FORCE_RELEASE: &str = "routine.force_release";
-/// 强制占领模块(驱逐 cone 内第三方 holder 后自己占住,带驱逐的 acquire;ack 复用 routine.acquired)
-pub const ROUTINE_FORCE_ACQUIRE: &str = "routine.force_acquire";
 /// py(dial-out)→kernel: 查 running 实例(带 req_id,kernel 回 get_running_reply)
 pub const ROUTINE_GET_RUNNING: &str = "routine.get_running";
 pub const ROUTINE_GET_RUNNING_REPLY: &str = "routine.get_running_reply";

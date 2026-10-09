@@ -49,36 +49,55 @@ pub struct ParentRef {
 /// is_passive wire 形态:恒为嵌套 `{flag, kwargs}`(对齐 py `passive_wire` /
 /// kernel `parsePassive`;rs 侧暂无 passive kwargs,bool 是 `{flag: b, kwargs: {}}`
 /// 的语法糖)。裸 bool 上 wire 会被 kernel parse 成 flag=false----不允许。
-fn serialize_passive<S: serde::Serializer>(flag: &bool, s: S) -> Result<S::Ok, S::Error> {
-    use serde::ser::SerializeMap;
-    let mut map = s.serialize_map(Some(2))?;
-    map.serialize_entry("flag", flag)?;
-    map.serialize_entry("kwargs", &Map::new())?;
-    map.end()
-}
-
 fn deserialize_passive<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     let v = Value::deserialize(d)?;
     Ok(v.get("flag").and_then(Value::as_bool).unwrap_or(false))
 }
 
+fn default_passive_priority() -> i64 {
+    10
+}
+
 /// `catalog.push` / `get_routines` 返回的单条 routine 描述。
 ///
-/// 对齐 Python `query.py build_routines`:`{name, is_passive: {flag, kwargs}, meta}`。
-/// modules 不在此上报 —— 实例级,由 created 回报带回(catalog 注册时无实例,
-/// 无 kwargs,静态上报对 dynamic 不准)。meta 是类级自由扩展字典,Go 侧 dumb
-/// forward 透传。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// 对齐 Python `query.py build_routines`:`{name, is_passive: {flag, kwargs,
+/// priority?}, meta}`。modules 不在此上报 —— 实例级,由 created 回报带回(catalog
+/// 注册时无实例,无 kwargs,静态上报对 dynamic 不准)。meta 是类级自由扩展字典,Go
+/// 侧 dumb forward 透传。
+///
+/// priority 是 passive 声明优先级(passive 没有 call-site, 声明处即调用点,
+/// 档位同 start:10=常规默认档, 0 为最低档永无驱逐资格)——不占顶层字段,
+/// 序列化时融进 is_passive 嵌套,flag=true 且非 10 才写(见手写 `Serialize`)。
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct RoutineCatalogEntry {
     pub name: String,
-    #[serde(
-        default,
-        serialize_with = "serialize_passive",
-        deserialize_with = "deserialize_passive"
-    )]
+    #[serde(default, deserialize_with = "deserialize_passive")]
     pub is_passive: bool,
+    #[serde(default = "default_passive_priority")]
+    pub priority: i64,
     #[serde(default)]
     pub meta: RoutineMeta,
+}
+
+impl Serialize for RoutineCatalogEntry {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = s.serialize_map(Some(3))?;
+        map.serialize_entry("name", &self.name)?;
+        // is_passive wire:恒为嵌套 {flag, kwargs}(rs 侧暂无 passive kwargs,
+        // kwargs 恒 {})。priority 声明优先级,flag=true 且非 10(常规默认档)
+        // 才写字段(对齐 py passive_wire / kernel parsePassive)。裸 bool 上
+        // wire 会被 kernel parse 成 flag=false ---- 不允许。
+        let mut ip = Map::new();
+        ip.insert("flag".into(), Value::Bool(self.is_passive));
+        ip.insert("kwargs".into(), Value::Object(Map::new()));
+        if self.is_passive && self.priority != 10 {
+            ip.insert("priority".into(), Value::from(self.priority));
+        }
+        map.serialize_entry("is_passive", &ip)?;
+        map.serialize_entry("meta", &self.meta)?;
+        map.end()
+    }
 }
 
 /// `get_running_routines` 返回的单条 running 实例。
@@ -215,6 +234,7 @@ mod tests {
         let entry = RoutineCatalogEntry {
             name: "edit".to_string(),
             is_passive: true,
+            priority: 10,
             meta: Map::new(),
         };
         let json = serde_json::to_value(&entry).unwrap();
@@ -226,7 +246,15 @@ mod tests {
             Some(true)
         );
         assert!(passive.get("kwargs").unwrap().is_object());
+        // priority 缺省档(10)不写字段
+        assert!(passive.get("priority").is_none());
         assert!(json.get("meta").unwrap().is_object());
+        // 非 10 才写进 is_passive 嵌套
+        let mut hi = entry.clone();
+        hi.priority = 20;
+        let json = serde_json::to_value(&hi).unwrap();
+        let passive = json.get("is_passive").unwrap();
+        assert_eq!(passive.get("priority").and_then(Value::as_i64), Some(20));
         // 读回嵌套形态
         let back: RoutineCatalogEntry = serde_json::from_value(json).unwrap();
         assert!(back.is_passive);

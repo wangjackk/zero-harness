@@ -27,11 +27,10 @@ pub type HandleReply = Result<Value, String>;
 /// p2p req 回执等待者: result value 或 error.
 pub type ReqReply = Result<Value, String>;
 
-// --- start 优先级常量(与 py routine.PRI_* 同值同语义) ---
-// 模块冲突时 incoming > 全部 holder 才驱逐后 start(严格大于, 平级不抢).
-pub const PRI_NORMAL: i64 = 0;
-pub const PRI_USER: i64 = 20;
-pub const PRI_SAFETY: i64 = 100;
+// --- start 优先级(模块冲突时的抢占裁决, 只在 start 上生效; 纯数字无常量) ---
+// incoming > 全部 holder 才驱逐后 start(严格大于, 平级不抢).
+// 档位: 10=常规(默认档) 20=用户驱动 100=安全级; 0~9 留给低档
+// (后台/可牺牲类, 可被默认档驱逐), 0 为最低档永无驱逐资格.
 
 #[async_trait]
 pub trait RoutineIo: Send + Sync {
@@ -361,11 +360,12 @@ impl RunContext {
 
     /// 启动已 submit 的子 routine: 发 routine.start{child_id, priority} 给 kernel.
     /// 不等 lifecycle.started (简化:直接进 wait,stopped 会带 error 若 start 失败).
-    /// priority: 模块冲突时 > 全部 holder 才驱逐后 start(平级不抢); 0=常规.
+    /// priority: 模块冲突时 > 全部 holder 才驱逐后 start(平级不抢);
+    /// 10(常规默认档)省字段 ---- wire 缺省即默认档.
     pub async fn start_child(&self, child_id: &str, priority: i64) -> Result<(), String> {
         let mut event = RawWireEvent::new(ROUTINE_START)
             .with_field("child_id", Value::String(child_id.to_string()));
-        if priority > 0 {
+        if priority != 10 {
             event = event.with_field("priority", Value::Number(priority.into()));
         }
         self.send_raw_event(event).await

@@ -13,8 +13,8 @@ routine SDK 的异常分两类:
 |---|---|---|---|
 | `SubmitError` | `Exception` | `ctx.submit()` 被 kernel 拒(name 找不到 / kwargs 不合法) | 改入参后重新 submit |
 | `StartError` | `Exception` | `handle.start(priority)`/`try_start` 撞冲突 / 父未 started | `try_start` 返回值可重试;`start` 失败后 handle 失效 |
-| `AcquireError` | `Exception` | `ctx.acquire/force_acquire` 失败(模块被占住 / 驱逐后竞态) | 是——重试或 `force_acquire` |
-| `ReleaseError` | `Exception` | `ctx.release/force_release` 失败(罕见,rid 未 started) | 检查 lifecycle 状态 |
+| `AcquireError` | `Exception` | `ctx.acquire` 失败(模块被占且档位不足 / 驱逐后竞态) | 是——重试(try 语义自行 catch) |
+| `ReleaseError` | `Exception` | `ctx.release` 失败(罕见,rid 未 started) | 检查 lifecycle 状态 |
 | `LoadModuleError` | `Exception` | `ctx.load_module()` 失败(child_id 已存在 / parent_id 不存在) | 改入参后重试 |
 | `UnloadModuleError` | `Exception` | `ctx.unload_module()` 失败(有子模块 / 被占用 / 不存在) | 先 unload 子 / release 模块 |
 | `ReqTimeout` | `TimeoutError` | `ctx.req()` 等回执超时 | 是——重试(idempotency 调用方自负) |
@@ -69,8 +69,8 @@ except SubmitError as exc:
 | 方法 | 失败行为 | handle 状态 | 可重试? |
 |---|---|---|---|
 | `try_start()` | **返回** `Optional[StartError]`(None=成功) | instance/node **保留** | 是 |
-| `start(priority=0)` | **抛** `StartError` | instance/node **被 kernel 清掉** | 否 |
-| `start(priority>0)` | **抛** `StartError`(驱逐后仍冲突/有平级 holder) | instance/node **被 kernel 清掉** | 否 |
+| `start(priority)`(默认 10) | **抛** `StartError` | instance/node **被 kernel 清掉** | 否 |
+| `start(priority>0)` | **抛** `StartError`(存在 `>=` 平级 holder / 驱逐后仍冲突) | instance/node **被 kernel 清掉** | 否 |
 
 模块冲突是正常业务情况(占住者还没释放),不该打断调用方 `run()` 体——所以 `try_start` 把它做成返回值,而不是异常:
 
@@ -89,17 +89,16 @@ else:
 
 ### `AcquireError`
 
-`ctx.acquire()` / `ctx.force_acquire()` 失败——`routine.acquired ok=false`。
+`ctx.acquire()` 失败——`routine.acquired ok=false`。
 
-- **`acquire`**:模块被第三方占住。
-- **`force_acquire`**:驱逐后仍冲突(竞态,被别人抢了)。**单轮驱逐不重试**——竞态失败抛回给调用方决定。
-- **可恢复**:重试 `acquire`,或升级 `force_acquire`,或换模块。
+- **模块被占且档位不足**:本 routine 的 start 档位(`start(priority)` 物化)未严格大于全部撞车 holder,平级/更低不抢。或驱逐后仍冲突(竞态,被别人抢了)——**单轮驱逐不重试**,竞态失败抛回给调用方决定。
+- **可恢复**:等一会儿重试(try 语义自行 catch),或换模块。
 
 ```python
 try:
     await self.acquire('output')
 except AcquireError:
-    # 模块被占,等一会儿重试
+    # 模块被占且档位不足,等一会儿重试
     await asyncio.sleep(0.5)
     await self.acquire('output')
 ```
@@ -108,9 +107,9 @@ except AcquireError:
 
 ### `ReleaseError`
 
-`ctx.release()` / `ctx.force_release()` 失败——`routine.released ok=false`。
+`ctx.release()` 失败——`routine.released ok=false`。
 
-- 罕见——release 一般不冲突(自己占的自己释放);`force_release` 只驱逐不占,基本总成功。
+- 罕见——release 一般不冲突(自己占的自己释放)。
 - **常见原因**:rid 未 started。
 - 跟 `AcquireError` 对称类型化。
 
@@ -215,7 +214,7 @@ except RuntimeError as exc:
 | `STOP` | 被 `lifecycle.stop` 正规打断 | 父侧 `handle.stop()` / kernel stop |
 | `ERROR` | `run()` 抛异常 | runner 未捕获异常 |
 | `CANCEL` | `CancelledError`(force_stop 接管前的取消路径) | task 取消,后续 force_stop 接管 |
-| `FORCE` | 被高优 `start(priority)` / `force_acquire` / `force_release` 驱逐 | 抢占式资源回收 |
+| `FORCE` | 被更高档位的 `start(priority)` / passive 拉起 / `acquire` 驱逐 | 抢占式资源回收 |
 | `DISCONNECT` | peer 断连,`force_stop_peer` 清理 | 网络断 / 进程退出 |
 | `UNKNOWN` | 未识别的 reason 字符串 | 兜底(不应出现) |
 
@@ -274,10 +273,8 @@ raise RuntimeError('worker never starts')
 | `handle.unsubmit` | `RuntimeError` | 已 started 的 routine 调 unsubmit |
 | `handle.wait` / `await handle` | `RuntimeError(self.error)` | 子异常停止 |
 | `ctx.call` | `StartError` / `RuntimeError` | start 失败(含 priority 驱逐分支) / 子异常 |
-| `ctx.acquire` | `AcquireError` | 模块被占 |
-| `ctx.force_acquire` | `AcquireError` | 驱逐后竞态失败 |
+| `ctx.acquire` | `AcquireError` | 模块被占且档位不足(或驱逐后竞态) |
 | `ctx.release` | `ReleaseError` | rid 未 started(罕见) |
-| `ctx.force_release` | `ReleaseError` | rid 未 started(罕见) |
 | `ctx.load_module` | `LoadModuleError` | child_id 已存在 / parent 不存在 |
 | `ctx.unload_module` | `UnloadModuleError` | 有子 / 被占 / 不存在 |
 | `ctx.req` | `ReqTimeout` | 回执超时 |

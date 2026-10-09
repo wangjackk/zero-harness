@@ -30,8 +30,8 @@ import {
   MESSAGE_STREAM_OPEN, MESSAGE_STREAM_OPEN_DELIVERED, MODULE_TREE,
   PUBSUB_DELIVERED, PUBSUB_PUBLISH, PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE,
   REQ_GET_MODULE_TREE, REQ_GET_ROUTINES, REQ_GET_RUNNING,
-  ROUTINE_ACQUIRE, ROUTINE_ACQUIRED, ROUTINE_FORCE_ACQUIRE,
-  ROUTINE_FORCE_RELEASE, ROUTINE_LOAD_MODULE,
+  ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
+  ROUTINE_LOAD_MODULE,
   ROUTINE_MODULE_LOADED, ROUTINE_RELEASE, ROUTINE_RELEASED,
   ROUTINE_START, ROUTINE_STOP, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
   ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_UNSUBMIT,
@@ -52,8 +52,15 @@ export interface CreatedResult {
 
 export class Route {
   constructor(public isPassive = false, public passiveKwargs: Payload = {},
+              public passivePriority = 10, // passive 拉起优先级(声明处即调用点; 档位同 start)
               public meta: Msg = {}, /** 提供该 routine 的 hub 身份(catalog.push 的 hub_id). */
               public owner = 'local') {}
+}
+
+/** is_passive wire 的 priority 字段解析: 缺省 10(常规默认档), 负数/非法钳 0. */
+function passivePriorityOf(ip: Payload): number {
+  const raw = ip.priority
+  return raw === undefined ? 10 : Math.max(0, toInt(raw))
 }
 
 /** kernel 出站连接: inproc link('local')或 grpc peer(dial-in).
@@ -136,8 +143,6 @@ export class Kernel {
       [ROUTINE_UNSUBMIT, (m, s) => this.onRoutineUnsubmit(m, s)],
       [ROUTINE_ACQUIRE, (m, s) => this.onRoutineAcquire(m, s)],
       [ROUTINE_RELEASE, (m, s) => this.onRoutineRelease(m, s)],
-      [ROUTINE_FORCE_ACQUIRE, (m, s) => this.onRoutineForceAcquire(m, s)],
-      [ROUTINE_FORCE_RELEASE, (m, s) => this.onRoutineForceRelease(m, s)],
       [ROUTINE_LOAD_MODULE, (m, s) => this.onRoutineLoadModule(m, s)],
       [ROUTINE_UNLOAD_MODULE, (m, s) => this.onRoutineUnloadModule(m, s)],
       [MESSAGE_SEND, (m, s) => this.onMessage(m, s)],
@@ -252,7 +257,7 @@ export class Kernel {
       return {
         routines: [...this.routes.entries()].map(([name, r]) => ({
           name, hub_id: r.owner,
-          is_passive: { flag: r.isPassive, kwargs: r.passiveKwargs },
+          is_passive: { flag: r.isPassive, kwargs: r.passiveKwargs, priority: r.passivePriority },
           meta: r.meta,
         })),
       }
@@ -647,7 +652,9 @@ export class Kernel {
   private async onRoutineStart(msg: Msg, source: string): Promise<void> {
     const childId = toInt(msg.child_id) || 0
     const isTry = Boolean(msg.try)
-    const priority = Math.max(0, toInt(msg.priority) || 0)
+    const raw = msg.priority
+    // 字段缺省 -> 10(常规默认档, wire 缺省档); 显式负数/非法钳 0(最低档)
+    const priority = raw === undefined ? 10 : Math.max(0, toInt(raw))
     try {
       const n = this.requireParentRunning(childId, 'start')
       n.priority = priority
@@ -655,11 +662,12 @@ export class Kernel {
         this.startRoutine(childId)
       } catch (e: any) {
         if (!(e instanceof ConflictError)) throw e
-        // 优先级仲裁: incoming 严格大于全部第三方 holder 才驱逐他们后重试
-        // start;平级/更低(含 priority=0 常规 start)不抢,原样拒(旧语义).
+        // 优先级仲裁: incoming 严格大于全部第三方 holder 才驱逐他们后
+        // 重试 start;平级/更低不抢,原样拒(与旧 call 语义一致).
+        // priority=0 是最低档, 不存在比它更低的 holder, 短路拒绝.
         if (priority <= 0) throw e
         // 驱逐要等 holder 的 stopped 回报(回经本 dispatch 队列),内联 await
-        // 即自死锁 ---- 挪独立 task(对齐 force_acquire).
+        // 即自死锁 ---- 挪独立 task(对齐 acquire 驱逐分支).
         this.evictAndStart(n, priority, e, childId, isTry, source)
           .catch(e2 => log.error(`priority start failed: ${e2?.stack ?? e2}`))
         return
@@ -679,7 +687,7 @@ export class Kernel {
   private async evictAndStart(n: Node, priority: number, ce: ConflictError,
                               childId: number, isTry: boolean, source: string): Promise<void> {
     try {
-      await this.evictLowerHolders(n, priority, ce)
+      await this.evictLowerHolders(n, [...n.declared], priority, ce)
       this.startRoutine(childId)
       log.info(`▶️ ${this.nodes.get(childId)!.cmd} ${isTry ? 'try_start' : 'start'}`)
     } catch (e: any) {
@@ -694,16 +702,17 @@ export class Kernel {
 
   /** 优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 start 才逐个
    * cascade stop(reason='force')后返回;存在 >= 本优先级的 holder 时不驱逐
-   * 任何节点, 直接抛原 ConflictError(平级不抢).优先级只裁第三方(排除
-   * 自己/祖先);父子级联停走树权威, 不参与比较. */
-  private async evictLowerHolders(n: Node, priority: number, ce: ConflictError): Promise<void> {
+   * 任何节点, 直接抛原 ConflictError(平级不抢).modules 是要清场的模块集
+   * (start 裁决传 declared, acquire 传目标 modules).优先级只裁第三方
+   * (排除自己/祖先);父子级联停走树权威, 不参与比较. */
+  private async evictLowerHolders(n: Node, modules: string[], priority: number, ce: ConflictError): Promise<void> {
     const ancestors = this.ancestorIds(n)
-    const holders = this.tree.evictableHolders([...n.declared], ancestors, n.cmd.id)
+    const holders = this.tree.evictableHolders(modules, ancestors, n.cmd.id)
     for (const h of holders) {
       const hn = this.nodes.get(h)
       if (hn && hn.priority >= priority) throw ce   // 有 >= 平级/更高 holder: 不抢
     }
-    log.info(`⚡ start ${n.cmd} (priority=${priority}) evicting ${holders.length} holder(s)`)
+    log.info(`⚡ ${n.cmd} (priority=${priority}) evicting ${holders.length} holder(s)`)
     for (const h of holders) {
       const hn = this.nodes.get(h)
       if (!hn) continue
@@ -784,10 +793,43 @@ export class Kernel {
       n.cmd.addModules(modules)
       reply.ok = true
     } catch (e: any) {
-      reply.ok = false
-      reply.error = e instanceof ConflictError ? this.conflictMsg(e) : String(e?.message ?? e)
+      if (!(e instanceof ConflictError)) {
+        reply.ok = false
+        reply.error = String(e?.message ?? e)
+        this.sendTo(source, reply)
+        return
+      }
+      // 撞车走优先级裁决: 本 routine 的 start 档位(Node.priority)
+      // 严格大于全部撞车 holder 才驱逐后重试; 平级/更低原样拒
+      // (try 语义由调用方 catch AcquireError 自行实现).
+      const n = this.nodes.get(rid)
+      if (!n || n.priority <= 0) {
+        this.sendTo(source, { event: ROUTINE_ACQUIRED, req_id: reqId, ok: false, error: this.conflictMsg(e) })
+      } else {
+        // 驱逐要等 holder 的 stopped 回报(回经本 dispatch 队列),
+        // 内联 await 即自死锁 ---- 挪独立 task.
+        this.evictAndAcquire(n, modules, n.priority, e, reqId, source)
+          .catch(e2 => log.error(`priority acquire failed: ${e2?.stack ?? e2}`))
+      }
+      return
     }
     this.sendTo(source, reply)
+  }
+
+  /** routine.acquire 的驱逐分支(独立 task): 驱逐低优 holder 后重试,
+   * 结果走同一套 acquired ack 通道. */
+  private async evictAndAcquire(n: Node, modules: string[], priority: number,
+                                ce: ConflictError, reqId: string, source: string): Promise<void> {
+    try {
+      await this.evictLowerHolders(n, modules, priority, ce)
+      this.tree.tryAcquire(n.cmd.id, modules, this.ancestorIds(n))
+      n.cmd.addModules(modules)
+      log.info(`⚡ acquire ${n.cmd} ← ${JSON.stringify(modules)} (priority=${priority} evicted)`)
+      this.sendTo(source, { event: ROUTINE_ACQUIRED, req_id: reqId, ok: true })
+    } catch (e: any) {
+      const err = e instanceof ConflictError ? this.conflictMsg(e) : String(e?.message ?? e)
+      this.sendTo(source, { event: ROUTINE_ACQUIRED, req_id: reqId, ok: false, error: err })
+    }
   }
 
   private async onRoutineRelease(msg: Msg, source: string): Promise<void> {
@@ -805,60 +847,6 @@ export class Kernel {
       reply.error = String(e?.message ?? e)
     }
     this.sendTo(source, reply)
-  }
-
-  private onRoutineForceAcquire(msg: Msg, source: string): Promise<void> {
-    const rid = toInt(msg.id) || 0
-    const reqId = String(msg.req_id ?? '')
-    const modules = (msg.modules ?? []).map((m: any) => String(m))
-
-    const evictAndAcquire = async () => {
-      try {
-        const n = this.requireSelfRunning(rid, 'force_acquire')
-        await this.evictHolders(n, modules, rid)
-        this.tree.tryAcquire(rid, modules, this.ancestorIds(n))
-        n.cmd.addModules(modules)
-        log.info(`⚡ force_acquire ${n.cmd} ← ${JSON.stringify(modules)}`)
-        this.sendTo(source, { event: ROUTINE_ACQUIRED, req_id: reqId, ok: true })
-      } catch (e: any) {
-        const err = e instanceof ConflictError ? this.conflictMsg(e) : String(e?.message ?? e)
-        this.sendTo(source, { event: ROUTINE_ACQUIRED, req_id: reqId, ok: false, error: err })
-      }
-    }
-    evictAndAcquire().catch(e => log.error(`force_acquire failed: ${e?.stack ?? e}`))
-    return Promise.resolve()
-  }
-
-  private onRoutineForceRelease(msg: Msg, source: string): Promise<void> {
-    const rid = toInt(msg.id) || 0
-    const reqId = String(msg.req_id ?? '')
-    const modules = (msg.modules ?? []).map((m: any) => String(m))
-
-    const evict = async () => {
-      try {
-        const n = this.requireSelfRunning(rid, 'force_release')
-        const count = await this.evictHolders(n, modules, rid)
-        log.info(`⚡ force_release ${n.cmd} ← ${JSON.stringify(modules)} (evicted ${count}, not acquired)`)
-        this.sendTo(source, { event: ROUTINE_RELEASED, req_id: reqId, ok: true })
-      } catch (e: any) {
-        this.sendTo(source, { event: ROUTINE_RELEASED, req_id: reqId, ok: false, error: String(e?.message ?? e) })
-      }
-    }
-    evict().catch(e => log.error(`force_release failed: ${e?.stack ?? e}`))
-    return Promise.resolve()
-  }
-
-  /** 驱逐 cone 内第三方 holder(cascade stop,reason=force).返回驱逐数. */
-  private async evictHolders(n: Node, modules: string[], rid: number): Promise<number> {
-    const ancestors = this.ancestorIds(n)
-    const holders = this.tree.evictableHolders(modules, ancestors, rid)
-    for (const h of holders) {
-      const hn = this.nodes.get(h)
-      if (!hn) continue
-      log.info(`🛑 stop ${hn.cmd} (force, evicting for ${n.cmd})`)
-      await this.stopNode(hn, true, rid)
-    }
-    return holders.length
   }
 
   private onRoutineLoadModule(msg: Msg, source: string): Promise<void> {
@@ -961,7 +949,7 @@ export class Kernel {
         continue
       }
       const ip = item.is_passive ?? {}
-      this.routes.set(name, new Route(Boolean(ip.flag), ip.kwargs ?? {}, item.meta ?? {}, hubId))
+      this.routes.set(name, new Route(Boolean(ip.flag), ip.kwargs ?? {}, passivePriorityOf(ip), item.meta ?? {}, hubId))
       registered.push(name)
     }
     this.sendTo(source, { event: CATALOG_PUSHED, req_id: reqId, registered, skipped })
@@ -992,7 +980,17 @@ export class Kernel {
         }
         if (r.error) throw new Error(r.error)
         n.declared = r.modules
-        this.startRoutine(n.cmd.id)
+        // 声明优先级仲裁: passive 无 call-site, 声明处即调用点.
+        // auto_start 本就是独立 task, 内联 await 驱逐不堵 dispatch.
+        n.priority = route.passivePriority
+        try {
+          this.startRoutine(n.cmd.id)
+        } catch (e: any) {
+          if (!(e instanceof ConflictError)) throw e
+          if (route.passivePriority <= 0) throw e
+          await this.evictLowerHolders(n, [...n.declared], route.passivePriority, e)
+          this.startRoutine(n.cmd.id)
+        }
       } catch (e: any) {
         this._passiveStarted.delete(name)
         this.removeNodeByName(name)
@@ -1018,7 +1016,7 @@ export class Kernel {
       this.sendTo(source, { event: CATALOG_REGISTERED, req_id: reqId, ok: false, error: `routine ${JSON.stringify(name)} already registered` })
       return
     }
-    this.routes.set(name, new Route(Boolean(ip.flag), ip.kwargs ?? {}, msg.meta ?? {}, this.hubOf(source)))
+    this.routes.set(name, new Route(Boolean(ip.flag), ip.kwargs ?? {}, passivePriorityOf(ip), msg.meta ?? {}, this.hubOf(source)))
     // 回执必须先于 auto-start 的 lifecycle.created 发出(对齐 Go
     // handleCatalogRegister:先 sendConn 再 go AutoStartPassive).
     this.sendTo(source, { event: CATALOG_REGISTERED, req_id: reqId, ok: true })
@@ -1040,7 +1038,7 @@ export class Kernel {
     // 老实例(级联停子树). 老代码实例承载的闭包/连接在旧模块里, 留着跑完
     // 语义上已不是"这个 routine"; passive 额外等停完再 auto-start 新实例.
     this._passiveStarted.delete(name)
-    this.routes.set(name, new Route(Boolean(ip.flag), ip.kwargs ?? {}, msg.meta ?? {}, this.hubOf(source)))
+    this.routes.set(name, new Route(Boolean(ip.flag), ip.kwargs ?? {}, passivePriorityOf(ip), msg.meta ?? {}, this.hubOf(source)))
     // 回执先于 auto-start 的 created(同 register 语义).
     this.sendTo(source, { event: CATALOG_RELOADED, req_id: reqId, ok: true });
     // 先停老实例, 等它 stopped(节点移除)后再起新实例.

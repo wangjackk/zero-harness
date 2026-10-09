@@ -18,11 +18,10 @@ import type { Phase, RunContext, ProviderStream } from './ctx'
 /** routine 声明占用的模块列表(on_created 返回值).null/undefined = 不占. */
 export type Modules = string[] | null
 
-// --- start 优先级常量(与 py routine.PRI_* / rs PRI_* 同值同语义) ---
-// 模块冲突时的抢占裁决: incoming 严格大于全部第三方 holder 才驱逐后 start.
-export const PRI_NORMAL = 0
-export const PRI_USER = 20
-export const PRI_SAFETY = 100
+// --- start 优先级(模块冲突时的抢占裁决, 只在 start 上生效; 纯数字无常量) ---
+// incoming 严格大于全部第三方 holder 才驱逐后 start(平级不抢).
+// 档位: 10=常规(默认档) 20=用户驱动 100=安全级; 0~9 留给低档
+// (后台/可牺牲类, 可被默认档驱逐). 0 为最低档, 永无驱逐资格.
 
 /** 发送方 routine 引用(@request/@stream/on_message 的 source 参数). */
 export interface RoutineSource {
@@ -76,16 +75,25 @@ export function subscribe(topic: string, namespace = ''): MethodDecorator {
   }
 }
 
-/** isPassive 带参形态: passive + auto-start 默认入参. */
+/** isPassive 带参形态: passive + auto-start 默认入参.
+ * priority: 拉起时的 start 优先级 ---- passive 没有 call-site(kernel 是
+ * 拉起发起者), 声明处即调用点. 档位同 start(10=常规默认档,
+ * 0 为最低档永无驱逐资格). */
 export class PassiveConfig {
-  constructor(readonly kwargs: Record<string, any>) {}
+  constructor(readonly kwargs: Record<string, any>, readonly priority = 10) {}
 }
 
-/** isPassive(boolean | PassiveConfig) 序列化成 wire 单字段 {flag, kwargs}.
+/** isPassive(boolean | PassiveConfig) 序列化成 wire 单字段
+ * {flag, kwargs[, priority]}(priority 缺省 10 不写字段).
  * 杂型注册即 TypeError(协议违规立即暴露,不留兼容分支). */
-export function passiveWire(cls: RoutineClass): { flag: boolean; kwargs: Record<string, any> } {
+export function passiveWire(cls: RoutineClass): { flag: boolean; kwargs: Record<string, any>; priority?: number } {
   const ip: any = (cls as any).isPassive
-  if (ip instanceof PassiveConfig) return { flag: true, kwargs: { ...ip.kwargs } }
+  if (ip instanceof PassiveConfig) {
+    const w: { flag: boolean; kwargs: Record<string, any>; priority?: number } =
+      { flag: true, kwargs: { ...ip.kwargs } }
+    if (ip.priority !== 10) w.priority = ip.priority
+    return w
+  }
   if (typeof ip === 'boolean') return { flag: ip, kwargs: {} }
   throw new TypeError(`${(cls as any).name}.isPassive only accepts boolean | PassiveConfig, got ${typeof ip}: ${JSON.stringify(ip)}`)
 }
@@ -197,7 +205,7 @@ export abstract class Routine {
 
   /** 同步拿子 routine 结果(submit→start→wait 一步到位).priority 语义见
    * handle.start(冲突驱逐裁决). */
-  async call(routineName: string, kwargs?: Payload, priority: number = PRI_NORMAL): Promise<any> {
+  async call(routineName: string, kwargs?: Payload, priority: number = 10): Promise<any> {
     return await this.ctx.call(routineName, kwargs, priority)
   }
 
@@ -205,8 +213,6 @@ export abstract class Routine {
 
   async acquire(modules: string[]): Promise<void> { return await this.ctx.acquire(modules) }
   async release(modules: string[]): Promise<void> { return await this.ctx.release(modules) }
-  async forceRelease(modules: string[]): Promise<void> { return await this.ctx.forceRelease(modules) }
-  async forceAcquire(modules: string[]): Promise<void> { return await this.ctx.forceAcquire(modules) }
   async loadModule(parent: string, child: string, name = ''): Promise<void> {
     return await this.ctx.loadModule(parent, child, name)
   }

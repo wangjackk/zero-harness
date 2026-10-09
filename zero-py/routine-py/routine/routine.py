@@ -23,14 +23,12 @@ from .protocol import (
     ENVELOPE_STREAM_ID, MESSAGE_REQ_REPLY, MESSAGE_STREAM_DATA,
 )
 
-# --- start 优先级常量(模块冲突时的抢占裁决, 只在 start 上生效) ---
+# --- start 优先级(模块冲突时的抢占裁决, 只在 start 上生效) ---
 # 规则: incoming.priority > holder.priority 才驱逐(严格大于, 平级不抢);
-# <= 直接 StartError. 语义分层: NORMAL=常规业务(默认) / USER=用户显式
-# 意图(抢占在跑的常规动作, 如唤醒转向打断当前跟踪) / SAFETY=安全兜底
-# (抢占一切, 如急停). 业务代码只允许用这三个常量, 不裸写 int.
-PRI_NORMAL = 0
-PRI_USER = 20
-PRI_SAFETY = 100
+# <= 直接 StartError. 语义分层: 10=常规业务(默认) / 20=用户显式意图
+# (抢占在跑的常规动作, 如唤醒转向打断当前跟踪) / 100=安全兜底
+# (抢占一切, 如急停). 0~9 留给低档(后台/可牺牲类, 可被默认档驱逐);
+# 0 为最低档, 永无驱逐资格.
 
 
 class Modules(list):
@@ -92,21 +90,28 @@ def subscribe(topic: str, *, namespace: str = ''):
 class PassiveConfig:
     """``is_passive`` 带参形态: passive + auto-start 默认入参.
 
-    单字段 ``kwargs`` ---- 与 wire ``{flag, kwargs}`` 的 kwargs 同源, 常驻服务的
-    启动配置(如 WebServer 的 host/port).
+    kwargs: 常驻服务的启动配置(如 WebServer 的 host/port).
+    priority: 拉起时的 start 优先级 ---- passive 没有 call-site(kernel 是
+        拉起发起者), 声明处即调用点. 档位同 start(10=常规默认档,
+        0 为最低档永无驱逐资格).
     """
 
     kwargs: Dict[str, Any]
+    priority: int = 10
 
 
 def passive_wire(cls: 'Type[Routine]') -> Dict[str, Any]:
-    """is_passive(bool | PassiveConfig) 序列化成 wire 单字段 ``{flag, kwargs}``.
+    """is_passive(bool | PassiveConfig) 序列化成 wire 单字段
+    ``{flag, kwargs[, priority]}``(priority 缺省 10 不写字段).
 
     裸 dict 等杂型注册即 TypeError(协议违规立即暴露,不留兼容分支).
     """
     ip = getattr(cls, 'is_passive', False)
     if isinstance(ip, PassiveConfig):
-        return {'flag': True, 'kwargs': dict(ip.kwargs)}
+        w = {'flag': True, 'kwargs': dict(ip.kwargs)}
+        if ip.priority != 10:
+            w['priority'] = ip.priority
+        return w
     if isinstance(ip, bool):
         return {'flag': ip, 'kwargs': {}}
     raise TypeError(
@@ -204,7 +209,7 @@ class Routine(ABC):
 
     async def call(self, routine_name: str,
                    kwargs: Optional[Dict[str, Any]] = None,
-                   priority: int = PRI_NORMAL) -> Any:
+                   priority: int = 10) -> Any:
         """同步拿子 routine 结果(submit→start→wait 一步到位).详见 ``ctx.call``."""
         return await self.ctx.call(routine_name, kwargs, priority)
 
@@ -215,12 +220,6 @@ class Routine(ABC):
 
     async def release(self, modules: List[str]) -> None:
         return await self.ctx.release(modules)
-
-    async def force_release(self, modules: List[str]) -> None:
-        return await self.ctx.force_release(modules)
-
-    async def force_acquire(self, modules: List[str]) -> None:
-        return await self.ctx.force_acquire(modules)
 
     async def load_module(self, parent: str, child: str, name: str = '') -> None:
         return await self.ctx.load_module(parent, child, name)
