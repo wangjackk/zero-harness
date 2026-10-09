@@ -31,6 +31,9 @@ class RoutineHandle:
         # submit 时 kernel 确定的占用 modules(created 回报带回).编排器据此算
         # 冲突(``ctx.conflict(h1.modules, h2.modules)``).
         self.modules: Optional[list] = modules
+        # start 成功后镜像的档位(kernel Node.priority 的调用方视图).
+        # None=尚未 start.编排器可读(h1.priority vs h2.priority 辅助裁决).
+        self.priority: Optional[int] = None
         self.result: Any = None
         self.error: Optional[str] = None
         # lifecycle.stopped 的 wire reason(大写 enum 值).父侧可读分流
@@ -111,17 +114,19 @@ class RoutineHandle:
                 f'{self}: already done (reason={self.reason!r}), cannot {op}')
 
     async def _start_common(self, op: str, send_coro, *,
-                            try_mode: bool) -> Optional[StartError]:
+                            try_mode: bool, priority: int = 0) -> Optional[StartError]:
         """start/try_start 公共骨架.
 
         try_mode=True(try_start):失败返回 StartError(None=成功)--保留可重试.
         try_mode=False(start):失败 raise StartError.
+        成功后 ``self.priority`` 镜像本次档位(kernel Node.priority 调用方视图).
         """
         await self._require_ctx(op)
         await self._require_not_done(op, send_coro)
         self._ctx._require_parent_started(f'{op}ing child')  # type: ignore[union-attr]
         err = await self._send_and_wait(send_coro, expects_err=True)
         if not err:
+            self.priority = priority
             return None
         se = StartError(err)
         if try_mode:
@@ -137,17 +142,19 @@ class RoutineHandle:
         return await self._start_common(
             'start',
             self._ctx._io.send_routine_start(  # type: ignore[union-attr]
-                child_id=self.id, try_start=True,
+                # priority=0 最低档: try_start 是礼貌语义, 永不抢占
+                # (10 默认档会驱逐低档 holder, 破坏可重试契约).
+                child_id=self.id, try_start=True, priority=0,
             ),
             try_mode=True,
         )
 
-    async def start(self, priority: int = 0) -> None:
+    async def start(self, priority: int = 10) -> None:   # 10 = 常规默认档
         """让 kernel start 子命令(占模块+运行),全有或全无--失败时 kernel 清
         node+订阅,本侧清 created instance(handle 失效不可重试).
 
         priority: 模块冲突时 incoming > 全部 holder 才驱逐他们后 start
-        (严格大于, 平级不抢; PRI_NORMAL/USER/SAFETY);否则仍失败.
+        (严格大于, 平级不抢; 档位约定见 routine.py 头注);否则仍失败.
         失败 raise StartError.需 ctx 绑定 + 父 started.
         """
         await self._start_common(
@@ -156,6 +163,7 @@ class RoutineHandle:
                 child_id=self.id, try_start=False, priority=priority,
             ),
             try_mode=False,
+            priority=priority,
         )
 
     async def stop(self, *, fire: bool = False) -> None:

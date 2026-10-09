@@ -122,12 +122,12 @@ class RunContext:
 
     async def call(self, name: str,
                    kwargs: Optional[Dict[str, Any]] = None,
-                   priority: int = 0) -> Any:
+                   priority: int = 10) -> Any:   # 10 = 常规默认档
         """同步拿子 routine 结果:submit → start → wait 一步到位.
 
-        priority: start 优先级(PRI_NORMAL/USER/SAFETY).模块冲突时
+        priority: start 优先级(档位约定见 routine.py 头注).模块冲突时
         incoming > 全部 holder 才驱逐他们后 start(严格大于, 平级不抢);
-        否则抛 StartError.0 等价旧 call(绝不驱逐).
+        否则抛 StartError.默认 10 等价旧 call 语义(平级冲突即拒).
 
         失败语义:
         - start 失败(模块冲突/父未 started):抛 StartError
@@ -147,7 +147,9 @@ class RunContext:
     # --- 运行时占领/释放模块(跟类静态声明同一底层 TryAcquire/Release) ---
 
     async def acquire(self, modules: List[str]) -> None:
-        """运行时占领模块.冲突抛 AcquireError.只 start 期间可用."""
+        """运行时占领模块.撞车按本 routine 的 start 档位裁决:严格大于全部
+        撞车 holder 才驱逐后占住,否则抛 AcquireError(try 语义自行 catch).
+        只 start 期间可用."""
         self._require_started('acquire')
         req_id = _new_req_id()
         fut = asyncio.get_running_loop().create_future()
@@ -183,41 +185,6 @@ class RunContext:
         runtime.register_acquire_future(req_id, fut)
         try:
             await self._io.send_routine_release(
-                req_id=req_id, id=self.id, modules=modules,
-            )
-            await asyncio.wait_for(fut, timeout=self.ACK_TIMEOUT)
-        finally:
-            runtime.pop_acquire_future(req_id)
-
-    async def force_acquire(self, modules: List[str]) -> None:
-        """强制占领 modules:驱逐 cone 内第三方 holder(cascade stop,reason='force')
-        后自己占住(带驱逐的 acquire,原子无竞态).永不驱逐祖先."""
-        self._require_started('force_acquire')
-        req_id = _new_req_id()
-        fut = asyncio.get_running_loop().create_future()
-        runtime = self._runtime
-        runtime.register_acquire_future(req_id, fut)
-        try:
-            await self._io.send_routine_force_acquire(
-                req_id=req_id, id=self.id, modules=modules,
-            )
-            await asyncio.wait_for(fut, timeout=self.ACK_TIMEOUT)
-        finally:
-            runtime.pop_acquire_future(req_id)
-
-    async def force_release(self, modules: List[str]) -> None:
-        """强制释放 modules:驱逐 cone 内第三方 holder 后空出 modules,**不自己占**.
-
-        跟 force_acquire 的区别:force_acquire 驱逐后自己占住;force_release 只
-        清场,驱逐与后续 acquire 间有竞态窗口(调用方自担).
-        """
-        self._require_started('force_release')
-        req_id = _new_req_id()
-        fut = asyncio.get_running_loop().create_future()
-        runtime = self._runtime
-        runtime.register_acquire_future(req_id, fut)
-        try:
-            await self._io.send_routine_force_release(
                 req_id=req_id, id=self.id, modules=modules,
             )
             await asyncio.wait_for(fut, timeout=self.ACK_TIMEOUT)

@@ -39,6 +39,7 @@ impl QueryService {
                 serde_json::to_value(RoutineCatalogEntry {
                     name: factory.routine_name().to_string(),
                     is_passive: factory.is_passive(),
+                    priority: factory.passive_priority(),
                     meta: factory.meta(),
                 })
                 .unwrap_or(Value::Null)

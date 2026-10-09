@@ -11,7 +11,6 @@ pub mod stream;
 
 pub use context::{
     HandleReply, ReqReply, RoutineIo, RunContext, RunContextOptions, SubmitReply,
-    PRI_NORMAL, PRI_SAFETY, PRI_USER,
 };
 pub use messaging::{
     request_spec, subscribe_spec, Namespace, RequestHandler, RequestSpec, RoutineSource,

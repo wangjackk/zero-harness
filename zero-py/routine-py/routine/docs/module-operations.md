@@ -16,7 +16,7 @@ routine 侧模块操作完整参考.模块是 routine 互斥调度的核心:每�
 | **conflict** | 两组 modules 的 cone 相交即冲突→业务侧串行;不相交→可并行. |
 | **occupy (holder)** | routine acquire 一个模块后,该模块 holders 列表追加 rid.释放才移除. |
 | **静态声明** | `on_created()` 返回 `Modules([...])`,created 时占,stop 时自动释放. |
-| **运行时占/释放** | `acquire()`/`release()`/`force_release()`/`force_acquire()`,run() 体里动态调. |
+| **运行时占/释放** | `acquire()`/`release()`,run() 体里动态调.acquire 撞车按本 routine 的 start 档位裁决. |
 | **动态加载/卸载** | `load_module()`/`unload_module()`,改全局树拓扑,只挂树不占用. |
 
 ---
@@ -53,7 +53,7 @@ await self.acquire(['new_task'])
 ```
 
 - **底层**:发 `routine.acquire`{req_id, id, modules} → kernel `TryAcquire` → 回 `routine.acquired`{req_id, ok, error}.
-- **冲突**(cone 内有非祖先的第三方占用):抛 `AcquireError`.
+- **撞车按优先级裁决**:本 routine 的 **start 档位**(`start(priority)` 物化)严格大于全部撞车 holder 才驱逐后占住;存在 `>=` 平级/更高 holder 时不驱逐任何节点,抛 `AcquireError`(try 语义自行 catch).档位与 start 同一套:10=常规(默认档)/20=用户驱动/100=安全级,0 为最低档永无驱逐资格.
 - **幂等**:重复 acquire 同一模块是 no-op(holders 去重).
 - **父子共占**:子 acquire 父已占的模块,ancestors 含父 → 跳过 → 成功叠加(父子协作共占).
 - **超时**:`ACK_TIMEOUT`(30s)等不到 ack 抛 `TimeoutError`.
@@ -61,7 +61,7 @@ await self.acquire(['new_task'])
 | 异常 | 含义 |
 |---|---|
 | `RuntimeError` | 未 started 就调 |
-| `AcquireError` | 模块被第三方占用(冲突) |
+| `AcquireError` | 模块被占且本 routine 档位不足(或驱逐后竞态) |
 | `TimeoutError` | ack 超时(kernel 异常) |
 
 ---
@@ -77,6 +77,7 @@ await self.release(['new_task'])
 - **底层**:发 `routine.release`{req_id, id, modules} → kernel `ReleaseModules` → 回 `routine.released`{req_id, ok}.
 - 节点不存在 / 自己没占都是 no-op.
 - **stop 兜底**:routine stop 时 kernel 自动 `Release(rid)` 全量清理该 routine 占的所有模块,无需手动 release.
+- **只动自己**:`ReleaseModules` 检查 `hasHolder(rid)`,只移除自己那份 holder,不动别人.别人占的模块 release = no-op;自己和别人共占的模块 release 只摘自己,别人还在.
 
 | 异常 | 含义 |
 |---|---|
@@ -85,56 +86,7 @@ await self.release(['new_task'])
 
 ---
 
-### 4. 强制释放:`force_release(modules)`
-
-驱逐 cone 内第三方 holder(cascade stop,带 `reason='force'`)后**空出 modules,不自己占**.要占住另调 `acquire` / `force_acquire`.
-
-```python
-await self.force_release(['blocked_module'])
-# 模块空出了, 但本 routine 没占住. 要占:
-await self.acquire(['blocked_module'])  # 或 force_acquire
-```
-
-- **语义**:只清场(打断占住者),不占.名字名副其实 = 强制释放.
-- **跟 force_acquire 的区别**:force_acquire 驱逐后自己占住(原子无竞态);force_release 只清场,驱逐与后续 acquire 间有竞态窗口(调用方自担).
-- **永不驱逐祖先**(打断父亲自己也死).单轮驱逐不重试.
-- **底层**:发 `routine.force_release`{req_id, id, modules} -> kernel `EvictableHolders` + cascade stop -> 回 `routine.released`.基本总成功(驱逐本身不失败).
-
-- **只动自己**: `ReleaseModules` 检查 `hasHolder(rid)`, 只移除自己那份 holder, 不动别人. 别人占的模块 release = no-op; 自己和别人共占的模块 release 只摘自己, 别人还在.
-
-| 异常 | 含义 |
-|---|---|
-| `RuntimeError` | 未 started |
-
-- **不碰自己/祖先**: `EvictableHolders` 算驱逐集时第一道过滤 `h == rid` 跳过自己, ancestors 里的也跳过. 所以自己 force_acquire 占住后再 force_release 同一模块 = 驱逐集空, no-op 不自杀. force 是打断别人, 绝不打断自己/祖先(打断父亲自己也死).
-| `ReleaseError` | 罕见(rid 未 started) |
-
----
-
-### 5. 强制占领:`force_acquire(modules)`
-
-驱逐 cone 内第三方 holder(cascade stop,带 `reason='force'`)后,本 routine 自己占住 modules(带驱逐的 acquire,原子无竞态).
-
-```python
-await self.force_acquire(['blocked_module'])  # 驱逐占住者后自己占住
-```
-
-- **跟 acquire 的区别**:acquire 冲突直接抛(等占住者自然释放);force_acquire 主动打断占住者抢过来.
-- **跟 force_release 的区别**:force_release 只驱逐不占(空出模块);force_acquire 驱逐后自己占住.
-- **永不驱逐祖先**(打断父亲自己也死).单轮驱逐不重试.
-- **底层**:发 `routine.force_acquire`{req_id, id, modules} -> kernel `EvictableHolders` + cascade stop + `TryAcquire` -> 回 `routine.acquired`(ack 复用 acquire 通路).
-- **失败**:驱逐后仍冲突(竞态,被别人抢了)抛 `AcquireError`.
-
-| 异常 | 含义 |
-|---|---|
-| `RuntimeError` | 未 started |
-
-- **不碰自己/祖先**: 同 force_release. `EvictableHolders` 排除 `rid` 自己和 ancestors. 即使目标模块当前被自己占着(重复 force_acquire 同模块), 也不会驱逐自己, 只是 TryAcquire 幂等 no-op(自己已在 holders 里).
-| `AcquireError` | 驱逐后仍撞竞态(被别人抢了) |
-
----
-
-### 6. 加载子模块:`load_module(parent, child, name='')`
+### 4. 加载子模块:`load_module(parent, child, name='')`
 
 往父模块下动态挂一个子模块(全局树增拓扑).**只挂树不占用**----要独占另调 `acquire`.
 
@@ -154,7 +106,7 @@ await self.load_module('figure', 'new_task', name='新任务')
 
 ---
 
-### 7. 卸载子模块:`unload_module(child)`
+### 5. 卸载子模块:`unload_module(child)`
 
 动态删子模块(全局树删拓扑).**对标文件系统删文件/文件夹**:
 
@@ -181,7 +133,7 @@ await self.unload_module('new_task')
 
 ---
 
-### 8. 查冲突:`conflict(mods_a, mods_b)`
+### 6. 查冲突:`conflict(mods_a, mods_b)`
 
 纯本地计算(零 round-trip),读缓存的 module.tree 算 cone 相交.**编排器串/并行判定用**.
 
@@ -203,7 +155,7 @@ else:
 
 ---
 
-### 9. 查 module.tree:`get_module_tree()`
+### 7. 查 module.tree:`get_module_tree()`
 
 主动从 kernel 拉当前 module.tree 并刷新本地缓存,返回 `ModuleTree`.
 
@@ -233,8 +185,8 @@ print(tree.conflict(['a'], ['b'])) # True/False
 
 | 异常 | 触发场景 | 可恢复? |
 |---|---|---|
-| `AcquireError` | `acquire()` / `force_acquire()` 撞冲突 | 是,等释放后重试 |
-| `ReleaseError` | `release()` / `force_release()` 失败 | force_release 罕见(rid 未 started) |
+| `AcquireError` | `acquire()` 撞冲突且档位不足 | 是,等释放后重试/换档 |
+| `ReleaseError` | `release()` 失败 | 罕见(rid 未 started) |
 | `LoadModuleError` | `load_module()` child 已存在/parent 不存在 | 改 id/parent 后重试 |
 | `UnloadModuleError` | `unload_module()` 有子/被占/不存在 | 先卸子或先 release |
 | `RuntimeError` | 未 started 调运行时 API / tree 未缓存 | 修调用时序 |

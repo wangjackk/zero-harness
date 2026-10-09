@@ -10,7 +10,6 @@ import { AsyncEvent, AsyncQueue, withTimeout } from './async'
 import { StartError } from './errors'
 import type { Msg } from './protocol'
 import type { RunContext } from './ctx'
-import { PRI_NORMAL } from './routine'
 
 // body 迭代终结哨兵(distinguish from yielded null / result)
 const BODY_DONE = Symbol('routine.bodyDone')
@@ -24,6 +23,9 @@ export class RoutineHandle {
   name: string | null
   /** submit 时 kernel 确定的占用 modules(created 回报带回).编排器据此算冲突. */
   modules: string[] | null
+  /** start 成功后镜像的档位(kernel Node.priority 的调用方视图).null=尚未
+   * start.编排器可读(h1.priority vs h2.priority 辅助裁决). */
+  priority: number | null = null
   result: any = undefined
   error: string | null = null
   /** lifecycle.stopped 的 wire reason(大写 enum 值).父侧可读分流. */
@@ -101,13 +103,17 @@ export class RoutineHandle {
   }
 
   /** start/try_start 公共骨架.try_mode=true 失败返回 StartError
-   * (null=成功,保留可重试);false 失败 raise StartError. */
-  private async startCommon(op: string, send: () => Promise<void>, tryMode: boolean): Promise<StartError | null> {
+   * (null=成功,保留可重试);false 失败 raise StartError.成功后 priority
+   * 镜像到 handle.priority(kernel Node.priority 的调用方视图). */
+  private async startCommon(op: string, send: () => Promise<void>, tryMode: boolean, priority: number = 0): Promise<StartError | null> {
     if (!this._ctx) throw new Error(`${this}: no ctx bound, cannot ${op}`)
     this.requireNotDone(op)
     this._ctx.requireParentStarted(`${op}ing child`)
     const err = await this.sendAndWait(send)
-    if (!err) return null
+    if (!err) {
+      this.priority = priority
+      return null
+    }
     const se = new StartError(String(err))
     if (tryMode) return se
     throw se
@@ -119,18 +125,18 @@ export class RoutineHandle {
    *
    * priority(模块冲突时的抢占裁决): incoming 严格大于全部第三方 holder
    * 才逐个驱逐(cascade stop,reason='force' 透传)后 start;存在 >= 平级
-   * holder 时不驱逐任何节点,原样拒(平级不抢).0(默认)= 冲突即拒.只裁
-   * 第三方(永不驱逐自己/祖先). */
-  async start(priority: number = PRI_NORMAL): Promise<void> {
+   * holder 时不驱逐任何节点,原样拒(平级不抢).默认 10=常规默认档;
+   * 0 为最低档,永无驱逐资格.只裁第三方(永不驱逐自己/祖先). */
+  async start(priority: number = 10): Promise<void> {
     await this.startCommon('start',
-      () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: false, priority }), false)
+      () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: false, priority }), false, priority)
   }
 
   /** 让 kernel start 子命令(占模块+运行),失败时保留可重试.失败返回
-   * StartError(null=成功),不抛.不带 priority(礼貌语义,冲突可重试). */
+   * StartError(null=成功),不抛.priority=0 最低档: try_start 是礼貌语义, 永不抢占. */
   async tryStart(): Promise<StartError | null> {
     return await this.startCommon('start',
-      () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: true }), true)
+      () => this._ctx!._io.sendRoutineStart({ childId: this.id, tryStart: true, priority: 0 }), true)
   }
 
   /** 让 kernel stop 子命令(级联).fire=false(默认)等 lifecycle.stopped 回执

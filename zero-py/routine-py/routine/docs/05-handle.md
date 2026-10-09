@@ -19,26 +19,26 @@
 
 | 方法 | 返回 | 说明 |
 |---|---|---|
+| `handle.modules` | `Optional[list]` | submit 时 kernel 确定的占用模块(created 回报带回) |
+| `handle.priority` | `Optional[int]` | start 成功后镜像的档位(None=尚未 start) |
 | `handle.is_started()` | `bool` | 收到 `lifecycle.started` 后 True |
 | `handle.is_done()` | `bool` | 收到 `lifecycle.stopped` 后 True |
 
 ## 控制
 
-### `await handle.start(priority: int = PRI_NORMAL) -> None`
+### `await handle.start(priority: int = 10) -> None`
 
 让 kernel start 子命令(占模块 + 运行)。**全有或全无**——失败时 kernel 清 node+订阅,本侧清 created instance,handle 失效不可重试。
 
 ```python
-from routine import PRI_NORMAL, PRI_USER
-
 handle = await self.submit('worker', {'task_id': 42})
 await handle.start()               # 常规: 失败 raise StartError
-await handle.start(PRI_USER)       # 高优: 冲突时驱逐低优 holder 后 start
+await handle.start(20)             # 高优: 冲突时驱逐低优 holder 后 start
 ```
 
 - 失败(模块冲突/父未 started):抛 `StartError`。
 - 需 ctx 绑定 + **父 started**。
-- **priority 仲裁**(冲突时才生效):incoming 优先级**严格大于**全部第三方 holder 才逐个驱逐(cascade stop,`reason='force'` 透传)后 start;存在 `>=` 平级 holder 时不驱逐任何节点,原样抛 `StartError`(平级不抢)。常量:`PRI_NORMAL=0 / PRI_USER=20 / PRI_SAFETY=100`(`routine` 顶层导出)。`priority=0`(默认)即旧 call 语义:冲突即拒。优先级只裁第三方(永不驱逐自己/祖先;父子级联停走树权威)。
+- **priority 仲裁**(冲突时才生效):incoming 优先级**严格大于**全部第三方 holder 才逐个驱逐(cascade stop,`reason='force'` 透传)后 start;存在 `>=` 平级 holder 时不驱逐任何节点,原样抛 `StartError`(平级不抢)。档位约定(纯数字,无常量):`10=常规(默认档) / 20=用户驱动 / 100=安全级`;`0~9` 留给低档(后台/可牺牲类,可被默认档驱逐),`0` 为最低档永无驱逐资格。默认 `10` 即旧 call 语义:平级冲突即拒。优先级只裁第三方(永不驱逐自己/祖先;父子级联停走树权威)。
 
 ### `await handle.try_start() -> Optional[StartError]`
 
@@ -53,7 +53,7 @@ if err:
     await handle.try_start()   # 或 start()
 ```
 
-`try_start` 不带 priority,保持礼貌语义(冲突即返回错误,可重试)。要抢占走 `start(priority)`。
+`try_start` 永不抢占(wire 上钉 priority=0 最低档),保持礼貌语义(冲突即返回错误,可重试)。要抢占走 `start(priority)`。
 
 ### `await handle.stop(*, fire=False) -> None`
 
@@ -116,7 +116,7 @@ result = await handle   # 等价 await handle.wait()
 result = await self.call('echo', {'text': 'hi'})
 
 # 抢占式: 冲突时驱逐低优 holder 再 start(priority 语义同 handle.start)
-result = await self.call('car/track', {'max_run_s': 30}, priority=PRI_USER)
+result = await self.call('car/track', {'max_run_s': 30}, priority=20)
 ```
 
 ## 流式结果迭代

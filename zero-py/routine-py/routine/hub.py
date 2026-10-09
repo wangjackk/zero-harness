@@ -33,7 +33,6 @@ from .protocol import (
     MESSAGE_STREAM_CANCEL_DELIVERED, MESSAGE_STREAM_DATA_DELIVERED,
     MESSAGE_STREAM_OPEN_DELIVERED, PUBSUB_DELIVERED, PUBSUB_PUBLISH,
     PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE, ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
-    ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_ACQUIRE,
     ROUTINE_LOAD_MODULE, ROUTINE_MODULE_LOADED, ROUTINE_MODULE_UNLOADED,
     ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
     ROUTINE_REJECTED, ROUTINE_START, ROUTINE_STOP, ROUTINE_UNLOAD_MODULE,
@@ -173,11 +172,11 @@ class RoutineHub:
 
     async def send_routine_start(self, *, child_id: str,
                                  try_start: bool = False,
-                                 priority: int = 0) -> None:
+                                 priority: int = 10) -> None:
         payload: Dict[str, Any] = {'event': ROUTINE_START, 'child_id': child_id}
         if try_start:
             payload['try'] = True
-        if priority:
+        if priority != 10:   # 缺省档省字段(旧 peer 不带 priority == 默认档)
             payload['priority'] = priority
         await self._send_event(payload)
 
@@ -200,24 +199,6 @@ class RoutineHub:
                                    modules: list) -> None:
         await self._send_event({
             'event': ROUTINE_RELEASE,
-            'req_id': req_id,
-            'id': id,
-            'modules': modules,
-        })
-
-    async def send_routine_force_release(self, *, req_id: str, id: str,
-                                         modules: list) -> None:
-        await self._send_event({
-            'event': ROUTINE_FORCE_RELEASE,
-            'req_id': req_id,
-            'id': id,
-            'modules': modules,
-        })
-
-    async def send_routine_force_acquire(self, *, req_id: str, id: str,
-                                         modules: list) -> None:
-        await self._send_event({
-            'event': ROUTINE_FORCE_ACQUIRE,
             'req_id': req_id,
             'id': id,
             'modules': modules,

@@ -38,7 +38,6 @@ import {
   MESSAGE_STREAM_CANCEL_DELIVERED, MESSAGE_STREAM_DATA_DELIVERED,
   MESSAGE_STREAM_OPEN_DELIVERED, PUBSUB_DELIVERED, PUBSUB_PUBLISH,
   PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE, ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
-  ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_ACQUIRE,
   ROUTINE_LOAD_MODULE, ROUTINE_MODULE_LOADED, ROUTINE_MODULE_UNLOADED,
   ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
   ROUTINE_REJECTED, ROUTINE_START, ROUTINE_STOP, ROUTINE_UNLOAD_MODULE,
@@ -173,7 +172,7 @@ export class RoutineHub {
   async sendRoutineStart(o: { childId: string; tryStart?: boolean; priority?: number }): Promise<void> {
     const payload: Msg = { event: ROUTINE_START, child_id: o.childId }
     if (o.tryStart) payload.try = true
-    if (o.priority && o.priority > 0) payload.priority = o.priority
+    if (o.priority !== 10) payload.priority = o.priority   // 缺省档省字段(旧 peer 不带 priority == 默认档)
     await this.sendEvent(payload)
   }
 
@@ -191,14 +190,6 @@ export class RoutineHub {
 
   async sendRoutineRelease(o: { reqId: string; id: string; modules: string[] }): Promise<void> {
     await this.sendEvent({ event: ROUTINE_RELEASE, req_id: o.reqId, id: o.id, modules: o.modules })
-  }
-
-  async sendRoutineForceRelease(o: { reqId: string; id: string; modules: string[] }): Promise<void> {
-    await this.sendEvent({ event: ROUTINE_FORCE_RELEASE, req_id: o.reqId, id: o.id, modules: o.modules })
-  }
-
-  async sendRoutineForceAcquire(o: { reqId: string; id: string; modules: string[] }): Promise<void> {
-    await this.sendEvent({ event: ROUTINE_FORCE_ACQUIRE, req_id: o.reqId, id: o.id, modules: o.modules })
   }
 
   async sendRoutineLoadModule(o: { reqId: string; parentId: string; childId: string; name?: string }): Promise<void> {

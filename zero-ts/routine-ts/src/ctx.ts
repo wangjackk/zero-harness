@@ -22,7 +22,7 @@ import {
   type Msg, type Payload,
 } from './protocol'
 import { RoutineHandle } from './handle'
-import { PRI_NORMAL, type Routine, type SubscribeHandler } from './routine'
+import { type Routine, type SubscribeHandler } from './routine'
 import type { ServerRuntime } from './runtime'
 import type { RoutineHub } from './hub'
 import type { Transport } from './transport'
@@ -105,8 +105,9 @@ export class RunContext {
 
   /** 同步拿子 routine 结果:submit → start(priority) → wait 一步到位.
    * start 失败抛 StartError;子异常停止抛 Error;正常返回 result.
-   * priority>0 时冲突驱逐裁决(语义同 handle.start). */
-  async call(name: string, kwargs: Payload | null = null, priority: number = PRI_NORMAL): Promise<any> {
+   * priority: start 优先级(档位约定见 routine.ts 头注).模块冲突时
+   * incoming 严格大于全部第三方 holder 才驱逐(语义同 handle.start). */
+  async call(name: string, kwargs: Payload | null = null, priority: number = 10): Promise<any> {
     this.requireStarted('call()')
     const kw: Payload = { ...(kwargs ?? {}) }
     const handle = await this.submit(name, kw)
@@ -116,7 +117,9 @@ export class RunContext {
 
   // --- 运行时占领/释放模块(跟类静态声明同一底层 tryAcquire/release) ---
 
-  /** 运行时占领模块.冲突抛 AcquireError.只 start 期间可用. */
+  /** 运行时占领模块.撞车按本 routine 的 start 档位裁决:严格大于全部
+   * 撞车 holder 才驱逐后占住,否则抛 AcquireError(try 语义自行 catch).
+   * 只 start 期间可用. */
   async acquire(modules: string[]): Promise<void> {
     this.requireStarted('acquire')
     const reqId = newReqId()
@@ -147,36 +150,6 @@ export class RunContext {
     try {
       await this._io.sendRoutineRelease({ reqId, id: this.id, modules })
       await withTimeout(fut.promise, RunContext.ACK_TIMEOUT * 1000, 'release')
-    } finally {
-      this.runtime.popAcquireFuture(reqId)
-    }
-  }
-
-  /** 强制占领 modules:驱逐 cone 内第三方 holder(cascade stop,reason=force)
-   * 后自己占住(带驱逐的 acquire,原子无竞态).永不驱逐祖先. */
-  async forceAcquire(modules: string[]): Promise<void> {
-    this.requireStarted('force_acquire')
-    const reqId = newReqId()
-    const fut = new Deferred<void>()
-    this.runtime.registerAcquireFuture(reqId, fut)
-    try {
-      await this._io.sendRoutineForceAcquire({ reqId, id: this.id, modules })
-      await withTimeout(fut.promise, RunContext.ACK_TIMEOUT * 1000, 'force_acquire')
-    } finally {
-      this.runtime.popAcquireFuture(reqId)
-    }
-  }
-
-  /** 强制释放 modules:驱逐 cone 内第三方 holder 后空出 modules,**不自己占**.
-   * 驱逐与后续 acquire 间有竞态窗口(调用方自担). */
-  async forceRelease(modules: string[]): Promise<void> {
-    this.requireStarted('force_release')
-    const reqId = newReqId()
-    const fut = new Deferred<void>()
-    this.runtime.registerAcquireFuture(reqId, fut)
-    try {
-      await this._io.sendRoutineForceRelease({ reqId, id: this.id, modules })
-      await withTimeout(fut.promise, RunContext.ACK_TIMEOUT * 1000, 'force_release')
     } finally {
       this.runtime.popAcquireFuture(reqId)
     }

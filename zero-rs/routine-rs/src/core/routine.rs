@@ -136,6 +136,13 @@ pub trait RoutineFactory: Send + Sync {
         false
     }
 
+    /// passive 声明优先级(passive 没有 call-site, 声明处即调用点; 档位同
+    /// start:10=常规默认档, 0 为最低档永无驱逐资格)。wire 上非 10 才写
+    /// `is_passive.priority` 字段;现有 factory 实现零改动(默认方法)。
+    fn passive_priority(&self) -> i64 {
+        10
+    }
+
     fn is_dynamic(&self) -> bool {
         false
     }

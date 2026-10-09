@@ -64,10 +64,15 @@ class Edit(Routine):
 | `tags` | list[str] | 分组标签(如 `fs`/`shell`/`agent`) |
 | `input_schema` | dict | 入参 JSON schema(LLM 工具调用用) |
 
-### `is_passive: ClassVar[bool] = False` —— 是否被动启动
+### `is_passive: ClassVar[bool | PassiveConfig] = False` —— 是否被动启动
 
 - `False`(默认):由父 routine 显式 `submit + start` 拉起。
 - `True`:kernel 在 catalog.push 注册后 **自动 start**(无需父 routine 触发);手动 submit 被拦截。
+- `PassiveConfig(kwargs=..., priority=...)`:passive 带参形态——`kwargs` 是
+  auto-start 默认入参(如 WebServer 的 host/port);`priority` 是拉起时的
+  start 优先级(**缺省 10 常规默认档**)。passive 没有 call-site(kernel 是
+  拉起发起者),声明处即调用点——急停/安全兜底类 passive 服务声明
+  `priority=100`,重连/热载自动拉起时可驱逐一切。
 
 passive 只决定"谁拉起"(kernel 自动,单实例去重),**不限定 run() 的生存期**----
 run() 返回即自然退出(一次性引导),await park 则常驻(服务/manager),由业务自选。
@@ -165,7 +170,7 @@ class PlayMusic(Routine):
 | `'stop'` | 收到 `lifecycle.stop` 请求(`stop()` 被调) |
 | `'error'` | `run` 抛异常 |
 | `'cancel'` | task 被 cancel |
-| `'force'` | 被别的 routine 高优 `start(priority)` / `force_acquire` / `force_release` 驱逐 |
+| `'force'` | 被别的 routine 更高档位的 `start(priority)` / passive 拉起 / `acquire` 驱逐 |
 | `'disconnect'` | 父连接断开,级联清理 |
 
 ## 通信装饰器

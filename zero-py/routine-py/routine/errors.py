@@ -35,11 +35,11 @@ class SubmitError(Exception):
 
 
 class AcquireError(Exception):
-    """``ctx.acquire()`` / ``force_acquire()`` 失败(冲突/驱逐后仍被抢)."""
+    """``ctx.acquire()`` 失败(模块被占且档位不足/驱逐后仍被抢)."""
 
 
 class ReleaseError(Exception):
-    """``ctx.release()`` / ``force_release()`` 失败(罕见)."""
+    """``ctx.release()`` 失败(罕见)."""
 
 
 class LoadModuleError(Exception):

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use routine::{
     core::{
-        PRI_NORMAL, Routine, RoutineError, RoutineFactory, RoutineInfo, RoutineOutput,
+        Routine, RoutineError, RoutineFactory, RoutineInfo, RoutineOutput,
         RoutineRegistry, RunContext,
     },
     kernel,
@@ -73,8 +73,7 @@ impl Routine for SmokeCaller {
             .submit("smoke_target", None)
             .await
             .map_err(RoutineError::Message)?;
-        ctx.start_child(&child_id, PRI_NORMAL)
-            .await
+        ctx.start_child(&child_id, 10).await   // 10 = 常规默认档
             .map_err(RoutineError::Message)?;
 
         println!("RS CALLER: 2 in-flight calls open, kill ts target now");
