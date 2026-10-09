@@ -14,10 +14,10 @@ ROS 通信分两层:
 """
 from app.routines.user.hiwonder.car import (
     CarMap, CarMove, CarNavigate, CarNavigateManage, CarShake, CarStart, CarStatus,
-    CarSteer, CarStop, CarTurn, CarWhere)
+    CarSteer, CarStop, CarTrack, CarTurn, CarWakeTrack, CarWhere)
 from app.routines.user.hiwonder.ros_bridge import RosBridge
 
 __all__ = ['CarMap', 'CarMove', 'CarNavigate', 'CarNavigateManage', 'CarShake',
-           'CarStart', 'CarStatus', 'CarSteer', 'CarStop', 'CarTurn', 'CarWhere',
-           'RosBridge']
+           'CarStart', 'CarStatus', 'CarSteer', 'CarStop', 'CarTrack', 'CarTurn',
+           'CarWakeTrack', 'CarWhere', 'RosBridge']
 

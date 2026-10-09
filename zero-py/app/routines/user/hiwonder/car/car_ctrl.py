@@ -26,6 +26,17 @@ def current_generation() -> int:
     return _generation
 
 
+def bump_generation() -> None:
+    """使所有在跑动作失效(下一拍退出, finally 自带零速).
+
+    同步纯计数器操作, 无 I/O ---- 供需要"打断但不出新动作"的调用方
+    (如 car/wake_track 收到新唤醒)在事件回调里原子打断, 不与后续
+    新动作的代际竞争.
+    """
+    global _generation
+    _generation += 1
+
+
 def _twist(vx: float = 0.0, vy: float = 0.0, wz: float = 0.0) -> Dict[str, Any]:
     return {
         'linear': {'x': vx, 'y': vy, 'z': 0.0},
