@@ -262,8 +262,13 @@ class WebServer(Routine):
 
     @subscribe('voice')
     async def on_voice(self, source, data: dict) -> None:
-        """voice_listener 转发: 语音总线事件 (wake/result/aborted/state) → 前端."""
+        """bus_listener 转发: 语音总线事件 (wake/result/aborted/state) → 前端."""
         await self._broadcast({'type': 'voice', **data})
+
+    @subscribe('vision')
+    async def on_vision(self, source, data: dict) -> None:
+        """bus_listener 转发: 视觉总线事件 (cam/pose) → 前端."""
+        await self._broadcast({'type': 'vision', **data})
 
     @subscribe('incoming_message')
     async def on_incoming_message(self, source, data: dict) -> None:
