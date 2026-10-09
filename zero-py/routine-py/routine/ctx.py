@@ -121,8 +121,13 @@ class RunContext:
         return handle
 
     async def call(self, name: str,
-                   kwargs: Optional[Dict[str, Any]] = None) -> Any:
+                   kwargs: Optional[Dict[str, Any]] = None,
+                   priority: int = 0) -> Any:
         """同步拿子 routine 结果:submit → start → wait 一步到位.
+
+        priority: start 优先级(PRI_NORMAL/USER/SAFETY).模块冲突时
+        incoming > 全部 holder 才驱逐他们后 start(严格大于, 平级不抢);
+        否则抛 StartError.0 等价旧 call(绝不驱逐).
 
         失败语义:
         - start 失败(模块冲突/父未 started):抛 StartError
@@ -136,20 +141,7 @@ class RunContext:
             )
         kw = dict(kwargs or {})
         handle = await self.submit(name, kw)
-        await handle.start()
-        return await handle
-
-    async def force_call(self, name: str,
-                         kwargs: Optional[Dict[str, Any]] = None) -> Any:
-        """同步抢占式拿子 routine 结果:submit → force_start → wait 一步到位."""
-        if self._routine._phase is not Phase.STARTED:
-            raise RuntimeError(
-                f'{self.name}: must start() before force_call() '
-                f'(parent routine not started, cannot call child)'
-            )
-        kw = dict(kwargs or {})
-        handle = await self.submit(name, kw)
-        await handle.force_start()
+        await handle.start(priority)
         return await handle
 
     # --- 运行时占领/释放模块(跟类静态声明同一底层 TryAcquire/Release) ---

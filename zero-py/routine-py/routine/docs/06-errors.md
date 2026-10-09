@@ -12,7 +12,7 @@ routine SDK 的异常分两类:
 | 异常 | 基类 | 触发场景 | 可恢复? |
 |---|---|---|---|
 | `SubmitError` | `Exception` | `ctx.submit()` 被 kernel 拒(name 找不到 / kwargs 不合法) | 改入参后重新 submit |
-| `StartError` | `Exception` | `handle.start/try_start/force_start` 撞冲突 / 父未 started | `try_start` 返回值可重试;`start/force_start` 失败后 handle 失效 |
+| `StartError` | `Exception` | `handle.start(priority)`/`try_start` 撞冲突 / 父未 started | `try_start` 返回值可重试;`start` 失败后 handle 失效 |
 | `AcquireError` | `Exception` | `ctx.acquire/force_acquire` 失败(模块被占住 / 驱逐后竞态) | 是——重试或 `force_acquire` |
 | `ReleaseError` | `Exception` | `ctx.release/force_release` 失败(罕见,rid 未 started) | 检查 lifecycle 状态 |
 | `LoadModuleError` | `Exception` | `ctx.load_module()` 失败(child_id 已存在 / parent_id 不存在) | 改入参后重试 |
@@ -62,15 +62,15 @@ except SubmitError as exc:
 
 ### `StartError`
 
-`handle.start()` / `handle.try_start()` / `handle.force_start()` 失败——kernel 拒了 start(`routine.rejected op=start`)。
+`handle.start()` / `handle.try_start()` 失败——kernel 拒了 start(`routine.rejected op=start`)。
 
-**关键区别:`try_start` vs `start/force_start`**:
+**关键区别:`try_start` vs `start`**:
 
 | 方法 | 失败行为 | handle 状态 | 可重试? |
 |---|---|---|---|
 | `try_start()` | **返回** `Optional[StartError]`(None=成功) | instance/node **保留** | 是 |
-| `start()` | **抛** `StartError` | instance/node **被 kernel 清掉** | 否 |
-| `force_start()` | **抛** `StartError` | instance/node **被 kernel 清掉** | 否 |
+| `start(priority=0)` | **抛** `StartError` | instance/node **被 kernel 清掉** | 否 |
+| `start(priority>0)` | **抛** `StartError`(驱逐后仍冲突/有平级 holder) | instance/node **被 kernel 清掉** | 否 |
 
 模块冲突是正常业务情况(占住者还没释放),不该打断调用方 `run()` 体——所以 `try_start` 把它做成返回值,而不是异常:
 
@@ -85,7 +85,7 @@ else:
     result = await handle
 ```
 
-而 `start` / `force_start` 是"all or nothing"——失败后 kernel 已清 node+订阅,handle 失效不可重试。
+而 `start` 是"all or nothing"——失败后 kernel 已清 node+订阅,handle 失效不可重试。带 `priority>0` 时的驱逐分支也走同一套失败清理。
 
 ### `AcquireError`
 
@@ -215,7 +215,7 @@ except RuntimeError as exc:
 | `STOP` | 被 `lifecycle.stop` 正规打断 | 父侧 `handle.stop()` / kernel stop |
 | `ERROR` | `run()` 抛异常 | runner 未捕获异常 |
 | `CANCEL` | `CancelledError`(force_stop 接管前的取消路径) | task 取消,后续 force_stop 接管 |
-| `FORCE` | 被 `force_start/force_acquire/force_release` 驱逐 | 抢占式资源回收 |
+| `FORCE` | 被高优 `start(priority)` / `force_acquire` / `force_release` 驱逐 | 抢占式资源回收 |
 | `DISCONNECT` | peer 断连,`force_stop_peer` 清理 | 网络断 / 进程退出 |
 | `UNKNOWN` | 未识别的 reason 字符串 | 兜底(不应出现) |
 
@@ -269,12 +269,11 @@ raise RuntimeError('worker never starts')
 | `ctx.submit` | `RuntimeError` | 调用 bug(不应发生) |
 | `handle.try_start` | (返回值) | `Optional[StartError]`,None=成功 |
 | `handle.start` | `StartError` | kernel 拒 start,handle 失效 |
-| `handle.force_start` | `StartError` | 驱逐后仍冲突,handle 失效 |
+| `handle.start(priority>0)` | `StartError` | 驱逐后仍冲突或存在 `>=` 平级 holder,handle 失效 |
 | `handle.stop` | `RuntimeError` | 另一个 stop/start in flight |
 | `handle.unsubmit` | `RuntimeError` | 已 started 的 routine 调 unsubmit |
 | `handle.wait` / `await handle` | `RuntimeError(self.error)` | 子异常停止 |
-| `ctx.call` | `StartError` / `RuntimeError` | start 失败 / 子异常 |
-| `ctx.force_call` | `StartError` / `RuntimeError` | force_start 失败 / 子异常 |
+| `ctx.call` | `StartError` / `RuntimeError` | start 失败(含 priority 驱逐分支) / 子异常 |
 | `ctx.acquire` | `AcquireError` | 模块被占 |
 | `ctx.force_acquire` | `AcquireError` | 驱逐后竞态失败 |
 | `ctx.release` | `ReleaseError` | rid 未 started(罕见) |

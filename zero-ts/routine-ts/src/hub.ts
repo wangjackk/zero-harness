@@ -38,7 +38,7 @@ import {
   MESSAGE_STREAM_CANCEL_DELIVERED, MESSAGE_STREAM_DATA_DELIVERED,
   MESSAGE_STREAM_OPEN_DELIVERED, PUBSUB_DELIVERED, PUBSUB_PUBLISH,
   PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE, ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
-  ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_ACQUIRE, ROUTINE_FORCE_START,
+  ROUTINE_FORCE_RELEASE, ROUTINE_FORCE_ACQUIRE,
   ROUTINE_LOAD_MODULE, ROUTINE_MODULE_LOADED, ROUTINE_MODULE_UNLOADED,
   ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
   ROUTINE_REJECTED, ROUTINE_START, ROUTINE_STOP, ROUTINE_UNLOAD_MODULE,
@@ -170,9 +170,10 @@ export class RoutineHub {
     })
   }
 
-  async sendRoutineStart(o: { childId: string; tryStart?: boolean }): Promise<void> {
+  async sendRoutineStart(o: { childId: string; tryStart?: boolean; priority?: number }): Promise<void> {
     const payload: Msg = { event: ROUTINE_START, child_id: o.childId }
     if (o.tryStart) payload.try = true
+    if (o.priority && o.priority > 0) payload.priority = o.priority
     await this.sendEvent(payload)
   }
 
@@ -198,10 +199,6 @@ export class RoutineHub {
 
   async sendRoutineForceAcquire(o: { reqId: string; id: string; modules: string[] }): Promise<void> {
     await this.sendEvent({ event: ROUTINE_FORCE_ACQUIRE, req_id: o.reqId, id: o.id, modules: o.modules })
-  }
-
-  async sendRoutineForceStart(o: { childId: string }): Promise<void> {
-    await this.sendEvent({ event: ROUTINE_FORCE_START, child_id: o.childId })
   }
 
   async sendRoutineLoadModule(o: { reqId: string; parentId: string; childId: string; name?: string }): Promise<void> {
@@ -480,9 +477,9 @@ export class RoutineHub {
     const err = String(msg.error ?? 'rejected')
     const op = String(msg.op ?? '')
     const handle = this.runtime.getHandle(cid)
-    if (op === 'start' || op === 'force_start') {
-      // start/tryStart/forceStart 失败:resolve 错误串(调方包成 StartError).
-      // start/forceStart(非 try)失败:kernel 已清 node,本侧清 created
+    if (op === 'start') {
+      // start/tryStart 失败:resolve 错误串(调方包成 StartError).
+      // start(非 try)失败:kernel 已清 node,本侧清 created
       // instance(handle 失效不可重试).try 失败:保留可重试.
       if (handle) handle._resolveAck(err)
       const isTry = Boolean(msg.try)

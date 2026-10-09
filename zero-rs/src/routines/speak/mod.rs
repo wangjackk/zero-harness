@@ -26,7 +26,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use routine::{
-    core::{Routine, RoutineError, RoutineInfo, RoutineOutput, RoutineSource, RunContext},
+    core::{
+        PRI_NORMAL, Routine, RoutineError, RoutineInfo, RoutineOutput, RoutineSource,
+        RunContext,
+    },
     protocol::{JsonObject, JsonValue},
 };
 use schemars::JsonSchema;
@@ -182,7 +185,7 @@ async fn fetch_instruction(
     let mut kwargs = JsonObject::new();
     kwargs.insert("agent_id".to_string(), json!(agent_id));
     let (child, _) = ctx.submit("agent/state", Some(kwargs)).await?;
-    ctx.start_child(&child).await?;
+    ctx.start_child(&child, PRI_NORMAL).await?;
     let state = ctx.wait_child(&child, 2).await?;
     Ok(state
         .get("tts_instruction")

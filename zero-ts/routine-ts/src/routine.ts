@@ -18,6 +18,12 @@ import type { Phase, RunContext, ProviderStream } from './ctx'
 /** routine 声明占用的模块列表(on_created 返回值).null/undefined = 不占. */
 export type Modules = string[] | null
 
+// --- start 优先级常量(与 py routine.PRI_* / rs PRI_* 同值同语义) ---
+// 模块冲突时的抢占裁决: incoming 严格大于全部第三方 holder 才驱逐后 start.
+export const PRI_NORMAL = 0
+export const PRI_USER = 20
+export const PRI_SAFETY = 100
+
 /** 发送方 routine 引用(@request/@stream/on_message 的 source 参数). */
 export interface RoutineSource {
   readonly id: string
@@ -189,14 +195,10 @@ export abstract class Routine {
     return await this.ctx.submit(routineName, kwargs)
   }
 
-  /** 同步拿子 routine 结果(submit→start→wait 一步到位). */
-  async call(routineName: string, kwargs?: Payload): Promise<any> {
-    return await this.ctx.call(routineName, kwargs)
-  }
-
-  /** 抢占式拿子 routine 结果(submit→force_start→wait). */
-  async forceCall(routineName: string, kwargs?: Payload): Promise<any> {
-    return await this.ctx.forceCall(routineName, kwargs)
+  /** 同步拿子 routine 结果(submit→start→wait 一步到位).priority 语义见
+   * handle.start(冲突驱逐裁决). */
+  async call(routineName: string, kwargs?: Payload, priority: number = PRI_NORMAL): Promise<any> {
+    return await this.ctx.call(routineName, kwargs, priority)
   }
 
   // --- 运行时模块占领/释放 ---

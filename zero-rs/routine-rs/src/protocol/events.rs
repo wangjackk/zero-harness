@@ -86,8 +86,6 @@ pub const ROUTINE_RELEASED: &str = "routine.released";
 pub const ROUTINE_FORCE_RELEASE: &str = "routine.force_release";
 /// 强制占领模块(驱逐 cone 内第三方 holder 后自己占住,带驱逐的 acquire;ack 复用 routine.acquired)
 pub const ROUTINE_FORCE_ACQUIRE: &str = "routine.force_acquire";
-/// 抢占式 start 子(驱逐占住者后 start)
-pub const ROUTINE_FORCE_START: &str = "routine.force_start";
 /// py(dial-out)→kernel: 查 running 实例(带 req_id,kernel 回 get_running_reply)
 pub const ROUTINE_GET_RUNNING: &str = "routine.get_running";
 pub const ROUTINE_GET_RUNNING_REPLY: &str = "routine.get_running_reply";
@@ -113,7 +111,8 @@ pub const ROUTINE_MODULE_UNLOADED: &str = "routine.module_unloaded";
 pub const ROUTINE_SUBMIT: &str = "routine.submit";
 /// kernel→py: submit 回执(带 req_id+child_id+modules 或 error)
 pub const ROUTINE_SUBMITTED: &str = "routine.submitted";
-/// py→kernel: 启动已 submit 的子 routine(带 child_id)
+/// py→kernel: 启动已 submit 的子 routine(带 child_id + 可选 priority:
+/// 模块冲突时 incoming.priority > 全部 holder 才驱逐他们后 start, 平级不抢)
 pub const ROUTINE_START: &str = "routine.start";
 /// py→kernel: 停止子 routine(带 child_id)
 pub const ROUTINE_STOP: &str = "routine.stop";

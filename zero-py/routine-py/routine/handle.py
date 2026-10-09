@@ -39,7 +39,7 @@ class RoutineHandle:
         self._ctx = ctx
         self._started = asyncio.Event()
         self._done = asyncio.Event()
-        # start/try_start/force_start/stop/unsubmit 的 ack future.
+        # start/try_start/stop/unsubmit 的 ack future.
         # hub.on_inbound 收 lifecycle.started/stopped / routine.rejected 时按
         # child_id 经 _handles 表找到本 handle,调 _resolve_ack/_reject_ack 唤醒.
         self._ack: Optional[asyncio.Future] = None
@@ -112,10 +112,10 @@ class RoutineHandle:
 
     async def _start_common(self, op: str, send_coro, *,
                             try_mode: bool) -> Optional[StartError]:
-        """start/try_start/force_start 公共骨架.
+        """start/try_start 公共骨架.
 
         try_mode=True(try_start):失败返回 StartError(None=成功)--保留可重试.
-        try_mode=False(start/force_start):失败 raise StartError.
+        try_mode=False(start):失败 raise StartError.
         """
         await self._require_ctx(op)
         await self._require_not_done(op, send_coro)
@@ -142,28 +142,18 @@ class RoutineHandle:
             try_mode=True,
         )
 
-    async def start(self) -> None:
+    async def start(self, priority: int = 0) -> None:
         """让 kernel start 子命令(占模块+运行),全有或全无--失败时 kernel 清
         node+订阅,本侧清 created instance(handle 失效不可重试).
 
+        priority: 模块冲突时 incoming > 全部 holder 才驱逐他们后 start
+        (严格大于, 平级不抢; PRI_NORMAL/USER/SAFETY);否则仍失败.
         失败 raise StartError.需 ctx 绑定 + 父 started.
         """
         await self._start_common(
             'start',
             self._ctx._io.send_routine_start(  # type: ignore[union-attr]
-                child_id=self.id, try_start=False,
-            ),
-            try_mode=False,
-        )
-
-    async def force_start(self) -> None:
-        """抢占式 start:kernel 驱逐占住子 declared 模块的第三方(cascade stop,
-        reason='force' 透传)后 start.失败 raise StartError.
-        """
-        await self._start_common(
-            'force_start',
-            self._ctx._io.send_routine_force_start(  # type: ignore[union-attr]
-                child_id=self.id,
+                child_id=self.id, try_start=False, priority=priority,
             ),
             try_mode=False,
         )

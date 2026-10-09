@@ -24,17 +24,21 @@
 
 ## 控制
 
-### `await handle.start() -> None`
+### `await handle.start(priority: int = PRI_NORMAL) -> None`
 
 让 kernel start 子命令(占模块 + 运行)。**全有或全无**——失败时 kernel 清 node+订阅,本侧清 created instance,handle 失效不可重试。
 
 ```python
+from routine import PRI_NORMAL, PRI_USER
+
 handle = await self.submit('worker', {'task_id': 42})
-await handle.start()   # 失败 raise StartError
+await handle.start()               # 常规: 失败 raise StartError
+await handle.start(PRI_USER)       # 高优: 冲突时驱逐低优 holder 后 start
 ```
 
 - 失败(模块冲突/父未 started):抛 `StartError`。
 - 需 ctx 绑定 + **父 started**。
+- **priority 仲裁**(冲突时才生效):incoming 优先级**严格大于**全部第三方 holder 才逐个驱逐(cascade stop,`reason='force'` 透传)后 start;存在 `>=` 平级 holder 时不驱逐任何节点,原样抛 `StartError`(平级不抢)。常量:`PRI_NORMAL=0 / PRI_USER=20 / PRI_SAFETY=100`(`routine` 顶层导出)。`priority=0`(默认)即旧 call 语义:冲突即拒。优先级只裁第三方(永不驱逐自己/祖先;父子级联停走树权威)。
 
 ### `await handle.try_start() -> Optional[StartError]`
 
@@ -49,13 +53,7 @@ if err:
     await handle.try_start()   # 或 start()
 ```
 
-### `await handle.force_start() -> None`
-
-抢占式 start:让 kernel **驱逐占住子 declared 模块的第三方**(cascade stop,`reason='force'` 透传)后 start。区别于 `start/try_start`(那俩冲突就放弃/等)。
-
-- 失败 raise `StartError`(跟 `start` 一致)。
-- 单轮驱逐不重试(竞态失败)。
-- 永不驱逐祖先(打断父亲自己也死)。
+`try_start` 不带 priority,保持礼貌语义(冲突即返回错误,可重试)。要抢占走 `start(priority)`。
 
 ### `await handle.stop(*, fire=False) -> None`
 
@@ -106,7 +104,7 @@ result = await handle.wait()    # {'echo': 'hi'}
 result = await handle   # 等价 await handle.wait()
 ```
 
-## 一步到位:`self.call` / `self.force_call`
+## 一步到位:`self.call`
 
 如果不需要保留 handle(不中途 stop / 不迭代 body),用 `self.call` 一步到位:
 
@@ -116,6 +114,9 @@ result = await handle   # 等价 await handle.wait()
 # await handle.start()
 # return await handle
 result = await self.call('echo', {'text': 'hi'})
+
+# 抢占式: 冲突时驱逐低优 holder 再 start(priority 语义同 handle.start)
+result = await self.call('car/track', {'max_run_s': 30}, priority=PRI_USER)
 ```
 
 ## 流式结果迭代
