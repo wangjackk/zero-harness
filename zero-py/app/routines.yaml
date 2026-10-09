@@ -82,9 +82,10 @@ routines:
   # music 包已整体迁至 zero-rs(Rust): play_music / list_music / sound_effect;
   #   user/music 仅保留 assets/ 曲库目录(路径见 zero-rs/config.toml)
 
-  # voice 包: voice_listener 被动常驻 (sherpa-onnx 语音总线 ZMQ 只读订阅:
-  #   唤醒/识别事件 → pubsub 'voice' + 日志; 暂不转发 agent)
-  - routines/user/voice
+  # device_bus 包: bus_listener 被动常驻 (车端 ZMQ 事件总线只读订阅:
+  #   voice.wake / voice.orch.evt / vision.cam.evt / vision.pose.evt
+  #   → pubsub 'voice'/'vision' + 日志; 暂不转发 agent)
+  - routines/user/device_bus
 
   # watcher: yaml/源码变更自动热重载 (HMR, 改 yaml 不用重启进程)
   - routines/watcher.py
