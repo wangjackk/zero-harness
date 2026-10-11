@@ -166,6 +166,27 @@
       <RoutinePicker v-model="promptRoutines" :http-base="httpBase" />
     </section>
 
+    <!-- Routine 别名: 仅声明 uses_aliases 的类型渲染.
+         {全名: 标签} 行编辑, 提交作 routine_aliases 参数 ---- 含 '/' 的
+         白名单 routine 无显式标签不进接口表 (对齐后端渲染规则). -->
+    <section v-if="manifest?.uses_aliases" class="af-sec">
+      <div class="af-sec-head">
+        <span class="af-sec-mark" />
+        <span class="af-sec-title">Routine 别名</span>
+        <span class="af-sec-hint">含 '/' 的 routine 需显式标签</span>
+        <span v-if="aliasRows.length" class="af-sec-clear" @click="aliasRows = []">清除</span>
+      </div>
+      <div class="af-alias-rows">
+        <div v-for="(row, i) in aliasRows" :key="i" class="af-alias-row">
+          <NInput v-model:value="row.full" size="small" placeholder="routine 全名 (如 car/shake)" />
+          <span class="af-alias-arrow">→</span>
+          <NInput v-model:value="row.tag" size="small" placeholder="标签 (如 shake)" />
+          <span class="af-alias-del" title="删除" @click="aliasRows.splice(i, 1)"><Icon :comp="X" :size="11" /></span>
+        </div>
+        <button class="af-alias-add" @click="aliasRows.push({ full: '', tag: '' })">+ 添加别名</button>
+      </div>
+    </section>
+
     <div class="af-footer">
       <NButton
         size="large"
@@ -243,6 +264,9 @@ watch(model, () => { protocol.value = '' }, { flush: 'sync' })
 const skills = ref<SkillPick[]>([])
 /** 平台统一 routine 白名单选择器的选中值 (提交时作 prompt_routines 参数). */
 const promptRoutines = ref<string[]>([])
+/** Routine 别名行编辑 (提交时作 routine_aliases 参数): {全名: 标签} 映射,
+ *  含 '/' 的白名单 routine 无显式标签不进接口表. */
+const aliasRows = ref<{ full: string; tag: string }[]>([])
 /** 预制体清单 (~/.zero/presets, 预填创建参数模板). */
 interface Preset { id: string; label: string; description: string; kind: string; params: Record<string, unknown> }
 const presets = ref<Preset[]>([])
@@ -281,6 +305,13 @@ function buildParams(): CreateAgentParams {
   if (protocol.value) params.protocol = protocol.value
   if (skills.value.length) params.skills = skills.value
   if (promptRoutines.value.length) params.prompt_routines = promptRoutines.value
+  const aliases: Record<string, string> = {}
+  for (const r of aliasRows.value) {
+    const full = r.full.trim()
+    const tag = r.tag.trim()
+    if (full && tag) aliases[full] = tag
+  }
+  if (Object.keys(aliases).length) params.routine_aliases = aliases
   for (const f of fields.value) {
     const v = (form[f.name] ?? '').trim()
     if (v) params[f.name] = v
@@ -288,7 +319,7 @@ function buildParams(): CreateAgentParams {
   return params
 }
 
-/** 预填: 按 preset 的 kind 切类型, 再回填三板块 (可微调后 Create). */
+/** 预填: 按 preset 的 kind 切类型, 再回填各板块 (可微调后 Create). */
 function applyPreset(p: Preset) {
   confirmDel.value = null
   if (!types.value.some(t => t.kind === p.kind)) {
@@ -304,6 +335,13 @@ function applyPreset(p: Preset) {
   }
   if (Array.isArray(params.prompt_routines)) {
     promptRoutines.value = (params.prompt_routines as unknown[]).filter(s => typeof s === 'string') as string[]
+  }
+  if (params.routine_aliases && typeof params.routine_aliases === 'object') {
+    aliasRows.value = Object.entries(params.routine_aliases as Record<string, unknown>)
+      .filter(([, v]) => typeof v === 'string')
+      .map(([full, tag]) => ({ full, tag: tag as string }))
+  } else {
+    aliasRows.value = []
   }
   for (const f of fields.value) {
     const v = params[f.name]
@@ -398,6 +436,7 @@ async function onCreate() {
       model.value = ''
       skills.value = []
       promptRoutines.value = []
+      aliasRows.value = []
     }
   } catch (e) {
     createError.value = (e as Error).message
@@ -473,6 +512,25 @@ onMounted(async () => {
 }
 .af-sec-clear:hover { color: #f87171; border-color: #7f3a3a; }
 .af-sec-hint + .af-sec-clear { margin-left: 8px; }
+
+/* ---- Routine 别名行编辑 ---- */
+.af-alias-rows { display: flex; flex-direction: column; gap: 6px; }
+.af-alias-row { display: flex; align-items: center; gap: 8px; }
+.af-alias-row .n-input { flex: 1; }
+.af-alias-row .n-input:first-child { flex: 3; }
+.af-alias-arrow { color: #64748b; font-size: 12px; flex: none; }
+.af-alias-del {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 6px; cursor: pointer;
+  color: #64748b; transition: color .15s, background .15s;
+}
+.af-alias-del:hover { color: #f87171; background: rgba(248, 113, 113, .1); }
+.af-alias-add {
+  align-self: flex-start; font-size: 11px; color: #94a3b8; cursor: pointer;
+  padding: 3px 10px; border-radius: 999px; border: 1px dashed #2d3148;
+  background: none; transition: color .15s, border-color .15s;
+}
+.af-alias-add:hover { color: #38bdf8; border-color: #1e3a5f; }
 
 /* ---- 预制体 chips (悬停浮现删除 ✕) ---- */
 .af-presets { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -138,19 +138,26 @@ class Echo(Routine):
 - `stop` 抛异常会被框架吞掉(只 log),不影响 `lifecycle.stopped` 发出。
 - 框架有 `STOP_TIMEOUT = 3.0`:`stop()` 超过 3 秒后强制 cancel。
 
-### `async def on_created(self, rid: str, kwargs: Dict[str, Any]) -> Optional[Modules]`
+### `classmethod modules(cls, kwargs=None) -> Modules` —— 声明占用模块
 
-routine 创建时调一次(早于 start)。**返回 `Modules([...])` 声明占用模块**,返回 `None`/不 override 表示不占模块。
+类方法,**无实例可调**——modules 是"类型 + 入参"的纯函数,与实例状态无关。静态 routine 忽略 `kwargs` 返回常量;动态 routine 按 `kwargs` 算(`kwargs=None` 问静态默认,注册期/清单用)。默认不占。
 
 ```python
 from routine import Modules
 
 class PlayMusic(Routine):
-    async def on_created(self, rid, kwargs):
+    @classmethod
+    def modules(cls, kwargs=None):
         # 占 audio 模块:多个 PlayMusic 串行,不会同时放两首.
         # body 子(如 dance)占 body 模块,跟 audio 不冲突,父子并发.
         return Modules(['audio'])
 ```
+
+单一真理源:created 回报经本方法取值回带 kernel(`node.declared`,Start 的 TryAcquire 用)+ 经 submitted 回执带给父(`handle.modules`,编排器静态冲突预测用)。
+
+### `async def on_created(self, rid: str, kwargs: Dict[str, Any]) -> None`
+
+routine 创建时调一次(早于 start),**纯轻量初始化**。模块声明走 `modules()` 类方法;本钩子返回非 `None` 是协议违规,立即报错。
 
 - `rid`:kernel 分配的 command id(string),跟 `self.id` 一致。
 - `kwargs`:submit 入参。`on_created` 可读 kwargs 但**不应做重活**(会阻塞 created 回执)。

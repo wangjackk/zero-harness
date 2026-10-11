@@ -35,7 +35,7 @@ class ToolOutcome:
     input: dict
     rid: str | None = None
     result: Any = None          # 值 / 异常对象 / StartError
-    output: str = ''            # LLM 可读格式化 (for_llm 约定)
+    output: str = ''            # LLM 可读格式化 (content 约定)
 
 
 class ToolScheduler:
@@ -126,7 +126,7 @@ def _parse_args(fc) -> dict:
         return {}
 
 
-# ── 结果格式化 (for_llm 约定, 对齐 prime ToolExecutor) ──
+# ── 结果格式化 (content 约定, 对齐 prime ToolExecutor) ──
 
 def _format_error(exc: BaseException) -> str:
     return json.dumps(
@@ -141,8 +141,8 @@ def _format_result(result: Any) -> str:
     if isinstance(result, str):
         return result
     if isinstance(result, dict):
-        if 'for_llm' in result:
-            fl = result['for_llm']
+        if 'content' in result:
+            fl = result['content']
             if fl is None:
                 return ''
             if isinstance(fl, str):

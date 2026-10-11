@@ -51,6 +51,12 @@ const NET_OP_TIMEOUT: Duration = Duration::from_secs(5);
 /// 半死(不再出帧也不报错), 按收口处理防无限打转.
 const DRAIN_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Active 收帧的空闲上限: 会话既无帧也无命令持续到它 = 上游悬死(act
+/// orphan 后 eof/stop 皆不达, 或 WS 半死不再出帧也不报错), 判死收口,
+/// 防 session 永挂堵死整条实例队列. 假阳性代价 = 一次被截断的会话
+/// (后续 Feed 自动重建 session), 换 actor 永不悬死.
+const ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Finalizing(audio 播完中)的总上限: 从进入 Finalizing 起算, 超过它 audio
 /// 仍未报 done = 音频服务侧异常, 停音频兜底回包, actor 绝不永挂.
 const FINALIZE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -354,6 +360,7 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                         }
                     }
                     TtsCmd::Finish { .. } => {
+                        tracing::info!("actor Finish");
                         match tokio::time::timeout(
                             NET_OP_TIMEOUT,
                             ensure_session(&mut client, &mut session, &config, ""),
@@ -409,28 +416,8 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
                     }
                     TtsCmd::Cancel { .. } => {
                         // 队首打断（Idle/Active 态：session 还在或尚未建）。
-                        if let Some(mut s) = session.take() {
-                            s.interrupted = true;
-                            s.sink.stop();
-                            if let Some(c) = client.as_mut() {
-                                // cancel_session 限时: 半死连接上同样写不出去.
-                                let _ = tokio::time::timeout(
-                                    NET_OP_TIMEOUT,
-                                    c.cancel_session(&s.id),
-                                )
-                                .await;
-                                let _ = wait_for_terminal_event(c).await;
-                            } else {
-                                // 连接已断：cancel 无意义，session 直接弃。
-                            }
-                        }
-                        if let Some(reply) = queue.front_mut().and_then(|f| f.waiter.take()) {
-                            let _ = reply.send(SpeakOutcome {
-                                interrupted: true,
-                                ..Default::default()
-                            });
-                        }
-                        pop_front(&mut queue);
+                        tracing::info!("actor Cancel: session-state cancel");
+                        cancel_front(&mut client, &mut session, &mut queue).await;
                     }
                     TtsCmd::WaitDone { reply, .. } => {
                         tracing::info!(has_session = session.is_some(), "actor WaitDone");
@@ -461,6 +448,10 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
         }
 
         // ---- 无队首命令可消化：Active 收帧 / 等新命令 ----
+        // Active 收帧 select 带 idle 兜底: 会话既无帧也无命令持续到
+        // ACTIVE_IDLE_TIMEOUT = 上游悬死(如 act orphan 后 eof/stop 皆不达,
+        // WS 半死不再出帧也不报错), session 永挂会堵死整条实例队列(后续
+        // speak 全部零 Feed). 判死收口自愈.
         let has_active = session.as_ref().map(|s| !s.finished).unwrap_or(false);
         let cmd = if has_active {
             let c = client
@@ -470,18 +461,30 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
             tokio::select! {
                 biased;
                 c = inbox.recv() => match c {
-                    Some(c) => c,
+                    Some(c) => Some(c),
                     None => break,
                 },
                 frame = c.next_event() => {
                     handle_frame(s, frame);
                     continue;
-                }
+                },
+                _ = tokio::time::sleep(ACTIVE_IDLE_TIMEOUT) => None,
             }
         } else {
             match inbox.recv().await {
-                Some(c) => c,
+                Some(c) => Some(c),
                 None => break,
+            }
+        };
+        let cmd = match cmd {
+            Some(cmd) => cmd,
+            None => {
+                tracing::warn!(
+                    "tts session idle {}s: canceling front instance",
+                    ACTIVE_IDLE_TIMEOUT.as_secs()
+                );
+                cancel_front(&mut client, &mut session, &mut queue).await;
+                continue;
             }
         };
         route(cmd, &mut queue);
@@ -505,12 +508,27 @@ async fn actor_loop(config: SeedConfig, mut inbox: mpsc::UnboundedReceiver<TtsCm
 /// WaitDone 在路由时即置 started（run 已启动）：pending 里排在它前面的
 /// Feed/Finish 随之放行。
 ///
-/// 非队首实例的 Cancel 是特例：实例尚未开始，整条目移除即可（否则它会
-/// 一直占着队列，堵死后续实例）。
+/// Cancel 是特例：
+/// - 队首已 started → 保序入 pending（前序 Feed/Finish 可能未消化完，
+///   cancel 排队，由主循环 cancel_front 收口）。
+/// - 其余（非队首 / 队首未 started / 不在队列）→ 未 started 实例整条移除
+///   撤销：它没有 session/播放可清，pending 丢弃、waiter 回 interrupted。
+///   不移除则会永堵队列 ---- 尤其孤儿实例（created 态被 kernel destroy，
+///   不走 stop hook，靠 TtsHandle::drop 发出的 Cancel 撤回）：非队首时
+///   堵 digestible 接棒；已接棒成队首时堵 front 门（其 Feed 排在 Cancel
+///   前，门永 false）。不在队列（已收口/从未入队）静默忽略，幂等无害。
 fn route(cmd: TtsCmd, queue: &mut VecDeque<Instance>) {
     let token = cmd.token();
-    if matches!(cmd, TtsCmd::Cancel { .. }) && queue.front().map(|f| f.token) != Some(token) {
-        if let Some(pos) = queue.iter().position(|i| i.token == token) {
+    if let TtsCmd::Cancel { .. } = cmd {
+        let front_started = queue
+            .front()
+            .filter(|f| f.token == token)
+            .is_some_and(|f| f.started);
+        if front_started {
+            if let Some(inst) = queue.iter_mut().find(|i| i.token == token) {
+                inst.pending.push_back(cmd);
+            }
+        } else if let Some(pos) = queue.iter().position(|i| i.token == token) {
             if let Some(inst) = queue.remove(pos) {
                 if let Some(reply) = inst.waiter {
                     let _ = reply.send(SpeakOutcome {
@@ -541,7 +559,7 @@ fn route(cmd: TtsCmd, queue: &mut VecDeque<Instance>) {
 }
 
 /// 队首实例完成，弹出。session/state 由调用方保证已清（enter_finalizing
-/// take 走 / Cancel take 走）。
+/// take 走 / cancel_front take 走）。
 fn pop_front(queue: &mut VecDeque<Instance>) {
     if let Some(inst) = queue.pop_front() {
         tracing::debug!(
@@ -549,6 +567,31 @@ fn pop_front(queue: &mut VecDeque<Instance>) {
             "instance done, next instance takes over"
         );
     }
+}
+
+/// 队首实例收口: cancel session(限时, 半死连接写不出去也不挂) + 停播放 +
+/// 回 waiter + 弹出. Cancel 命令与 Active idle 兜底共用.
+async fn cancel_front(
+    client: &mut Option<SeedClient>,
+    session: &mut Option<Session>,
+    queue: &mut VecDeque<Instance>,
+) {
+    if let Some(mut s) = session.take() {
+        s.interrupted = true;
+        s.sink.stop();
+        if let Some(c) = client.as_mut() {
+            let _ = tokio::time::timeout(NET_OP_TIMEOUT, c.cancel_session(&s.id)).await;
+            let _ = wait_for_terminal_event(c).await;
+        }
+        // 连接已断: cancel 无意义, session 直接弃.
+    }
+    if let Some(reply) = queue.front_mut().and_then(|f| f.waiter.take()) {
+        let _ = reply.send(SpeakOutcome {
+            interrupted: true,
+            ..Default::default()
+        });
+    }
+    pop_front(queue);
 }
 
 /// 进入 Finalizing：take session → 确保发过 finish_session → drain 剩余 PCM →
@@ -753,4 +796,141 @@ async fn wait_for_terminal_event(client: &mut SeedClient) -> bool {
     })
     .await;
     matches!(wait, Ok(Ok(())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn feed_cmd(token: u64) -> TtsCmd {
+        TtsCmd::Feed {
+            token,
+            text: "hello".into(),
+            additions: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn instance(token: u64, started: bool, pending: Vec<TtsCmd>) -> Instance {
+        Instance {
+            token,
+            pending: pending.into(),
+            started,
+            waiter: None,
+            stream_finished: false,
+        }
+    }
+
+    #[test]
+    fn route_cancel_removes_not_started_orphan_behind_front() {
+        let mut queue = VecDeque::new();
+        queue.push_back(instance(1, true, vec![]));
+        queue.push_back(instance(2, false, vec![feed_cmd(2)]));
+        route(TtsCmd::Cancel { token: 2 }, &mut queue);
+        assert_eq!(queue.len(), 1, "orphan behind front must be revoked");
+        assert_eq!(queue.front().unwrap().token, 1);
+    }
+
+    #[test]
+    fn route_cancel_removes_not_started_orphan_at_front() {
+        // 孤儿已接棒成队首（前实例完成后）。若 Cancel 走通用分支 push_back，
+        // 它排在已入队的 Feed 之后，digestible 门只看 front → 永 false → 死锁。
+        let mut queue = VecDeque::new();
+        queue.push_back(instance(2, false, vec![feed_cmd(2)]));
+        route(TtsCmd::Cancel { token: 2 }, &mut queue);
+        assert!(queue.is_empty(), "orphan at front must be revoked");
+    }
+
+    #[test]
+    fn route_cancel_started_front_queues_in_pending() {
+        // 队首已 started：Cancel 保序入 pending（前序 Feed 未消化完），
+        // 由主循环 cancel_front 收口。
+        let mut queue = VecDeque::new();
+        queue.push_back(instance(1, true, vec![feed_cmd(1)]));
+        route(TtsCmd::Cancel { token: 1 }, &mut queue);
+        assert_eq!(queue.len(), 1);
+        let front = queue.front().unwrap();
+        assert_eq!(front.pending.len(), 2);
+        assert!(matches!(front.pending.back(), Some(TtsCmd::Cancel { .. })));
+    }
+
+    #[test]
+    fn route_cancel_unknown_token_ignored() {
+        // 已收口/从未入队的 token：幂等忽略，不建新实例。
+        let mut queue = VecDeque::new();
+        queue.push_back(instance(1, true, vec![]));
+        route(TtsCmd::Cancel { token: 99 }, &mut queue);
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn route_cancel_orphan_waiter_gets_interrupted() {
+        let mut queue = VecDeque::new();
+        let mut orphan = instance(2, false, vec![]);
+        let (tx, rx) = oneshot::channel();
+        orphan.waiter = Some(tx);
+        queue.push_back(orphan);
+        route(TtsCmd::Cancel { token: 2 }, &mut queue);
+        assert!(queue.is_empty());
+        let outcome = rx.await.unwrap();
+        assert!(outcome.interrupted);
+        assert_eq!(outcome.frames, 0);
+    }
+
+    /// 端到端复现生产死锁时序并验证修复：B（created 态孤儿，body 在 start
+    /// 前已投递 → Feed 入队 started=false）被 destroy（框架 handle_destroy
+    /// 走 stop hook → tts.cancel() 撤回，本测试以等价的 cancel() 直发模拟）
+    /// 后，A 与后续 C 必须都能正常完成。修复前 B 永堵队首（digestible 门
+    /// 永 false），C 的 wait_done 永挂。
+    ///
+    /// 注意：TtsService 的 HANDLE 是进程级 OnceLock，actor 绑定首个 runtime
+    /// ——本文件中 TtsService 相关断言只能集中在同一个 tokio::test 里。
+    #[tokio::test]
+    async fn orphan_cancel_revokes_queue_and_queue_flows() {
+        TtsService::start(SeedConfig {
+            api_key: "test".into(),
+            // 不可达端口：connect 立即 refused，ensure_session 快速失败，
+            // Feed/Finish 走空流路径（enter_finalizing 空流直接回包）。
+            ws_url: "ws://127.0.0.1:1".into(),
+            speaker_id: "s".into(),
+            resource_id: "r".into(),
+        })
+        .unwrap();
+
+        // A：started（wait_done 已发），waiter 挂起等 finish。
+        // join! 并发：A 的 WaitDone 先入队挂起（FIFO 保序），再喂孤儿 B、
+        // 撤销（stop hook 等价调用）、A 收口。
+        let a = TtsHandle::new();
+        let b = TtsHandle::new();
+        let a_out = tokio::time::timeout(Duration::from_secs(3), async {
+            let side = async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                b.feed("orphan", Arc::new(Mutex::new(None))).await.unwrap();
+                // created 态被 destroy: 框架 handle_destroy 走 stop hook
+                // → speak.stop() → tts.cancel() 撤回队列命令.
+                b.cancel();
+                a.finish().unwrap();
+            };
+            let (out, ()) = tokio::join!(a.wait_done(), side);
+            out.unwrap()
+        })
+        .await
+        .expect("A must finish: orphan revoked instead of blocking queue");
+        assert_eq!(a_out.frames, 0);
+        assert!(!a_out.interrupted);
+
+        // C：孤儿之后的新实例，必须正常接棒完成（修复前在此永挂）。
+        let c = TtsHandle::new();
+        let c_out = tokio::time::timeout(Duration::from_secs(3), async {
+            let side = async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                c.finish().unwrap();
+            };
+            let (out, ()) = tokio::join!(c.wait_done(), side);
+            out.unwrap()
+        })
+        .await
+        .expect("C must take over after orphan revoked");
+        assert_eq!(c_out.frames, 0);
+        assert!(!c_out.interrupted);
+    }
 }

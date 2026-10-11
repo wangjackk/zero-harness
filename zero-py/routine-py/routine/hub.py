@@ -135,8 +135,8 @@ class RoutineHub:
     async def send_lifecycle_created(self, *, id: str,
                                      modules: Optional[List[str]] = None) -> None:
         # created 回报给 kernel:kernel 等 this 回报后才发 routine.submitted 给父,
-        # 所以父 submit 拿到 id 时 instance 一定已 created.带 modules(on_created
-        # 钩子返回值)----kernel 存进 node.declared(Start 的 TryAcquire 用)+ 经
+        # 所以父 submit 拿到 id 时 instance 一定已 created.带 modules(modules
+        # 类方法返回值)----kernel 存进 node.declared(Start 的 TryAcquire 用)+ 经
         # submitted 回执带给父 handle.
         payload: Dict[str, Any] = {'event': LIFECYCLE_CREATED, 'id': id}
         if modules is not None:

@@ -30,6 +30,8 @@ export interface AgentManifest {
   uses_skills?: boolean
   /** 声明后创建表单渲染平台统一 RoutinePicker (prompt_routines 白名单). */
   uses_routines?: boolean
+  /** 声明后创建表单渲染别名行编辑板块 (routine_aliases 标签映射). */
+  uses_aliases?: boolean
   routines: {
     create: string
     list: string

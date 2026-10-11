@@ -296,7 +296,7 @@ def install_to_library(
         else:
             target.write_text(content, encoding='utf-8')
     return {
-        'for_llm': f'Skill "{name}" installed to the shared library.',
+        'content': f'Skill "{name}" installed to the shared library.',
         'name': name,
         'path': str(dst),
         'overwritten': overwritten,

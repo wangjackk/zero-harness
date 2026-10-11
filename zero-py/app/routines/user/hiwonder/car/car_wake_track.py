@@ -15,6 +15,11 @@ angular.z 负. 粗调角按 align_margin 欠调(底盘转速标定误差会过�
 自退, 零速由其 finally 保证), 新角度立即重来 ---- 不等上一轮 track_s
 跑完(实测会排队 4.4s+).
 
+跟踪 = 注意力在人身上, 与 ASR 监听窗口绑定: orch 回 idle(说完/不语
+超时/取消/连续窗口到点, 即不再监听人说话)即收口当前跟踪, 不等
+track_s 跑满 ---- 单独唤醒不说话, 跟踪也只持续到不语超时(约 3s);
+recording/waiting_result/continuous 仍在监听, 跟踪继续.
+
 全部运动走单次 car/track 调用(align_deg + max_run_s) ---- 粗调与视觉
 在同一条速度波内交接, 无两段式零速缝; car/stop / 新动作的代际互斥与
 零速保证由被调 routine 自带, 本 routine 不发 twist.
@@ -44,7 +49,8 @@ class CarWakeTrackInput(BaseModel):
         description='武装窗口秒数: 期间监听唤醒词, 到期自动解除')
     track_s: float = Field(
         30, ge=5, le=600,
-        description='每次唤醒后的视觉跟踪秒数(car/track)')
+        description='每次唤醒后的视觉跟踪上限秒数(car/track); '
+                    'orch 回 idle(不再监听人说话)提前收口')
     align_rate: float = Field(
         1.0, ge=0.1, le=1.5,
         description='声源粗调角速度 rad/s(0.5 时 160 度唤醒要 4.7s, '
@@ -64,6 +70,11 @@ class CarWakeTrackInput(BaseModel):
                     '视觉闭环收敛 ---- 开环全转会因底盘转速标定误差过调,'
                     '再被视觉甩回来(转过头再转回头的根因); 0.85 保证'
                     '160 度档欠调后仍差 24 度, 人在 FOV 内接得住')
+    first_cal_angle: Optional[float] = Field(
+        None, ge=0, le=360,
+        description='触发本次武装的唤醒标定角: 建链异步, 该唤醒的广播已'
+                    '错过, 带上角度则 armed 即执行首轮定向+跟踪; 缺省仅'
+                    '武装, 等下一个 wake')
 
 
 class CarWakeTrack(Routine):
@@ -84,11 +95,22 @@ class CarWakeTrack(Routine):
 
     @subscribe('voice')
     async def on_voice(self, source, data: Dict[str, Any]) -> None:
-        """wake 帧(bus_listener 转发) -> 记下声源角, 唤醒等待循环."""
+        """voice 帧路由: wake -> 记声源角待 run 循环定向; orch state ->
+        idle 即收口在跑跟踪(注意力跟着监听窗口走)."""
         if not self._armed or self._wake_evt is None:
             return
         frame = data or {}
-        if frame.get('kind') != 'wake':
+        kind = frame.get('kind')
+        if kind == 'state':
+            # orch 回 idle = 本轮监听结束(说完/不语超时/取消/连续窗口
+            # 到点), 注意力不再在人身上: 同步 bump 打断在跑 track(与
+            # wake 打断同机制, 零速由其 finally 保证). bump 与 agent 回复
+            # 动作无竞态 ---- result 与 idle 微秒级连发, 都先于 agent
+            # 的 LLM 推理与动作启动.
+            if frame.get('state') == 'idle':
+                car_ctrl.bump_generation()
+            return
+        if kind != 'wake':
             return
         deg = frame.get('cal_angle')
         if isinstance(deg, (int, float)):
@@ -109,6 +131,12 @@ class CarWakeTrack(Routine):
         aligns: List[float] = []
         latencies: List[float] = []
         wakes = 0
+        # 触发本次武装的唤醒: arm 建链异步, 其广播已被错过 ---- 预置
+        # 角度 + 立即置位, 循环首轮即执行(与后续 wake 同一条路径).
+        if inp.first_cal_angle is not None:
+            self._pending_deg = float(inp.first_cal_angle)
+            car_ctrl.bump_generation()
+            self._wake_evt.set()
         try:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + inp.armed_s
@@ -138,8 +166,11 @@ class CarWakeTrack(Routine):
                 if abs(signed) <= inp.near_deg:
                     _log.info('wake @%.0f deg: within near band, pure visual',
                               signed)
+                    # 引导注视 15 档: 低于会话注视(car/gaze 的 20) ----
+                    # agent reacting 到来时 gaze 可驱逐本 track 无缝接管.
                     await self.call('car/track',
-                                    {'max_run_s': inp.track_s})
+                                    {'max_run_s': inp.track_s},
+                                    priority=15)
                 else:
                     # 单次调用合并粗调+精调: car/track 同一条速度波内
                     # 开环转向声源角(欠调 margin 余量), 目标进画面即
@@ -151,7 +182,8 @@ class CarWakeTrack(Routine):
                     await self.call('car/track',
                                     {'max_run_s': inp.track_s,
                                      'align_deg': align_deg,
-                                     'align_rate': inp.align_rate})
+                                     'align_rate': inp.align_rate},
+                                    priority=15)
                     aligns.append(signed)
         finally:
             self._armed = False

@@ -138,7 +138,7 @@ class BackgroundShell(Routine):
             'status': 'running',
             'pid': proc.pid,
             'log_path': log_path,
-            'for_llm': (
+            'content': (
                 f'Background task {task_id} started (pid={proc.pid}). '
                 f'Log: {log_path}. '
                 f'Use BackgroundShell action=status task_id={task_id} to check output.'
@@ -164,7 +164,7 @@ class BackgroundShell(Routine):
             'command': task.command,
             'log_path': task.log_path,
             'tail': tail,
-            'for_llm': (
+            'content': (
                 f'Task {task.task_id} {state}'
                 + (f' (exit_code={task.process.returncode})' if not running else '')
                 + f'.\n--- last {inp.lines} lines ---\n{tail}'
@@ -193,7 +193,7 @@ class BackgroundShell(Routine):
             'status': 'killed' if was_running else 'already_exited',
             'exit_code': task.process.returncode,
             'log_path': task.log_path,
-            'for_llm': (
+            'content': (
                 f'Task {task.task_id} '
                 + ('killed' if was_running else 'was already exited')
                 + f' (exit_code={task.process.returncode}). Log: {task.log_path}'
@@ -205,7 +205,7 @@ class BackgroundShell(Routine):
         if not tasks:
             return {
                 'tasks': [],
-                'for_llm': 'No background tasks.',
+                'content': 'No background tasks.',
             }
         items = []
         for t in tasks.values():
@@ -222,5 +222,5 @@ class BackgroundShell(Routine):
                  for it in items]
         return {
             'tasks': items,
-            'for_llm': 'Background tasks:\n' + '\n'.join(lines),
+            'content': 'Background tasks:\n' + '\n'.join(lines),
         }

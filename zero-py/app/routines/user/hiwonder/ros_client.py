@@ -99,8 +99,8 @@ class RosClient:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL)
             await asyncio.wait_for(proc.wait(), timeout=_SSH_TIMEOUT)
-            _log.info('ros bridge start requested: ssh %s %s',
-                      cfg.ssh, cfg.cmd)
+            # _log.info('ros bridge start requested: ssh %s %s',
+            #           cfg.ssh, cfg.cmd)
         except Exception as e:
             _log.debug('ros bridge start attempt failed: %s', e)
 

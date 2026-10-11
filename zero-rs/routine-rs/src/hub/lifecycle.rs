@@ -68,7 +68,7 @@ impl LifecycleManager {
             };
             for prid in stale {
                 tracing::warn!("heartbeat timeout: {prid}");
-                let _ = self.stop_instance(&prid, true).await;
+                let _ = self.stop_instance(&prid, true, "disconnect").await;
             }
         }
     }
@@ -234,21 +234,15 @@ impl LifecycleManager {
     }
 
     /// dial-in:收到 kernel 发来的 lifecycle.destroy → 清理 created 态(未 start)的 routine。
+    ///
+    /// destroy 也是终止: 走与 stop/断连同一条收尾链(stop hook → on_stopped →
+    /// cleanup, 即 stop_instance 全套), 只是不回报 stopped(kernel 已删 node,
+    /// 无接收方) ---- created 态实例可能在 start 前已收 body 持有资源(如
+    /// speak 已入 actor 队列的 TTS 命令), 资源撤销靠 stop hook 统一契约。
     pub async fn handle_destroy(&self, peer_id: &str, msg: JsonObject) -> Result<(), String> {
         let rid = coerce_string(&msg, "id").unwrap_or_default();
         let prid = format!("{peer_id}:{rid}");
-        {
-            let mut running_instances = self.runtime.running_instances.lock().await;
-            if let Some(state) = running_instances.get_mut(&prid) {
-                if state.finalized {
-                    return Ok(());
-                }
-                state.cancellation.cancel();
-                state.finalized = true;
-                state.status = InvocationStatus::Stopped;
-            }
-        }
-        self.cleanup(&prid).await;
+        self.stop_instance(&prid, false, "destroy").await?;
         tracing::info!("[lifecycle] destroyed: {prid}");
         Ok(())
     }
@@ -277,9 +271,16 @@ impl LifecycleManager {
     }
 
     /// 单实例销毁. notify_kernel=false 供 transport 断连本地销毁(kernel
-    /// 世界已死, stopped 回报无意义); heartbeat watchdog 超时路径传 true.
-    /// instance 传 Some → on_stopped hook 照走(对齐 py/ts graceful stop).
-    pub async fn stop_instance(&self, prid: &str, notify_kernel: bool) -> Result<(), String> {
+    /// 世界已死, stopped 回报无意义)与 destroy(对端已删 node); heartbeat
+    /// watchdog 超时路径传 true. instance 传 Some → stop hook 照走(对齐
+    /// py/ts graceful stop). done_reason 喂 on_stopped hook: 断连/心跳超时
+    /// "disconnect", destroy "destroy".
+    pub async fn stop_instance(
+        &self,
+        prid: &str,
+        notify_kernel: bool,
+        done_reason: &str,
+    ) -> Result<(), String> {
         let (instance, run_task) = {
             let mut running_instances = self.runtime.running_instances.lock().await;
             let Some(state) = running_instances.get_mut(prid) else {
@@ -303,7 +304,7 @@ impl LifecycleManager {
                 ControlDoneReason::Stop,
                 result,
                 None,
-                "disconnect",
+                done_reason,
                 Some(instance),
                 notify_kernel,
             )
@@ -331,7 +332,7 @@ impl LifecycleManager {
             return;
         }
         tracing::warn!(%peer_id, "peer down; destroying all local instances");
-        let futures = prids.iter().map(|prid| self.stop_instance(prid, false));
+        let futures = prids.iter().map(|prid| self.stop_instance(prid, false, "disconnect"));
         futures::future::join_all(futures).await;
     }
 
@@ -647,7 +648,7 @@ mod tests {
     use super::*;
     use crate::{
         core::{RoutineOutput, RoutineRegistry, Routine, RoutineFactory},
-        protocol::events::{LIFECYCLE_START, LIFECYCLE_STOP},
+        protocol::events::{LIFECYCLE_CREATED, LIFECYCLE_DESTROY, LIFECYCLE_START, LIFECYCLE_STOP},
         hub::{OutboundTransport, ServerRuntime},
     };
     use async_trait::async_trait;
@@ -729,7 +730,7 @@ mod tests {
         // 对齐 Python lifecycle `except Exception` 分支。
         let registry = RoutineRegistry::from_factories([StdArc::new(FailingFactory)
             as StdArc<dyn RoutineFactory>]);
-        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new(), Vec::new()));
+        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new()));
         let transport = Arc::new(OutboundTransport::new(runtime.clone()));
         let lifecycle = LifecycleManager::new(runtime.clone(), transport);
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -797,7 +798,7 @@ mod tests {
             events: events.clone(),
         })
             as StdArc<dyn RoutineFactory>]);
-        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new(), Vec::new()));
+        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new()));
         let transport = Arc::new(OutboundTransport::new(runtime.clone()));
         let lifecycle = LifecycleManager::new(runtime.clone(), transport);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -831,5 +832,51 @@ mod tests {
 
         let recorded = events.lock().unwrap().clone();
         assert_eq!(recorded, vec!["start", "stop"]);
+    }
+
+    #[tokio::test]
+    async fn destroy_calls_stop_hook_for_created_instance() {
+        // destroy 也是终止: created 态实例被 destroy 必须走 stop hook ----
+        // created 态可能已在 start 前收 body 持有资源(如 speak 已入 actor
+        // 队列的 TTS 命令), stop hook 是资源撤销的统一契约. run 不得启动.
+        let events = StdArc::new(StdMutex::new(Vec::new()));
+        let registry = RoutineRegistry::from_factories([StdArc::new(BlockingFactory {
+            events: events.clone(),
+        })
+            as StdArc<dyn RoutineFactory>]);
+        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new()));
+        let transport = Arc::new(OutboundTransport::new(runtime.clone()));
+        let lifecycle = LifecycleManager::new(runtime.clone(), transport);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        runtime
+            .peer_to_queue
+            .lock()
+            .await
+            .insert("peer".to_string(), tx);
+
+        let mut created = JsonObject::new();
+        created.insert(
+            "event".to_string(),
+            Value::String(LIFECYCLE_CREATED.to_string()),
+        );
+        created.insert("id".to_string(), Value::String("rid".to_string()));
+        created.insert("name".to_string(), Value::String("blocking".to_string()));
+        lifecycle.handle_created("peer", created).await.unwrap();
+
+        let mut destroy = JsonObject::new();
+        destroy.insert(
+            "event".to_string(),
+            Value::String(LIFECYCLE_DESTROY.to_string()),
+        );
+        destroy.insert("id".to_string(), Value::String("rid".to_string()));
+        lifecycle.handle_destroy("peer", destroy).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let recorded = events.lock().unwrap().clone();
+        assert_eq!(
+            recorded,
+            vec!["stop"],
+            "destroy must invoke the stop hook without starting run"
+        );
     }
 }

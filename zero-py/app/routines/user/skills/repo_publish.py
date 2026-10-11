@@ -133,7 +133,7 @@ def do_repo_publish(
         encoding='utf-8',
     )
     return {
-        'for_llm': f'Skill "{name}" v{version} published to the shared library.',
+        'content': f'Skill "{name}" v{version} published to the shared library.',
         'name': name,
         'path': str(dst),
         'version': version,

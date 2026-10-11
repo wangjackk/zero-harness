@@ -84,7 +84,7 @@ export class RunContext {
   // --- routine 调 routine(submit) ---
 
   /** 提交一个子 routine,经 kernel 回环:建命令(created),created 回报后返回
-   * handle.handle.modules = 子 routine onCreated() 返回的占用 modules. */
+   * handle.handle.modules = 子 routine modules() 静态方法声明的占用 modules. */
   async submit(name: string, kwargs: Payload | null = null): Promise<RoutineHandle> {
     const reqId = newReqId()
     const fut = new Deferred<{ childId: string; modules: string[] | null }>()

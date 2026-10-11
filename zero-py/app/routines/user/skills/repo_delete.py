@@ -41,7 +41,7 @@ def do_repo_delete(name: str) -> Dict[str, Any]:
         return {'error': f'invalid skill name: {name!r}'}
     shutil.rmtree(target)
     return {
-        'for_llm': f'Skill "{name}" deleted from the shared library.',
+        'content': f'Skill "{name}" deleted from the shared library.',
         'name': name,
         'removed': True,
     }

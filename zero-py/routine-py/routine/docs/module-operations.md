@@ -15,7 +15,7 @@ routine 侧模块操作完整参考.模块是 routine 互斥调度的核心:每�
 | **cone** | 模块的冲突锥 = 祖先 + 自己 + 后代.占一个节点会挡住 cone 内任意节点. |
 | **conflict** | 两组 modules 的 cone 相交即冲突→业务侧串行;不相交→可并行. |
 | **occupy (holder)** | routine acquire 一个模块后,该模块 holders 列表追加 rid.释放才移除. |
-| **静态声明** | `on_created()` 返回 `Modules([...])`,created 时占,stop 时自动释放. |
+| **静态声明** | `modules()` 类方法返回 `Modules([...])`,created 时占,stop 时自动释放. |
 | **运行时占/释放** | `acquire()`/`release()`,run() 体里动态调.acquire 撞车按本 routine 的 start 档位裁决. |
 | **动态加载/卸载** | `load_module()`/`unload_module()`,改全局树拓扑,只挂树不占用. |
 
@@ -273,4 +273,4 @@ if tree and tree.conflict(['a'], ['b']):
 2. **load 只挂树,占用另调 acquire**:职责分离.load 改拓扑,acquire 改占用.
 3. **unload 对标文件系统**:非空(有子)拒绝,被占拒绝.必须自底向上卸,先 release.
 4. **conflict 是静态预测**:零 round-trip 本地算,用于编排策略.真正的互斥由 kernel 保证.
-5. **静态声明 vs 运行时**:`on_created` 返回 Modules 是 created 时自动占;`acquire`/`release` 是 run() 体里动态调.
+5. **静态声明 vs 运行时**:`modules` 类方法(类型+入参的纯函数,无实例可调)是 created 时自动占;`acquire`/`release` 是 run() 体里动态调.

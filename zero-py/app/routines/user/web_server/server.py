@@ -284,9 +284,9 @@ class WebServer(Routine):
         self._logger.info('[bridge] got feedback agent_id=%s', data.get('agent_id'))
         await self._broadcast({'type': 'feedback', **data})
 
-    @subscribe('agent_status')
+    @subscribe('agent_status', namespace='xml_agent')
     async def on_agent_status(self, source, data: dict) -> None:
-        """agent 瞬态状态 (如 compaction 进行中) → 前端状态条."""
+        """agent 瞬态状态 (如 react reacting/idle) → 前端状态条."""
         await self._broadcast({'type': 'agent_status', **data})
 
     @subscribe('sys_prompt')

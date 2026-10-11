@@ -13,8 +13,8 @@ agent 侧 executor(_run_reflex), 映射到 cancel/interrupt/store/start 既有
 动作. Jev 失败/超时降级 INTERRUPT(宁打断不丢消息).
 
 Jev 契约(demo_reflex 验证过): OpenRouter decisions API, Noul x2
-(interrupt/cache), 阈值 0.5. 协议层见 jev.py(JevClient), 本文件只组
-问题与出决策.
+(interrupt/cache), 双阈值 interrupt 0.5 / cache 0.2(缓冲优先,
+不确定不丢). 协议层见 jev.py(JevClient), 本文件只组问题与出决策.
 """
 from __future__ import annotations
 
@@ -26,8 +26,14 @@ from .jev import JevClient
 
 logger = logging.getLogger(__name__)
 
-# interrupt/cache 高于此值触发对应动作(demo 实测概率分离度好, 0.5 余量足)
+# interrupt 高于此值立即打断(demo 实测概率分离度好, 0.5 余量足)
 _THRESHOLD = 0.5
+
+# cache 高于此值缓冲(DEFER). 更低的一档 _NOISE_FLOOR 之下才丢: 误缓冲
+# 代价 = act 完后延迟响应一轮, 误丢弃 = 用户消息石沉大海 ---- 不确定
+# 的短指令("展示"类, 分类器在 0.4~0.5 犹豫)默认缓冲, 只有大概率纯
+# 噪声(自言自语/环境人声)才 DROP.
+_NOISE_FLOOR = 0.2
 
 # 单条文本截断(防长内容撑爆 Jev 32k 上下文)
 _CLIP = 2000
@@ -119,7 +125,7 @@ def barge_in_reflex(jev: JevClient) -> Reflex:
                     r['interrupt'], r['cache'])
         if r['interrupt'] > _THRESHOLD:
             return Decision.INTERRUPT
-        if r['cache'] > _THRESHOLD:
+        if r['cache'] > _NOISE_FLOOR:
             return Decision.DEFER
         return Decision.DROP
 

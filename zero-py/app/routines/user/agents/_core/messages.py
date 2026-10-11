@@ -40,7 +40,7 @@ def entries_to_messages(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if fc is None:
                 continue
             # 优先用 raw_result (原始工具返回值, 含 cwd/exit_code 等元数据) 给前端;
-            # 老数据没有 raw_result 时 fallback 到 output (for_llm 过滤后的字符串).
+            # 老数据没有 raw_result 时 fallback 到 output (content 过滤后的字符串).
             result_val = fc.get('raw_result', fc.get('output'))
             results.append({
                 'name': fc.get('name') or '',

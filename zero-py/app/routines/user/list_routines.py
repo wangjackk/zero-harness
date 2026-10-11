@@ -43,7 +43,7 @@ class ListRoutinesOutput(BaseModel):
                     'kind=running 返回 [{name, id}, ...]. '
                     'hub_id 是进程级身份(如 "zero"/"one")',
     )
-    for_llm: str = Field(
+    content: str = Field(
         default='',
         description='LLM-friendly text summary: 按 hub 聚合的 routine 列表 + 数量统计. '
                     '格式如 "5 routines, 2 hubs:\\n  zero(3, 1p): a, b, c*\\n  one(2): d, e". '
@@ -74,17 +74,17 @@ class ListRoutines(Routine):
             return {
                 'error': 'get_routines not implemented for this transport',
                 'routines': [],
-                'for_llm': '',
+                'content': '',
             }
         except Exception as exc:
             self._logger.warning('list_routines(registered) failed: %s', exc)
             return {
                 'error': f'{type(exc).__name__}: {exc}',
                 'routines': [],
-                'for_llm': '',
+                'content': '',
             }
         self._logger.info('list_routines(registered): %d routines', len(routines))
-        return {'routines': routines, 'for_llm': _build_llm_summary(routines)}
+        return {'routines': routines, 'content': _build_llm_summary(routines)}
 
     async def _list_running(self) -> Dict[str, Any]:
         try:
@@ -93,17 +93,17 @@ class ListRoutines(Routine):
             return {
                 'error': 'get_running_routines not implemented for this transport',
                 'routines': [],
-                'for_llm': '',
+                'content': '',
             }
         except Exception as exc:
             self._logger.warning('list_routines(running) failed: %s', exc)
             return {
                 'error': f'{type(exc).__name__}: {exc}',
                 'routines': [],
-                'for_llm': '',
+                'content': '',
             }
         self._logger.info('list_routines(running): %d routines', len(routines))
-        return {'routines': routines, 'for_llm': _build_running_summary(routines)}
+        return {'routines': routines, 'content': _build_running_summary(routines)}
 
 
 def _build_llm_summary(routines: List[Dict[str, Any]]) -> str:

@@ -43,5 +43,5 @@ class CarTurn(MotionRoutine):
         command = f'turn rate={inp.turn_rate:g} dur={inp.duration:g}s'
         return {
             'result': await self._execute(0.0, 0.0, inp.turn_rate, inp.duration, command),
-            'for_llm': None
+            'content': None
         }

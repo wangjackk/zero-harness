@@ -25,6 +25,11 @@ routines:
   #   bridge 'agent_hub/types'): hub 纯被动, 各类型 manager 启动时主动
   #   register 提交 manifest, 前端经 bridge 动态渲染创建表单
   - routines/user/agent_hub.py
+  # tree: 模块树管理 hub (passive 常驻, tree.json 唯一事实源),
+  #   req events: get/apply (编辑事务: add/remove/reorder/rename,
+  #   kernel 增量 + 文件同步即时生效); 前端模块树编辑器走 GET /tree +
+  #   POST /tree/apply (经 call 转发)
+  - routines/user/tree.py
   # agent_hub/preset/*: 中立预制体仓库 (~/.zero/presets, {kind, params}
   #   预填创建参数; 纯文件平铺 routine 系列 list/save/delete,
   #   前端表单预填层消费)
@@ -76,15 +81,17 @@ routines:
 
   # hiwonder 小车包: ros_client 传输单例(常驻 WS 自愈) + ros_bridge 感知桥
   #   (routine 动态订阅 ROS 话题 → 同名 pubsub / 反向 publish) +
-  #   车控 routines(cmd_vel 直发); 需小车可达, 冷启动走 car/start
+  #   车控 routines(cmd_vel 直发); 需小车可达, 底盘/rosbridge 由车端
+  #   systemd 自启(zero-chassis/zero-rosbridge), 上电即控制面就绪
   - routines/user/hiwonder
 
   # music 包已整体迁至 zero-rs(Rust): play_music / list_music / sound_effect;
   #   user/music 仅保留 assets/ 曲库目录(路径见 zero-rs/config.toml)
 
-  # device_bus 包: bus_listener 被动常驻 (车端 ZMQ 事件总线只读订阅:
-  #   voice.wake / voice.orch.evt / vision.cam.evt / vision.pose.evt
-  #   → pubsub 'voice'/'vision' + 日志; 暂不转发 agent)
+  # device_bus 包: 设备事件总线统一收发 + 推理即开即关门控.
+  #   bus_listener 被动常驻 (低频 evt 订阅 → pubsub 'voice'/'vision';
+  #   语义化 req pose_enable/disable/status 发 vision cmd, 常驻 PUB +
+  #   state evt 回执确认 + 丢包重发, 调用方零总线协议细节)
   - routines/user/device_bus
 
   # watcher: yaml/源码变更自动热重载 (HMR, 改 yaml 不用重启进程)

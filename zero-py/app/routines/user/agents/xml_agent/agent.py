@@ -30,6 +30,7 @@ from routine import Routine, RoutineHandle, request
 from .llm import LLMClient, TextDelta, ReasoningDelta, Completed
 from .provider import XmlContextProvider
 from .condenser import project_with_summary
+from .memory import get_memory
 
 # wire 契约常量: act 注入调用方 agent_id 到 tool routine kwargs, tool 侧按同名键读取.
 AGENT_ID_KEY = 'from_agent_id'
@@ -107,8 +108,19 @@ class XmlAgentInput(BaseModel):
     )
     prompt_routines: Optional[list[str]] = Field(
         None, description='Routine white-list rendered into system prompt '
-                          '(XML interface tables). None = class default '
-                          'PROMPT_ROUTINES.',
+                          '(XML interface tables). None = no tool table '
+                          '(bare conversational agent); scenario tools are '
+                          'injected explicitly by the caller per instance '
+                          '(supports "ns/*" wildcards).',
+    )
+    routine_aliases: Optional[dict[str, str]] = Field(
+        None, description='Explicit routine tag aliases {full name: alias}. '
+                          'The only alias source: names containing "/" '
+                          'require an explicit alias to be rendered into '
+                          'the prompt interface table. Set via '
+                          'set_routine_alias and persisted in the '
+                          'agents-table init_kwargs snapshot (restored on '
+                          'resume).',
     )
 
 
@@ -131,21 +143,9 @@ class XmlAgent(Routine):
         'input_schema': XmlAgentInput.model_json_schema(),
         'output_schema': XmlAgentOutput.model_json_schema(),
     }
-    # LLM 可主动调用的 routine 白名单:进 system prompt(XML 示例形式).
+    # prompt routine 白名单不是类常量: 通用 agent 零业务默认, 工具集由
+    # 调用方按实例显式注入 (input prompt_routines, 支持 'ns/*' 通配).
     # output 说话类是**被动**派发(裸文本自动走 output),不在此列--LLM 只输出自然语言即可.
-    PROMPT_ROUTINES: list[str] = ['music/play', 'music/list', 'wait',
-                                  'routine/list', 'routine/doc',
-                                  'agent_hub/running_agents', 'send_message',
-                                  'read_image', 'web_search', 'web_fetch',
-                                  'ssh/connect', 'ssh/exec', 'ssh/transfer',
-                                  'ssh/disconnect', 'ssh/list',
-                                  'xml/agent/set_routine_alias']
-    # 显式预设别名 (语义清晰优先于派生); 白名单里其余含 '/' 的名走
-    # '/'→'_' 派生兜底. set_routine_alias 自身即是一例: 名字含 '/' 进
-    # prompt 需要备份名, set_routine_alias 比 xml_agent_set_routine_alias 清晰.
-    _PRESET_ALIASES: ClassVar[dict[str, str]] = {
-        'xml/agent/set_routine_alias': 'set_routine_alias',
-    }
 
 
 
@@ -181,11 +181,11 @@ class XmlAgent(Routine):
         self._skill_summaries: list[tuple[str, str]] = []
         # 预加载 skill 全文 (旁路: 强制全量塞进 prompt, 绕过两级)
         self._preloaded_skills_text: str = ''
-        # prompt routine 白名单 (on_started 从 init_kwargs 覆盖; 默认类常量)
-        self._prompt_routines: list[str] = self.PROMPT_ROUTINES
-        # routine 标签 {全名: 别名} (运行时经 set_routine_alias req 设置;
-        # 含 '/' 的全名由 on_started 预设备份名). prompt 接口表按别名渲染,
-        # act 分发时映射回全名. 不持久化 (resume 丢).
+        # prompt routine 白名单 (on_started 从 init_kwargs 覆盖; 默认空
+        # ---- 通用 agent 零业务默认, 工具集由调用方按实例显式注入)
+        self._prompt_routines: list[str] = []
+        # 别名表 {全名: 别名}: 只含显式条目 (set_routine_alias 设置 /
+        # resume 快照恢复), 渲染与分发共用, 经 init_kwargs 快照持久化.
         self._routine_aliases: dict[str, str] = {}
         # --- reflex 层: act 期用户消息先过链出决策(见 reflex.py) ---
         from .jev import JevClient
@@ -255,15 +255,20 @@ class XmlAgent(Routine):
         self._condense_config = dict(kwargs.get('condense_config') or {})
         preload_skills = kwargs.get('preload_skills') or []
         level1_skills = kwargs.get('level1_skills') or []
-        # prompt routine 白名单: 未传用类默认 (音乐那套), 传了整表覆盖.
-        self._prompt_routines = kwargs.get('prompt_routines') or self.PROMPT_ROUTINES
-        # 预设备份名: 白名单里含 '/' 的原始名不是合法 XML 标签. _PRESET_ALIASES
-        # 显式优先 ('xml/agent/set_routine_alias' -> 'set_routine_alias'), 其余
-        # '/'→'_' 派生 ('music/play' -> 'music_play'). set_routine_alias 可覆盖.
-        for full in self._prompt_routines:
-            if '/' in full:
-                self._routine_aliases.setdefault(
-                    full, self._PRESET_ALIASES.get(full, full.replace('/', '_')))
+        # prompt routine 白名单: 未传 = 无工具表 (通用 agent 零业务默认),
+        # 传了整表覆盖. 别名派生不在此处 (含 '/' 的白名单项多数不在
+        # catalog, 如 'xx/*' 通配), 统一由 _render_routines 按 catalog
+        # 全量覆盖.
+        self._prompt_routines = kwargs.get('prompt_routines') or []
+        # 别名恢复 (init_kwargs 快照, set_routine_alias 落库): 只含显式条目,
+        # 渲染/分发全用这一张表 ---- 含 '/' 的白名单 routine 无显式别名
+        # 不进接口表.
+        self._routine_aliases.update(kwargs.get('routine_aliases') or {})
+        # 别名是创建输入: 注入配置消息的时机在 _register_with_bridge 的
+        # on_success (此刻 _ctx 已就绪; on_started 里 _ctx 尚未创建), 只在
+        # 创建时刻(会话历史为空)注入, resume(历史非空)不重复注入 ---- 历史
+        # 里已有创建记录与运行中 set_routine_alias 的真实事件, 标签来源
+        # 全程可追溯.
 
         # 输入统一走 req: chat_message(user/agent/voice) + interrupt.
         # 注册到 WS bridge:req(1:1,失败重试)替代 conversation_open pubsub.
@@ -375,6 +380,17 @@ class XmlAgent(Routine):
             # emit session_changed so frontend backfills panel history
             # (same link prime uses; is_new = no prior messages).
             is_new = not self._ctx.load_history(self._session_id)
+            # 创建时刻注入别名配置消息 (真实事件, 标签来源可追溯):
+            # 别名非空且会话历史为空 = 创建而非 resume ---- on_started 里
+            # _ctx 尚未创建, 注入只能在 ctx 就绪的这里做.
+            if is_new and self._routine_aliases:
+                self._ctx.add_message(
+                    'user',
+                    '[routine_alias] tags configured: ' + ', '.join(
+                        f'{a} = {n}' for n, a in self._routine_aliases.items()),
+                    agent_id=self._agent_id,
+                    message_id=uuid4().hex, session_id=self._session_id,
+                )
             await self._emit_session_changed(self._session_id, is_new=is_new)
 
         await register_with_bridge(
@@ -671,6 +687,10 @@ class XmlAgent(Routine):
         在 react 的下一个 await 点抛出,except 存半截内容后 re-raise,task 自然死.
         epoch 在这不再做取消判断(那是 cancel 的职责),只作 emit 给前端的输出序号.
         """
+        # agent_status 广播(reacting/idle): 前端状态灯 + 具身伴随(如 car/gaze
+        # 注视会话)的起停信号源. 外层包全方法 ---- 正常/打断/异常全路径收口.
+        # ns 'xml_agent': 实现方域(不占全局 topic), 订阅方需 namespace 限定.
+        await self._emit_agent_status('reacting')
         try:
             while True:
                 more = await self.react(epoch)
@@ -678,6 +698,19 @@ class XmlAgent(Routine):
                     return
         except asyncio.CancelledError:
             raise
+        finally:
+            # cancel 已在路上,shield 让广播在事件循环上跑完(丢了也只影响
+            # 伴随方,且其超时兜底自愈)
+            try:
+                await asyncio.shield(self._emit_agent_status('idle'))
+            except Exception:
+                pass
+
+    async def _emit_agent_status(self, status: str) -> None:
+        await self.publish('agent_status', {
+            'agent_id': self._agent_id,
+            'status': status,
+        }, namespace='xml_agent')
 
     # ==================================================================
     # react -- 一轮 inference + act(照 agent.py:react 流程,记忆换 sqlite)
@@ -691,7 +724,7 @@ class XmlAgent(Routine):
         message_id = uuid4().hex
         text_output = ''
         # 两层数据收集:
-        #   feedback_items  -- 给 LLM 的(for_llm 过滤后,说话类被抑制)
+        #   feedback_items  -- 给 LLM 的(content 过滤后,说话类被抑制)
         #   results_raw     -- 原始所有子 routine 的 {name, result, error}(不过滤,含 output frames)
         feedback_items: list[dict] = []
         results_raw: list[dict] = []
@@ -823,7 +856,7 @@ class XmlAgent(Routine):
                     'error': res.get('error'),
                     'input': res.get('input'),
                 })
-                # 给 LLM 的:for_llm 过滤后(说话类被 for_llm:null 抑制).
+                # 给 LLM 的:content 过滤后(说话类被 content:null 抑制).
                 item = self._extract_feedback_item(res)
                 if item is not None:
                     feedback_items.append(item)
@@ -1100,13 +1133,26 @@ class XmlAgent(Routine):
         by_name: dict[str, dict] = {}
         for r in routines:
             by_name.setdefault(str(r.get('name') or ''), r)
+        # 别名表只含显式条目 (set_routine_alias 设置 / resume 快照恢复),
+        # 无派生兜底: 含 '/' 的白名单 routine 必须显式设置别名才渲染进
+        # 接口表 ---- 别名是调用方的数据, 不是框架的隐式规则; 隐式派生会
+        # 让标签来源不可追溯 (prompt 有但没人设过).
         # 本名被占作其他 routine 的别名时不渲染原块
         # (该标签在 act 分发时映射去了别处, 再教 LLM 用就是误导).
         alias_of = {alias: full for full, alias in self._routine_aliases.items()}
-        blocks: list[str] = []
-        # 本轮实际用到的 {原始名: 别名} (白名单序), 尾部统一说明.
-        used: dict[str, str] = {}
+        # 展开通配项 ('car/*' -> catalog 中该前缀全部 routine, 按名排序稳定):
+        # 逐名快照式白名单会漂移 ---- 新增 routine 永不进表, 通配一次写对.
+        # 展开名的别名已在上面全 catalog 覆盖, 无需再补.
+        effective: list[str] = []
         for name in self._prompt_routines:
+            if name.endswith('/*'):
+                prefix = name[:-1]  # 保留尾部 '/'
+                effective.extend(sorted(
+                    n for n in by_name if n.startswith(prefix)))
+            else:
+                effective.append(name)
+        blocks: list[str] = []
+        for name in effective:
             if name in alias_of:
                 self._logger.warning(
                     f'skip prompt routine {name!r}: name hijacked as alias '
@@ -1122,13 +1168,25 @@ class XmlAgent(Routine):
             if input_schema is None:
                 self._logger.warning(f'routine {name!r} has no input_schema, skip')
                 continue
-            tag = self._routine_aliases.get(name, name)
-            if tag != name:
-                used[name] = tag
+            tag = self._routine_aliases.get(name)
+            if tag is None:
+                if '/' not in name:
+                    tag = name  # 无 '/' 的全名天然是合法标签
+                else:
+                    self._logger.warning(
+                        f'skip prompt routine {name!r}: no explicit alias '
+                        '(creation param routine_aliases or '
+                        'set_routine_alias; names containing "/" require '
+                        'an explicit tag)'
+                    )
+                    continue
+            # 块标题恒为原始名, XML 示例用别名标签 ---- 映射由两者并列自明,
+            # 不伪造调用记录 (标签来源是创建配置/真实 set_routine_alias,
+            # 都已在对话历史留下真实事件).
             xml_example, prop_infos = self._xml_from_schema(tag, input_schema)
             desc = meta_dict.get('description') or ''
-            # 块标题恒为原始名; 别名标签只出现在 XML 示例里,
-            # 映射说明统一放接口表尾部 (见下方 tail), 不在块中间嵌入.
+            # 块标题恒为原始名; 别名标签只出现在 XML 示例里, 映射由两者
+            # 并列自明, 不在块中间嵌入.
             block_lines = [f'### `{name}`', '', f'```xml\n{xml_example}\n```', '']
             if desc:
                 block_lines.append(desc)
@@ -1148,17 +1206,7 @@ class XmlAgent(Routine):
                     block_lines.append(' '.join(parts))
                 block_lines.append('')
             blocks.append('\n'.join(block_lines).rstrip())
-        rendered = '\n\n---\n\n'.join(blocks)
-        # 尾部以"预调用"呈现别名 (块中间不嵌入): 模拟一次已完成的
-        # set_routine_alias 调用及其结果, agent 据此知道别名已生效及映射关系.
-        if used:
-            rendered += (
-                '\n\n---\n\n'
-                '预调用\n'
-                f':xml/agent/set_routine_alias(aliases={dict(used)!r})\n'
-                f"result: {{'ok': True, 'aliases': {dict(used)!r}}}"
-            )
-        return rendered
+        return '\n\n---\n\n'.join(blocks)
 
     @staticmethod
     def _xml_from_schema(name: str, schema: dict) -> tuple[str, list[dict]]:
@@ -1450,17 +1498,46 @@ class XmlAgent(Routine):
         if bad:
             return {'ok': False, 'error': f'unknown target routine(s): {bad}'}
         for target in aliases:
-            if target not in self._prompt_routines:
+            listed = target in self._prompt_routines or any(
+                target.startswith(w[:-1]) for w in self._prompt_routines
+                if w.endswith('/*'))
+            if not listed:
                 self._logger.warning(
                     f'alias target {target!r} not in prompt white-list '
                     f'(dead config; consider adding it to prompt_routines)'
                 )
-        # upsert: 别名 == 全名 清除该条目, 否则覆盖.
+        # upsert: 别名 == 全名 清除该条目, 否则覆盖. 别名表渲染/分发共用,
+        # 回写 init_kwargs 快照落盘 ---- 重启 resume 恢复, 不白设.
+        set_items: list[str] = []
+        cleared: list[str] = []
         for name, alias in aliases.items():
             if alias == name:
                 self._routine_aliases.pop(name, None)
+                cleared.append(name)
             else:
                 self._routine_aliases[name] = alias
+                set_items.append(f'{alias} = {name}')
+        try:
+            get_memory().merge_init_kwargs(
+                self._agent_id,
+                {'routine_aliases': dict(self._routine_aliases)},
+            )
+        except Exception as exc:
+            self._logger.warning(f'persist routine aliases failed: {exc}')
+        # 运维事件可见性: 别名表变化以消息形式进入对话历史 (user role,
+        # 同 feedback 惯例), 下轮 LLM 自然可见 ---- 而非只静默重渲染
+        # system prompt, LLM 对自己工具标签集的变化无感知.
+        notice = '[routine_alias]'
+        if set_items:
+            notice += ' tags updated: ' + ', '.join(sorted(set_items))
+        if cleared:
+            notice += ('; ' if set_items else ' ') + 'tags cleared: ' \
+                + ', '.join(sorted(cleared))
+        self._ctx.add_message(
+            'user', notice,
+            agent_id=self._agent_id,
+            message_id=uuid4().hex, session_id=self._session_id,
+        )
         self._logger.info('routine aliases updated: %s', self._routine_aliases)
         return {'ok': True, 'aliases': dict(self._routine_aliases)}
 
@@ -1488,9 +1565,9 @@ class XmlAgent(Routine):
     def _extract_feedback_item(res: dict) -> dict | None:
         """从 routine result dict 提取 feedback 条目,返回 None 表示忽略.
 
-        带 ``for_llm`` 键的 dict 只把 ``for_llm`` 的值反馈给 LLM;``for_llm: null``
-        表示这条不反馈(如 output 说话类 routine,结果只供诊断).沿用本会话
-        建的约定(见老 ``reactive_agent._extract_feedback_item``).
+        带 ``content`` 键的 dict 只把 ``content`` 的值反馈给 LLM(details
+        留给程序侧);``content: null`` 表示这条不反馈(如 output 说话类
+        routine, 结果只供诊断).
 
         read_image 特判: result 里的 ``images`` (本地路径列表) 提到 item 上,
         随 [feedback] 合并成一条多模态消息 (文本 + 图) 落库. 模型不支持读图时
@@ -1505,8 +1582,8 @@ class XmlAgent(Routine):
         images: list[str] = []
         if name == 'read_image' and isinstance(result, dict):
             images = [str(p) for p in result.get('images') or [] if p]
-        if isinstance(result, dict) and 'for_llm' in result:
-            result = result['for_llm']
+        if isinstance(result, dict) and 'content' in result:
+            result = result['content']
         if not name or result is None:
             return None
         item = {

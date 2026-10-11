@@ -44,6 +44,8 @@ class Network(BaseModel):
     flow: _Net = _Net(port=7790)
     # 设备事件总线 (车端 zmqproxy, voice/vision 域) 订阅端, 只读
     device_bus: str = 'tcp://127.0.0.1:6667'
+    # 总线发布端 (XSUB): vision 即开即关门控 cmd (cam/pose) 发往这里
+    device_bus_pub: str = 'tcp://127.0.0.1:6666'
     # 幻尔小车 rosbridge WS (ros_client 单例: 感知订阅 + 车控发布)
     ros_bridge: str = 'ws://192.168.1.108:9090'
     # rosbridge 不在线时自动拉起(冷却 60s); 省略 = 不拉起只重连

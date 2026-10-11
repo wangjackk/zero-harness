@@ -237,7 +237,7 @@ class Bash(Routine):
             raise RuntimeError(f'exit {proc.returncode}:\n{output.strip()}')
 
         return {
-            'for_llm': output,
+            'content': output,
             'exit_code': proc.returncode,
             'cwd': new_cwd,
         }

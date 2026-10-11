@@ -897,7 +897,7 @@ function fmtDefault(v: any): string {
   return String(v)
 }
 
-/** 工具执行结果 -> [feedback] 条目 (for_llm 约定: 带 for_llm 键的只回它的值).
+/** 工具执行结果 -> [feedback] 条目 (content 约定: 带 content 键的只回它的值).
  * read_image 特判: result 里的 images (本地路径列表) 提到条目上, 随 [feedback]
  * 合并成一条多模态消息 (文本 + 图) 落库; 模型不支持读图时组装侧剥掉. */
 function extractFeedbackItems(resultsRaw: Array<{
@@ -919,8 +919,8 @@ function extractFeedbackItems(resultsRaw: Array<{
         images = raw.map((p: unknown) => String(p)).filter(Boolean)
       }
     }
-    if (result !== null && typeof result === 'object' && 'for_llm' in (result as any)) {
-      result = (result as any).for_llm
+    if (result !== null && typeof result === 'object' && 'content' in (result as any)) {
+      result = (result as any).content
     }
     if (!name || result === null || result === undefined) continue
     const item: FeedbackItem = {

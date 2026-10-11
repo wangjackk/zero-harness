@@ -15,7 +15,9 @@ from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 
-from routine import Routine
+from routine import Modules, Routine
+
+from app.modules import MODULE_WHEELS
 
 from . import car_ctrl
 
@@ -30,7 +32,17 @@ class MotionOutput(BaseModel):
 
 
 class MotionRoutine(Routine):
-    """动作执行骨架: 子类解析入参算出 (vx, vy, wz) 后调 _execute."""
+    """动作执行骨架: 子类解析入参算出 (vx, vy, wz) 后调 _execute.
+
+    全族(shake/move/turn/steer/track)占用 wheels 模块 ---- 一套底盘同时
+    只听一个动作, kernel 按档位仲裁: 平级 StartError(连发动作须 wait 间隔),
+    高档 FORCE 驱逐. 用户显式动作走默认档 10, 后台注视(car/gaze)用 5 垫底.
+    """
+
+    @classmethod
+    def modules(cls, kwargs=None) -> Modules:
+        """占用 wheels 模块(底盘互斥, kernel 档位仲裁)."""
+        return Modules([MODULE_WHEELS])
 
     # 是否已有动作在跑(stop() 钩子用于补发零速)
     _active: bool = False
