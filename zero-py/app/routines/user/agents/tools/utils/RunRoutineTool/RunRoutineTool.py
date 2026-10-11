@@ -82,25 +82,25 @@ class RunRoutine(Routine):
                 self._logger.warning('run_routine: %s timed out (%ds)', name, self._TIMEOUT)
                 return {
                     'error': f'timeout: routine {name!r} did not complete within {self._TIMEOUT}s',
-                    'for_llm': f'routine {name!r} 执行超时({self._TIMEOUT}s),已停止.',
+                    'content': f'routine {name!r} 执行超时({self._TIMEOUT}s),已停止.',
                 }
         except ValidationError as exc:
             self._logger.warning('run_routine: %s validation failed: %s', name, exc)
             return {
                 'error': f'ValidationError: {exc}',
-                'for_llm': f'参数校验失败: {exc}. 请检查 name 和 kwargs 是否符合 RunRoutineInput schema (name 必填, kwargs 为 dict).',
+                'content': f'参数校验失败: {exc}. 请检查 name 和 kwargs 是否符合 RunRoutineInput schema (name 必填, kwargs 为 dict).',
             }
         except SubmitError as exc:
             self._logger.warning('run_routine: %s submit failed: %s', name, exc)
             return {
                 'error': f'SubmitError: {exc}',
-                'for_llm': f'routine {name!r} 未注册或被 kernel 拒绝 submit: {exc}. 请检查 routine 名称拼写, 或确认 routine 已加载.',
+                'content': f'routine {name!r} 未注册或被 kernel 拒绝 submit: {exc}. 请检查 routine 名称拼写, 或确认 routine 已加载.',
             }
         except Exception as exc:
             self._logger.warning('run_routine: %s failed: %s', name, exc, exc_info=True)
             return {
                 'error': f'{type(exc).__name__}: {exc}',
-                'for_llm': f'routine {name!r} 执行报错: {type(exc).__name__}: {exc}.',
+                'content': f'routine {name!r} 执行报错: {type(exc).__name__}: {exc}.',
             }
         self._logger.info('run_routine: %s ok', inp.name)
         return result

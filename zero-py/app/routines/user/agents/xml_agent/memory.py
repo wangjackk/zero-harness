@@ -150,6 +150,7 @@ class Memory:
                     model      TEXT,
                     protocol   TEXT,
                     title      TEXT,
+                    init_kwargs TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -162,6 +163,12 @@ class Memory:
             # migration: 已有 DB 的 agents 表补 protocol 列
             try:
                 c.execute('ALTER TABLE agents ADD COLUMN protocol TEXT')
+            except sqlite3.OperationalError:
+                pass  # 列已存在
+            # migration: 已有 DB 的 agents 表补 init_kwargs 列
+            # (spawn 可选配置快照 JSON: prompt_routines 等, resume 恢复)
+            try:
+                c.execute('ALTER TABLE agents ADD COLUMN init_kwargs TEXT')
             except sqlite3.OperationalError:
                 pass  # 列已存在
             # kind 列: NULL = 普通消息, 'summary' = 上下文压缩摘要.
@@ -206,8 +213,8 @@ class Memory:
     ) -> int:
         """追加一条消息,返回自增 id.三层数据分离:
 
-        - ``feedback``:**给 LLM** 的 ---- 经 ``for_llm`` 过滤后的子 routine 结果
-          (说话类被 ``for_llm:null`` 抑制).load_history 时取这个喂 LLM.
+        - ``feedback``:**给 LLM** 的 ---- 经 ``content`` 过滤后的子 routine 结果
+          (说话类被 ``content:null`` 抑制).load_history 时取这个喂 LLM.
         - ``results_raw``:**原始** ---- 所有子 routine 的 ``{name, result, error}``,
           不过滤(含 output 说话类的 frames/elapsed_ms 等).诊断/审计用,不喂 LLM.
         - ``extend_data``:**链路记账** ---- 各子 routine 的 ``{name, extend_data}``
@@ -570,22 +577,28 @@ class Memory:
     def register_agent(
         self, agent_id: str, *, session_id: str | None = None,
         model: str | None = None, protocol: str | None = None,
+        init_kwargs: dict | None = None,
     ) -> None:
         """upsert 一行 agent. resume 时保留 created_at.
 
         session_id: 会话身份 (UUID). create 时传入新 UUID; resume 时传入从
         get_agent 读出的旧 UUID. 仅在 INSERT 时写入, UPDATE 不覆盖.
         protocol: 创建时绑定的 LLM 协议 (agent 策略), resume 沿用.
+        init_kwargs: spawn 可选配置快照 (prompt_routines 等). 仅 INSERT
+        写入; UPDATE 不覆盖 ---- resume upsert 不洗掉创建时的配置.
         """
         ts = _now_iso()
+        init_kwargs_json = json.dumps(init_kwargs) if init_kwargs else None
         with self._tx() as c:
             c.execute(
                 'INSERT INTO agents(agent_id, session_id, model, protocol, '
-                'created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?) '
+                'created_at, updated_at, init_kwargs) '
+                'VALUES(?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(agent_id) DO UPDATE SET '
                 'model=excluded.model, protocol=excluded.protocol, '
                 'updated_at=excluded.updated_at',
-                (agent_id, session_id, model, protocol, ts, ts),
+                (agent_id, session_id, model, protocol, ts, ts,
+                 init_kwargs_json),
             )
 
     def get_agent(self, agent_id: str) -> dict | None:
@@ -593,10 +606,39 @@ class Memory:
         with self._tx() as c:
             row = c.execute(
                 'SELECT agent_id, session_id, model, protocol, title, '
-                'created_at, updated_at FROM agents WHERE agent_id = ?',
+                'init_kwargs, created_at, updated_at '
+                'FROM agents WHERE agent_id = ?',
                 (agent_id,),
             ).fetchone()
-        return dict(row) if row is not None else None
+        if row is None:
+            return None
+        agent = dict(row)
+        raw = agent.pop('init_kwargs', None)
+        agent['init_kwargs'] = json.loads(raw) if raw else None
+        return agent
+
+    def merge_init_kwargs(self, agent_id: str, patch: dict) -> None:
+        """按键 merge 进 agents 表 init_kwargs 快照 (运行时配置漂移回写).
+
+        set_routine_alias 等运行时变更经此落盘, resume 恢复. 后台写线程
+        串行执行, 与 register_agent 的 INSERT 语义不冲突 (不同 agent_id
+        天然隔离; 同 agent_id 的 create 与运行时回写时间上不重叠).
+        """
+        def _write() -> None:
+            with self._tx() as c:
+                row = c.execute(
+                    'SELECT init_kwargs FROM agents WHERE agent_id = ?',
+                    (agent_id,),
+                ).fetchone()
+                cur = json.loads(row['init_kwargs']) if (
+                    row is not None and row['init_kwargs']) else {}
+                cur.update(patch or {})
+                c.execute(
+                    'UPDATE agents SET init_kwargs = ?, updated_at = ? '
+                    'WHERE agent_id = ?',
+                    (json.dumps(cur), _now_iso(), agent_id),
+                )
+        self._submit_write(_write)
 
     def delete_agent(self, agent_id: str) -> None:
         """删除 agent: agents 行 + 该 session 的所有 messages.

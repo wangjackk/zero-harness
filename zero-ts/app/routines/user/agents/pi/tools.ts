@@ -70,7 +70,7 @@ export function makeIpthonTool(host: ToolHost): ToolDefinition {
       // 的图进 toolResult 的 image block, 模型可直接看到)
       const content: Array<{ type: 'text'; text: string }
         | { type: 'image'; data: string; mimeType: string }> = [
-        { type: 'text', text: String(res.for_llm ?? '') },
+        { type: 'text', text: String(res.content ?? '') },
       ]
       for (const d of (res.displays ?? []) as Array<{ mime: string; data: string }>) {
         content.push({ type: 'image', data: d.data, mimeType: d.mime })

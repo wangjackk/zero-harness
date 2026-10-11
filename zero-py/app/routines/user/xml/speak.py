@@ -17,10 +17,9 @@ from typing import Any, Dict
 from routine import Routine, RoutineSource, Modules
 from routine.logger import setup_logger
 
-from .tts import create_tts, get_player
+from app.modules import MODULE_MOUTH
 
-# 模块树常量 (kernel module tree 的 core/mouth): 占用后嘴巴互斥, 多 speak 串行.
-_MODULE_MOUTH = 'mouth'
+from .tts import create_tts, get_player
 
 _log = setup_logger('speak')
 
@@ -40,9 +39,10 @@ class Speak(Routine):
         self._tts = create_tts()
         self._player = get_player()
 
-    async def on_created(self, rid: str, kwargs: Dict[str, Any]):
-        """占用 mouth 模块: 嘴巴同时只能做一件事, 多个 speak 串行 (一个播完释放, 下一个才 start)."""
-        return Modules([_MODULE_MOUTH])
+    @classmethod
+    def modules(cls, kwargs=None) -> Modules:
+        """占用 audio_mouth 模块: 嘴巴同时只能做一件事, 多个 speak 串行 (一个播完释放, 下一个才 start)."""
+        return Modules([MODULE_MOUTH])
 
     async def on_message(self, source: RoutineSource, data: Any) -> None:
         """收 body chunk 直接喂 tts(mailbox 串行, 按发送序到达)."""

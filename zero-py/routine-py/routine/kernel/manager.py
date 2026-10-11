@@ -473,6 +473,14 @@ class Kernel:
             self._unsubscribe_rid(str(n.cmd.id))
             self._send_to(n.owner, {'event': LIFECYCLE_DESTROY,
                                     'id': str(n.cmd.id)})
+            # 主动 relay stopped 给父(对齐 unsubmit): node 即将删除, owner
+            # hub 的 destroy 回报(stopped)到达时 node 已不存在, 无法中转
+            # ---- 父侧 handle(entry await)会永久挂起. relay 须在 remove
+            # 之前(node 带 parent).
+            self._relay_to_parent(n.cmd.id, {
+                'event': LIFECYCLE_STOPPED, 'id': str(n.cmd.id),
+                'reason': ControlDoneReason.STOP.value,
+            })
             self._remove_node(n.cmd.id)
             return
 

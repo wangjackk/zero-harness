@@ -128,6 +128,7 @@ class CarTrack(MotionRoutine):
         self._align_sign = 1.0 if inp.align_deg >= 0 else -1.0
         self._t = None
         feed = asyncio.create_task(self._pose_feed())
+        await self._vision_gate(True)
         try:
             command = (f'track face-first dead {inp.dead_enter:g}/'
                        f'{inp.dead_exit:g} gain={inp.gain:g} '
@@ -136,6 +137,36 @@ class CarTrack(MotionRoutine):
                 lambda t: self._control(inp, t), inp.max_run_s, command)
         finally:
             feed.cancel()
+            await self._vision_gate(False)
+
+    # ── vision 即开即关门控 ─────────────────────────────────────────
+
+    async def _vision_gate(self, on: bool) -> None:
+        """省电门控: track 是 pose 唯一消费者, 生命周期即门.
+
+        只走 infer 即时门(<150ms, 随用随开); 相机开关是长周期决策,
+        不归 track. bus_listener req pose_enable/disable(cmd 转发+回执
+        确认+重发都在收发底座), 尽力而为不挡 track 主体 ---- 失败仅
+        告警, 无感知输入时 track 本就 _STALE_S 待命.
+        """
+        cmd = 'pose_enable' if on else 'pose_disable'
+        try:
+            rid = await self._find_bus_listener()
+            rep = await self.req(rid, cmd, {}, timeout=5.0)
+            if not (rep or {}).get('ok'):
+                _log.warning('infer gate %s unconfirmed', 'on' if on else 'off')
+        except Exception as exc:
+            _log.warning('infer gate %s failed: %r',
+                         'on' if on else 'off', exc)
+
+    async def _find_bus_listener(self) -> str:
+        """查 bus_listener 实例 rid(按 name, 经 kernel running 列表)."""
+        for r in await self.get_running_routines():
+            if str((r or {}).get('name') or '') == 'bus_listener':
+                rid = str(r.get('id') or '').strip()
+                if rid:
+                    return rid
+        raise RuntimeError('bus_listener not running')
 
     # ── pose 流 ───────────────────────────────────────────────────
 

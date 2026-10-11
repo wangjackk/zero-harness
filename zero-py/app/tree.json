@@ -1,14 +1,31 @@
 {
   "modules": {
-    "root":   {"name": "根", "children": ["figure", "core", "output", "ui", "audio"]},
-    "figure": {"name": "人形", "children": ["head", "body"]},
-    "head":   {},
-    "body":   {"children": ["leg"]},
-    "leg":    {},
-    "core":   {"children": ["mouth"]},
-    "mouth":  {},
-    "output": {},
-    "ui":     {},
-    "audio":  {}
+    "root": {
+      "name": "根",
+      "children": [
+        "ui",
+        "car"
+      ]
+    },
+    "ui": {},
+    "car": {
+      "children": [
+        "wheels",
+        "voice_modules"
+      ]
+    },
+    "wheels": {},
+    "voice_modules": {
+      "children": [
+        "audio_music",
+        "audio_sfx",
+        "audio_mouth",
+        "ear"
+      ]
+    },
+    "audio_music": {},
+    "audio_sfx": {},
+    "audio_mouth": {},
+    "ear": {}
   }
 }

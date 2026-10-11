@@ -91,10 +91,10 @@ impl RoutineInfo for PlayMusic {
         meta
     }
 
-    /// 占 `audio` 模块 → 多个 play_music 串行（对齐 Python play_music）。
-    /// 与 speak 的 `mouth` 模块互不互斥：底层 mixer 实时混音。
+    /// 占 `audio_music` 模块 → 多个 play_music 串行（对齐 Python play_music）。
+    /// 与 speak 的 `audio_mouth` 模块互不互斥：底层 mixer 实时混音。
     fn modules(_params: Option<&routine::protocol::JsonObject>) -> Vec<String> {
-        vec!["audio".to_string()]
+        vec!["audio_music".to_string()]
     }
 }
 
@@ -113,7 +113,7 @@ pub struct PlayMusicParams {
 pub struct PlayMusicResult {
     pub name: String,
     pub interrupted: bool,
-    pub for_llm: Option<String>,
+    pub content: Option<String>,
 }
 
 #[async_trait]
@@ -157,7 +157,7 @@ impl Routine for PlayMusic {
         serde_json::to_value(PlayMusicResult {
             name,
             interrupted: outcome.interrupted,
-            for_llm: None,
+            content: None,
         })
         .map(RoutineOutput::Value)
         .map_err(|e| RoutineError::Message(format!("serialize play_music result: {e}")))

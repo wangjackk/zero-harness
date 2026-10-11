@@ -112,15 +112,17 @@ class LifecycleManager:
         if parent_rid and parent_rid != '0':
             instance._set_parent_rid(parent_rid)
 
-        # instance.on_created() 用户钩子:返回声明的 modules 或 None(不占模块).
-        # await 拿返回值再发 created 回报----modules 经 created 回报回带 kernel
-        # (node.declared)+ 经 submitted 回执带给父 handle.异常不阻断:按空
-        # modules 回报,让 start 阶段的 TryAcquire 兜底.
+        # modules 声明走 cls.modules(kwargs) 类方法(无实例可达,注册期/编排器
+        # 静态冲突预测同源);on_created() 纯轻量初始化,返回非 None 即协议违规.
+        # 异常不阻断:按已算到的 modules 回报,让 start 阶段的 TryAcquire 兜底.
         mods: list = []
         try:
+            mods = [str(m) for m in cls.modules(kwargs)]
             result = await instance.on_created(rid=rid, kwargs=kwargs)
-            if result is not None and isinstance(result, list):
-                mods = [str(m) for m in result]
+            if result is not None:
+                raise TypeError(
+                    f'{name}.on_created must return None; module declaration '
+                    'belongs to the modules() classmethod')
         except Exception as exc:
             self.runtime.logger.exception(f'{name}#{rid} created failed: {exc}')
         await self.hub.send_lifecycle_created(id=rid, modules=mods)
@@ -199,15 +201,29 @@ class LifecycleManager:
     async def handle_destroy(self, msg: Dict[str, Any]) -> None:
         """lifecycle.destroy:kernel 销毁 created 态 routine(已 submit 未 start).
 
-        created instance 没 main task / 没 run() 体可停----直接 cleanup +
-        发 lifecycle.stopped 回报.用于:unsubmit / start 失败清理 / 父终止级联
-        清 created 子.
+        destroy 也是终止 ---- 走 stop hook(资源撤销的统一契约: created 态
+        实例可能在 start 前已收 body 持有资源)后 on_stopped + 回报 +
+        cleanup. 用于:unsubmit / start 失败清理 / 父终止级联清 created 子.
         """
         rid = str(msg.get('id', ''))
         instance = self.runtime.running_instances.get(rid)
         if instance is None:
             return
-        await instance.on_stopped(reason='stop')
+        instance._request_stop()
+        stop_result = None
+        try:
+            stop_result = await asyncio.wait_for(
+                instance.stop(), timeout=self.STOP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            self.runtime.logger.warning(
+                f'{instance.name}#{rid} destroy: stop() timeout',
+            )
+        except Exception as exc:
+            self.runtime.logger.exception(
+                f'{instance.name}#{rid} destroy: stop() failed: {exc}',
+            )
+        await instance.on_stopped(reason='stop', result=stop_result)
         await self._send_stopped(rid, instance=instance, reason='stop')
         self._cleanup(rid)
 

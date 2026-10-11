@@ -489,17 +489,13 @@ mod tests {
         let registry = RoutineRegistry::from_factories([Arc::new(ProbeFactory {
             events: events.clone(),
         }) as Arc<dyn crate::core::RoutineFactory>]);
-        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new(), Vec::new()));
+        let runtime = Arc::new(ServerRuntime::new(registry, Vec::new()));
         let transport = Arc::new(OutboundTransport::new(runtime.clone()));
         let lifecycle = Arc::new(LifecycleManager::new(runtime.clone(), transport.clone()));
         let router = Arc::new(BusinessEventRouter::new(
             runtime.clone(),
             transport.clone(),
             lifecycle.clone(),
-            Arc::new(crate::hub::ShellReqManager::new(
-                runtime.clone(),
-                transport.clone(),
-            )),
         ));
         let (tx, rx) = mpsc::unbounded_channel();
         runtime

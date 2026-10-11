@@ -143,8 +143,8 @@ export class RoutineHub {
   }
 
   /** created 回报给 kernel:kernel 等 this 回报后才发 routine.submitted 给父,
-   * 所以父 submit 拿到 id 时 instance 一定已 created.带 modules(onCreated
-   * 钩子返回值)----kernel 存进 node.declared(start 的 tryAcquire 用)+ 经
+   * 所以父 submit 拿到 id 时 instance 一定已 created.带 modules(modules
+   * 静态方法返回值)----kernel 存进 node.declared(start 的 tryAcquire 用)+ 经
    * submitted 回执带给父 handle. */
   async sendLifecycleCreated(id: string, modules: string[] | null = null): Promise<void> {
     const payload: Msg = { event: LIFECYCLE_CREATED, id }

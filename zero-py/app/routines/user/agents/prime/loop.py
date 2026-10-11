@@ -321,7 +321,7 @@ class ToolExecutor:
 
     @staticmethod
     def _format_result(result: Any) -> str:
-        """格式化工具结果为 LLM 可读字符串 (for_llm 约定)."""
+        """格式化工具结果为 LLM 可读字符串 (content 约定)."""
         if result is None:
             return ''
         if isinstance(result, BaseException):
@@ -330,8 +330,8 @@ class ToolExecutor:
         if isinstance(result, str):
             return result
         if isinstance(result, dict):
-            if 'for_llm' in result:
-                fl = result['for_llm']
+            if 'content' in result:
+                fl = result['content']
                 if fl is None:
                     return ''
                 if isinstance(fl, str):

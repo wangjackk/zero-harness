@@ -138,6 +138,27 @@ def build_app(inst) -> FastAPI:
         except Exception as exc:
             return _Json({'ok': False, 'error': str(exc), 'skills': [], 'prime_skills': []})
 
+    @app.get('/tree')
+    async def _tree():
+        """模块树静态定义 (转发 tree/get routine), 前端模块树编辑器读取."""
+        try:
+            return _Json(await inst.call('tree/get'))
+        except Exception as exc:
+            logger.warning('[http] /tree error: %s', exc)
+            return _Json({'ok': False, 'error': str(exc), 'modules': {}})
+
+    @app.post('/tree/apply')
+    async def _tree_apply(body: Dict[str, Any] = Body(default_factory=dict)):
+        """模块树编辑事务 (转发 tree/apply routine): kernel + tree.json 即时生效.
+
+        body: {op: add|remove|reorder|rename, ...}.
+        """
+        try:
+            return _Json(await inst.call('tree/apply', body))
+        except Exception as exc:
+            logger.warning('[http] /tree/apply error: %s', exc)
+            return _Json({'ok': False, 'error': str(exc)})
+
     async def _execute_routine(name: str, kwargs: Dict[str, Any],
                                 agent_id: str) -> _Json:
         """查 agent rid → req(rid, 'run', {target, kwargs}) 执行 routine.

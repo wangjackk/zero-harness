@@ -78,14 +78,14 @@ def _format_notebook_output(response: dict[str, Any]) -> dict[str, Any]:
     """把 kernel 响应格式化为 LLM-friendly 文本.
 
     Returns:
-        {'for_llm': str, 'displays': [...]}
-        - for_llm: 纯文本 (stdout/stderr/result/error), 给 LLM 看.
+        {'content': str, 'displays': [...]}
+        - content: 纯文本 (stdout/stderr/result/error), 给 LLM 看.
         - displays: display_data 捕获的图像附件 [{mime, data}], 由 agent
           引擎拼进 tool result 的 image block (模型视觉输入).
     """
     error = str(response.get('error') or '')
     if error:
-        return {'for_llm': error.rstrip(), 'displays': response.get('displays') or []}
+        return {'content': error.rstrip(), 'displays': response.get('displays') or []}
 
     parts: list[str] = []
     stdout = str(response.get('stdout') or '')
@@ -100,7 +100,7 @@ def _format_notebook_output(response: dict[str, Any]) -> dict[str, Any]:
         parts.append(str(result))
 
     return {
-        'for_llm': '\n'.join(p for p in parts if p),
+        'content': '\n'.join(p for p in parts if p),
         'displays': response.get('displays') or [],
     }
 
@@ -123,7 +123,7 @@ class _Display(BaseModel):
 
 
 class IPythonOutput(BaseModel):
-    for_llm: str = Field(
+    content: str = Field(
         description='Notebook-like cell output: stdout/stderr followed by the final expression repr, or traceback on error.',
     )
     displays: list[_Display] = Field(

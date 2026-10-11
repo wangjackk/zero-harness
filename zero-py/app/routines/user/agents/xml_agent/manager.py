@@ -52,6 +52,7 @@ _MANIFEST: Dict[str, Any] = {
     'can_resume': True,
     'uses_model': True,
     'uses_routines': True,
+    'uses_aliases': True,
     'routines': {
         'create': 'xml/agent/create',
         'list': 'xml/agent/list',
@@ -80,6 +81,20 @@ def _clean_protocol(value: Any) -> Optional[str]:
     """protocol 入参清洗: 空串/空白 -> None (未指定 = 矩阵推导)."""
     v = str(value or '').strip()
     return v or None
+
+
+# spawn 可选配置键: create 时快照持久化 (agents 表 init_kwargs 列),
+# resume 时合并恢复 ---- 重启不丢配置 (prompt_routines 白名单 / 显式
+# routine 别名等). 运行时漂移经 memory.merge_init_kwargs 回写同一列.
+_SPAWN_OPTIONAL_KEYS = ('ov_config', 'reasoning', 'condense_config',
+                        'preload_skills', 'level1_skills', 'prompt_routines',
+                        'routine_aliases')
+
+
+def _snapshot_init_kwargs(data: dict) -> dict:
+    """spawn 可选配置快照: data 里非 None 的可选字段子集 (持久化用)."""
+    return {k: v for k, v in (data or {}).items()
+            if k in _SPAWN_OPTIONAL_KEYS and v is not None}
 
 
 async def _find_manager_rid(routine: 'Routine') -> Optional[str]:
@@ -142,6 +157,10 @@ class XmlAgents(Routine):
         # ok idempotently instead of hitting handle's "another start/stop in
         # flight" RuntimeError.
         self._stopping: set[str] = set()
+        # wake_track 直持 handle: 唤醒即 stop 旧的重新武装(窗口重新计时
+        # + 实例唯一); Lock 串行并发 wake 帧的 re-arm.
+        self._wake_track = None
+        self._wake_track_lock = asyncio.Lock()
         self._mem = get_memory()
 
     async def run(self, kwargs: Dict[str, Any]) -> None:
@@ -223,6 +242,14 @@ class XmlAgents(Routine):
                 except Exception as exc:
                     _log.warning('stop child %s on manager stop: %r', agent_id, exc)
         self._agents.clear()
+        # wake_track 也是本 manager submit 的 child, 一并收口
+        handle = self._wake_track
+        self._wake_track = None
+        if handle is not None and not handle.is_done():
+            try:
+                await handle.stop()
+            except Exception as exc:
+                _log.warning('stop wake_track on manager stop: %r', exc)
         self._stop.set()
 
     @subscribe('voice')
@@ -247,6 +274,11 @@ class XmlAgents(Routine):
             return
         agent_id, handle = target
         if kind == 'wake':
+            # 唤醒即具身响应: 打断在途对话 + 武装 wake_track(声源定向粗调 +
+            # 视觉精调). fire-and-forget ---- 车离线等失败不阻塞语音链.
+            # 带上本次唤醒角: arm 建链异步已错过该广播, 由 wake_track
+            # 首轮立即执行(wakes=1 起算), 无需等下一次唤醒.
+            asyncio.create_task(self._arm_wake_track(data.get('cal_angle')))
             try:
                 await self.req(handle.id, 'interrupt', {})
             except Exception as exc:
@@ -260,6 +292,27 @@ class XmlAgents(Routine):
             })
         except Exception as exc:
             _log.warning('route voice to main %s failed: %r', agent_id, exc)
+
+    async def _arm_wake_track(self, cal_angle=None) -> None:
+        """唤醒即重新武装 car/wake_track: stop 旧实例(打断在跑 align/
+        track, finally 零速)再带 first_cal_angle submit 新实例 ---- 每次
+        唤醒窗口重新计时, 实例恒唯一不堆积. 车离线等 SubmitError 静默
+        降级 ---- 语音链不受影响. Lock 串行化并发 wake 帧的 re-arm."""
+        async with self._wake_track_lock:
+            handle = self._wake_track
+            self._wake_track = None
+            if handle is not None and not handle.is_done():
+                try:
+                    await handle.stop()
+                except Exception as exc:
+                    _log.warning('stop old wake_track: %r', exc)
+            try:
+                handle = await self.submit(
+                    'car/wake_track', {'first_cal_angle': cal_angle})
+                await handle.start()
+                self._wake_track = handle
+            except Exception as exc:
+                _log.info('wake_track arm failed (car offline?): %r', exc)
 
     def _main_live(self) -> Optional[tuple]:
         """(agent_id, handle) if main agent is live, else None.
@@ -290,6 +343,10 @@ class XmlAgents(Routine):
         old = self._main_id
         self._main_id = agent_id
         _log.info('main agent: %s -> %s', old, agent_id)
+        # focus 变更广播: 订阅方(如 car/gaze 的 main 过滤)免逐次 req 查询,
+        # 本地缓存对照. ns 'xml_agent'(实现方域, 同 agent_status).
+        await self.publish('agent_focus', {'agent_id': agent_id},
+                           namespace='xml_agent')
         return {'ok': True, 'agent_id': agent_id}
 
     @request('get_main')
@@ -330,7 +387,8 @@ class XmlAgents(Routine):
             try:
                 self._mem.register_agent(
                     agent_id, session_id=session_id, model=model,
-                    protocol=protocol)
+                    protocol=protocol,
+                    init_kwargs=_snapshot_init_kwargs(data))
             except Exception as exc:
                 _log.warning('persist agent %s failed: %r', agent_id, exc)
         return result
@@ -355,6 +413,11 @@ class XmlAgents(Routine):
         model = data.get('model') or agent_rec.get('model') or _DEFAULT_MODEL
         protocol = (_clean_protocol(data.get('protocol'))
                     or agent_rec.get('protocol') or None)
+        # spawn 可选配置同优先级链: 创建时的 init_kwargs 快照打底,
+        # 本次显式传参(非 None)覆盖 ---- 重启/resume 不丢白名单等配置.
+        saved = agent_rec.get('init_kwargs') or {}
+        data = {**saved, **{k: v for k, v in (data or {}).items()
+                            if v is not None}}
         return await self._spawn_child(
             agent_id, data, is_resume=True, session_id=session_id,
             model=model, protocol=protocol)
@@ -369,22 +432,17 @@ class XmlAgents(Routine):
         register_agent (由调用方各自处理). model / protocol 由调用方解析完毕
         传入 (create/resume 各有自己的优先级链).
 
-        ov_config 未传为 None -> agent 只用本地 sqlite memory;
-        其他可选配置 (reasoning / condense_config / preload_skills /
-        level1_skills / prompt_routines) data 里没传的字段不写入 child_kwargs,
-        XmlAgent.on_started 用 .get() 取时得 None -> 走默认 (prompt_routines
-        用类默认白名单, 其余禁用).
+        可选配置 (_SPAWN_OPTIONAL_KEYS): data 里没传的字段不写入 child_kwargs,
+        XmlAgent.on_started 用 .get() 取时得 None -> 走默认 (ov_config=None
+        只用本地 sqlite memory, prompt_routines=None 无工具表, 其余禁用).
         """
         child_kwargs: Dict[str, Any] = {
             'agent_id': agent_id,
             'session_id': session_id,
             'model': model,
             'protocol': protocol,
-            'ov_config': data.get('ov_config'),
         }
-        for opt_key in ('reasoning',
-                        'condense_config', 'preload_skills', 'level1_skills',
-                        'prompt_routines'):
+        for opt_key in _SPAWN_OPTIONAL_KEYS:
             if data.get(opt_key) is not None:
                 child_kwargs[opt_key] = data[opt_key]
         try:
@@ -410,9 +468,15 @@ class XmlAgents(Routine):
             'protocol': protocol,
             'reasoning_effort': reasoning_effort,
         }
-        # 无 focus 时首个拉起的 agent 默认接管语音; 之后仍需 set_main 显式切换
-        if self._main_id is None:
+        # 无 focus 时首个拉起的 agent 默认接管语音; 之后仍需 set_main 显式切换.
+        # _main_live 而非 _main_id 判空: 死 main(热重载/stop 残留 id)视同无
+        # main, 顺带清 focus, 否则新 agent 永远接不了管.
+        if self._main_live() is None:
             self._main_id = agent_id
+            # 默认接管同样是 focus 变更(None -> agent): 广播对齐 set_main,
+            # 否则冷启竞态的订阅方(car/gaze 的 main 缓存)永锁在 None.
+            await self.publish('agent_focus', {'agent_id': agent_id},
+                               namespace='xml_agent')
         action = 'resumed' if is_resume else 'created'
         _log.info(
             '%s xml agent: agent_id=%s routine_id=%s model=%s protocol=%s main=%s',
@@ -490,6 +554,20 @@ class XmlAgents(Routine):
                 finally:
                     self._stopping.discard(agent_id)
             self._agents.pop(agent_id, None)
+            # 停的是 main: 清 focus 后若仅剩一个 live agent 则自动补位 ----
+            # 前端会话切换是"先建新后停旧", 建新时旧 main 未死不接管, 停旧后
+            # 无人补位, voice 全 drop. 多于一个 live 不猜, 仍需 set_main.
+            if self._main_id == agent_id:
+                self._main_id = None
+                survivors = [aid for aid, inf in self._agents.items()
+                             if inf.get('handle') is not None
+                             and not inf['handle'].is_done()]
+                if len(survivors) == 1:
+                    self._main_id = survivors[0]
+                    _log.info('main agent: auto-fallback -> %s', survivors[0])
+                    await self.publish(
+                        'agent_focus', {'agent_id': survivors[0]},
+                        namespace='xml_agent')
         else:
             # not live here: idempotent ok if it's a known historical agent,
             # else signal not-found so bridge can try the other manager.

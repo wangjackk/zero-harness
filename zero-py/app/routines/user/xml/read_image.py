@@ -1,6 +1,6 @@
 """ReadImage ---- 读取本地图片文件, 图片引用随 result 返回, 由调用方 agent 合并.
 
-返回 ``{'for_llm': 元数据文本, 'images': [路径]}``: agent 侧特判 read_image 的
+返回 ``{'content': 元数据文本, 'images': [路径]}``: agent 侧特判 read_image 的
 result, 把图片与 feedback 文本合并成一条多模态消息进 LLM 上下文 -- 消息位置
 天然在 assistant 之后, 增量窗口内. 底层模型不支持读图时 agent 组装侧剥掉图,
 只留元数据文本.
@@ -41,7 +41,7 @@ class ReadImageInput(BaseModel):
 
 
 class ReadImageOutput(BaseModel):
-    for_llm: str = Field(description='Image metadata text for the LLM (path, type, dimensions, bytes)')
+    content: str = Field(description='Image metadata text for the LLM (path, type, dimensions, bytes)')
     images: list[str] = Field(
         default_factory=list,
         description='Image file path list; the caller agent merges them into the feedback message.',
@@ -143,8 +143,8 @@ class ReadImage(Routine):
 
         # result 携带图片引用 (agent 侧特判 read_image: 随 feedback 合并成一条
         # 多模态消息进 LLM 上下文; 模型不支持读图时 agent 组装侧剥掉).
-        for_llm = (
+        content = (
             f'Read image: {display} ({media_type}{dim_text}, {size} bytes). '
             'The image is attached to this feedback message.'
         )
-        return {'for_llm': for_llm, 'images': [str(Path(path))]}
+        return {'content': content, 'images': [str(Path(path))]}

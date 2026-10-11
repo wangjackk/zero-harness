@@ -40,7 +40,7 @@ export type StreamHandler = (source: RoutineSource, data: any) => AsyncGenerator
 /** @subscribe handler 签名. */
 export type SubscribeHandler = (source: RoutineSource, data: any) => Promise<void>
 
-export type RoutineClass<T extends Routine = Routine> = new () => T
+export type RoutineClass<T extends Routine = Routine> = (new () => T) & typeof Routine
 
 /** 装饰器标记(z2 是多个独立属性;ts 侧合并为单 symbol 单对象,每个装饰器
  * 闭包只做一次赋值——bun canary minifier 会把连续两条同对象赋值错误
@@ -273,9 +273,17 @@ export abstract class Routine {
     }
   }
 
-  /** on_created 钩子:routine 被创建时调一次(早于 start).返回声明占用的
-   * modules(string[])或 null(不占).只做轻量初始化 + 算 modules. */
-  async onCreated(rid: string, kwargs: Payload): Promise<Modules> { return null }
+  /** 声明占用的模块(静态方法,无实例可调).
+   * modules 是"类型 + 入参"的纯函数,与实例状态无关----
+   * 静态 routine 忽略 kwargs 返回常量;动态 routine 按 kwargs 算
+   * (kwargs=null 问静态默认,注册期/清单用).返回 null(默认)或空数组表示不占.
+   * 单一真理源:created 回报经本方法取值回带 kernel(node.declared)
+   * + 经 submitted 回执带给父(handle.modules,编排器静态冲突预测用). */
+  static modules(kwargs: Payload | null = null): Modules { return null }
+
+  /** on_created 钩子:routine 被创建时调一次(早于 start),纯轻量初始化.
+   * 模块声明走 modules() 静态方法,本钩子不返回值(返回非空是协议违规,立即报错). */
+  async onCreated(rid: string, kwargs: Payload): Promise<void> { }
 
   /** started 钩子:lifecycle.started 已回报,run() 之前调. */
   async onStarted(): Promise<void> {}

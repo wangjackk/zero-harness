@@ -25,7 +25,7 @@ class CheckRoutineNameOutput(BaseModel):
         None,
         description='占用者信息 {name, hub_id, is_passive}; free=True 时为 null',
     )
-    for_llm: str = Field(default='', description='一句话结论, 直接喂给 LLM')
+    content: str = Field(default='', description='一句话结论, 直接喂给 LLM')
 
 
 class CheckRoutineName(Routine):
@@ -46,14 +46,14 @@ class CheckRoutineName(Routine):
             routines = await self.get_routines()
         except NotImplementedError:
             return {'free': True, 'conflict': None,
-                    'for_llm': 'get_routines not implemented, 无法查重, 视为可用'}
+                    'content': 'get_routines not implemented, 无法查重, 视为可用'}
         except Exception as exc:
             return {'free': False, 'conflict': None,
-                    'for_llm': f'查询失败: {type(exc).__name__}: {exc}'}
+                    'content': f'查询失败: {type(exc).__name__}: {exc}'}
 
         for r in routines:
             if r.get('name') == inp.name:
                 return {'free': False, 'conflict': r,
-                        'for_llm': f"'{inp.name}' 已被占用 (hub: "
+                        'content': f"'{inp.name}' 已被占用 (hub: "
                                    f"{r.get('hub_id', '?')}), 换个名字"}
-        return {'free': True, 'conflict': None, 'for_llm': f"'{inp.name}' 可用"}
+        return {'free': True, 'conflict': None, 'content': f"'{inp.name}' 可用"}

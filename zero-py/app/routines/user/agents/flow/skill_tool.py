@@ -26,7 +26,7 @@ class SkillInput(BaseModel):
 
 
 class SkillOutput(BaseModel):
-    for_llm: str = Field(description='Skill content, resource base guidance, '
+    content: str = Field(description='Skill content, resource base guidance, '
                                      'or an error message.')
 
 
@@ -67,16 +67,16 @@ class SkillTool(Routine):
         except Exception as exc:
             _log.warning('skill load failed: %r', exc)
             return SkillOutput(
-                for_llm=f'skill registry request failed: {exc}'
+                content=f'skill registry request failed: {exc}'
             ).model_dump()
         if result is None:
             return SkillOutput(
-                for_llm='skill registry is not running'
+                content='skill registry is not running'
             ).model_dump()
         if not result.get('ok'):
             err = str(result.get('error') or 'skill load failed')
-            return SkillOutput(for_llm=err).model_dump()
+            return SkillOutput(content=err).model_dump()
 
-        return SkillOutput(for_llm=render_skill_content(
+        return SkillOutput(content=render_skill_content(
             str(result['name']), str(result['resource_base']),
             str(result['content']))).model_dump()

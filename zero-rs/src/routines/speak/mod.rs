@@ -39,8 +39,8 @@ use serde_json::json;
 pub use seed::SeedConfig;
 pub use tts::{TtsHandle, TtsService};
 
-/// 模块树常量 (kernel module tree 的 core/mouth): 占用后嘴巴互斥, 多 speak 串行.
-pub const SPEAK_MODULE: &str = "mouth";
+/// 模块树常量 (kernel module tree 的 voice_modules/audio_mouth): 占用后嘴巴互斥, 多 speak 串行.
+pub const SPEAK_MODULE: &str = "audio_mouth";
 
 /// TTS PCM 的采样率/声道 (Doubao Seed TTS 输出 24k/mono).
 pub(crate) const SAMPLE_RATE: u32 = 24_000;

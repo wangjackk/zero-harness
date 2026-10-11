@@ -70,7 +70,7 @@ def do_repo_pull(
         dst_ver = read_skill_version(dst / 'SKILL.md') if (dst / 'SKILL.md').is_file() else None
         if src_ver is not None and src_ver == dst_ver:
             return {
-                'for_llm': f'Skill "{name}" already at version {src_ver} '
+                'content': f'Skill "{name}" already at version {src_ver} '
                            f'(use force=True to overwrite local edits).',
                 'name': name,
                 'path': str(dst),
@@ -82,7 +82,7 @@ def do_repo_pull(
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=SKILL_COPY_IGNORE)
     return {
-        'for_llm': f'Skill "{name}" pulled from the library into your workspace.',
+        'content': f'Skill "{name}" pulled from the library into your workspace.',
         'name': name,
         'path': str(dst),
         'version': src_ver,

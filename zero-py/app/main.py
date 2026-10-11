@@ -20,8 +20,9 @@ import warnings
 from pathlib import Path
 
 # zmq 在 Proactor 循环上经 selector 线程兜底工作(仅提示可换 policy)----
-# 但本应用依赖 asyncio.create_subprocess(BashTool/car/start 等, Windows
-# 上仅 Proactor 支持), 不能换 SelectorEventLoopPolicy, 过滤此噪音.
+# 但本应用依赖 asyncio.create_subprocess(BashTool/ros_client 的 ssh
+# 探测等, Windows 上仅 Proactor 支持), 不能换 SelectorEventLoopPolicy,
+# 过滤此噪音.
 warnings.filterwarnings(
     'ignore', message='Proactor event loop does not implement add_reader',
     category=RuntimeWarning)

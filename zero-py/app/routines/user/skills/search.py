@@ -77,7 +77,7 @@ def do_search(query: str, limit: int, cache_dir: str | None) -> Dict[str, Any]:
                 'source': 'hermes-index',
                 'cached': cached,
                 'count': len(top),
-                'for_llm': _format_for_llm(query, top, 'hermes-index', cached),
+                'content': _format_content(query, top, 'hermes-index', cached),
             }
     except Exception:
         pass
@@ -97,7 +97,7 @@ def do_search(query: str, limit: int, cache_dir: str | None) -> Dict[str, Any]:
             'source': 'skills-sh',
             'cached': False,
             'count': 0,
-            'for_llm': f'No skills found matching {query!r}. Try different keywords.',
+            'content': f'No skills found matching {query!r}. Try different keywords.',
         }
 
     top = results[:limit]
@@ -107,7 +107,7 @@ def do_search(query: str, limit: int, cache_dir: str | None) -> Dict[str, Any]:
         'source': 'skills-sh',
         'cached': False,
         'count': len(top),
-        'for_llm': _format_for_llm(query, top, 'skills-sh', False),
+        'content': _format_content(query, top, 'skills-sh', False),
     }
 
 
@@ -132,7 +132,7 @@ class SkillsSearch(Routine):
         return await asyncio.to_thread(do_search, inp.query, inp.limit, cache_dir)
 
 
-def _format_for_llm(query: str, results: List[Dict[str, str]], source: str, cached: bool) -> str:
+def _format_content(query: str, results: List[Dict[str, str]], source: str, cached: bool) -> str:
     """生成给 LLM 看的文本摘要, 必须包含 name + install_url (否则 LLM 无法决策)."""
     lines = [f'Found {len(results)} skill(s) matching {query!r} ({source}, cache={"hit" if cached else "miss"}):']
     for i, r in enumerate(results, 1):

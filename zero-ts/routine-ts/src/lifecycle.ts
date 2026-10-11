@@ -110,14 +110,19 @@ export class LifecycleManager {
     const { instance } = await this.instantiate(rid, name, cls, kwargs)
     if (parentRid && parentRid !== '0') instance._setParentRid(parentRid)
 
-    // instance.onCreated() 用户钩子:返回声明的 modules 或 null(不占模块).
-    // await 拿返回值再发 created 回报----modules 经 created 回报回带 kernel
-    // (node.declared)+ 经 submitted 回执带给父 handle.异常不阻断:按空
-    // modules 回报,让 start 阶段的 tryAcquire 兜底.
+    // modules 声明走 cls.modules(kwargs) 静态方法(无实例可达,注册期/编排器
+    // 静态冲突预测同源);onCreated() 纯轻量初始化,返回非空即协议违规.
+    // 异常不阻断:按已算到的 modules 回报,让 start 阶段的 tryAcquire 兜底.
     let mods: string[] = []
     try {
+      const declared = cls.modules(kwargs)
+      if (Array.isArray(declared)) mods = declared.map(m => String(m))
       const result = await instance.onCreated(rid, kwargs)
-      if (Array.isArray(result)) mods = result.map(m => String(m))
+      if (result !== undefined && result !== null) {
+        throw new TypeError(
+          `${name}.onCreated must return void; module declaration ` +
+          'belongs to the modules() static method')
+      }
     } catch (e: any) {
       this.runtime.logger.error(`${name}#${rid} created failed: ${e?.stack ?? e}`)
     }
@@ -193,17 +198,27 @@ export class LifecycleManager {
     }
   }
 
-  /** lifecycle.destroy:kernel 销毁 created 态 routine(已 submit 未 start).
-   *
-   * created instance 没 main task / 没 run() 体可停----直接 cleanup +
-   * 发 lifecycle.stopped 回报.用于:unsubmit / start 失败清理 / 父终止级联
-   * 清 created 子. */
+  /** lifecycle.destroy: kernel 销毁 created 态 routine(已 submit 未 start).
+   * destroy 也是终止 ---- 走 stop hook(资源撤销的统一契约: created 态实例
+   * 可能在 start 前已收 body 持有资源)后 onStopped + 回报 + cleanup.
+   * 用于:unsubmit / start 失败清理 / 父终止级联清 created 子. */
   async handleDestroy(msg: Msg): Promise<void> {
     const rid = String(msg.id ?? '')
     const instance = this.runtime.runningInstances.get(rid)
     if (!instance) return
-    await instance.onStopped('stop')
-    await this.sendStopped(rid, { instance, reason: 'stop' })
+    instance._requestStop()
+    let stopResult: any = undefined
+    try {
+      stopResult = await withTimeout(instance.stop(), LifecycleManager.STOP_TIMEOUT * 1000, 'stop()')
+    } catch (e: any) {
+      if (e instanceof TimeoutErr) {
+        this.runtime.logger.warning(`${instance.name}#${rid} destroy: stop() timeout`)
+      } else {
+        this.runtime.logger.error(`${instance.name}#${rid} destroy: stop() failed: ${e?.stack ?? e}`)
+      }
+    }
+    await instance.onStopped('stop', stopResult)
+    await this.sendStopped(rid, { instance, reason: 'stop', result: stopResult })
     this.cleanup(rid)
   }
 

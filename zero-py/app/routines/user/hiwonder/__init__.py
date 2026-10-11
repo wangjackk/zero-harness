@@ -13,11 +13,12 @@ ROS 通信分两层:
 坐标系 REP 103: y 正 = 左移, angular.z 正 = 左转(turn 负值右转).
 """
 from app.routines.user.hiwonder.car import (
-    CarMap, CarMove, CarNavigate, CarNavigateManage, CarShake, CarStart, CarStatus,
+    CarGaze, CarMap, CarMove, CarNavigate, CarNavigateManage, CarShake, CarStatus,
     CarSteer, CarStop, CarTrack, CarTurn, CarWakeTrack, CarWhere)
 from app.routines.user.hiwonder.ros_bridge import RosBridge
+from app.routines.user.hiwonder.snap import CamSnap
 
-__all__ = ['CarMap', 'CarMove', 'CarNavigate', 'CarNavigateManage', 'CarShake',
-           'CarStart', 'CarStatus', 'CarSteer', 'CarStop', 'CarTrack', 'CarTurn',
-           'CarWakeTrack', 'CarWhere', 'RosBridge']
+__all__ = ['CarGaze', 'CarMap', 'CarMove', 'CarNavigate', 'CarNavigateManage', 'CarShake',
+           'CarStatus', 'CarSteer', 'CarStop', 'CarTrack', 'CarTurn',
+           'CarWakeTrack', 'CarWhere', 'CamSnap', 'RosBridge']
 

@@ -92,6 +92,16 @@
         title="模型管理"
         @click="showModels = !showModels"
       ><Icon :comp="Settings" :size="15" /></NButton>
+
+      <!-- 模块树编辑 -->
+      <NButton
+        size="small"
+        :type="showModuleTree ? 'primary' : 'default'"
+        :ghost="showModuleTree"
+        quaternary
+        title="模块树"
+        @click="showModuleTree = !showModuleTree"
+      ><Icon :comp="Components" :size="15" /></NButton>
     </header>
 
     <Teleport to="body">
@@ -120,6 +130,13 @@
     <Teleport to="body">
       <div v-show="showModels" class="mp-overlay" @click.self="showModels = false">
         <ModelsPanel class="mp-float" :http-base="httpBase" :active="showModels" />
+      </div>
+    </Teleport>
+
+    <!-- 模块树编辑浮窗 -->
+    <Teleport to="body">
+      <div v-show="showModuleTree" class="mp-overlay" @click.self="showModuleTree = false">
+        <ModuleTreeEditor class="mp-float" :http-base="httpBase" :active="showModuleTree" />
       </div>
     </Teleport>
 
@@ -286,9 +303,10 @@ import SelectorDialog from './components/SelectorDialog.vue'
 import TableDialog from './components/TableDialog.vue'
 import DateDialog from './components/DateDialog.vue'
 import Icon from './components/Icon.vue'
-import { Notes, Bolt, Sitemap, Settings, CirclePlus, Loader, X, Trash } from '@vicons/tabler'
+import { Notes, Bolt, Sitemap, Settings, CirclePlus, Loader, X, Trash, Components } from '@vicons/tabler'
 import AgentCreateForm from './components/AgentCreateForm.vue'
 import ModelsPanel from './components/ModelsPanel.vue'
+import ModuleTreeEditor from './components/ModuleTreeEditor.vue'
 import type { RoutineInfo } from './components/RoutineRunner.vue'
 import { useWS } from './composables/useWS'
 import { useUIRequests } from './composables/useUIRequests'
@@ -684,6 +702,8 @@ const finalizedMsgIds = new Set<string>()
 const showRunner = ref(false)
 // 模型管理浮窗 (provider/model 配置增删改, models/* routine 通道)
 const showModels = ref(false)
+// 模块树编辑浮窗 (tree.json 静态定义读写)
+const showModuleTree = ref(false)
 const agentUsage = reactive<Record<string, UsageInfo>>({})
 // prompt 面板: 可折叠右侧栏, 按 agent 分 epoch + messages (sys_prompt 事件填充)
 const showPrompt = ref(false)
@@ -1276,6 +1296,7 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     showRunner.value = false
     showModels.value = false
+    showModuleTree.value = false
     if (viewMode.value === 'create') viewMode.value = 'chat'
   }
 }

@@ -32,12 +32,11 @@ from .protocol import (
 
 
 class Modules(list):
-    """routine 声明占用的模块列表(``on_created()`` 返回值).
+    """routine 声明占用的模块列表(``modules()`` 类方法返回值).
 
-    ``Modules(['body'])`` 声明占用;``on_created()`` 不返回 / 返回 ``None`` 表示
-    不占模块(框架当空).单一真理源:经 lifecycle.created 回报回带 kernel
-    (node.declared,Start 的 TryAcquire 用)+ 经 submitted 回执带给父
-    (handle.modules,编排器据此算冲突).
+    ``Modules(['body'])`` 声明占用;默认不占(空).单一真理源:经
+    lifecycle.created 回报回带 kernel(node.declared,Start 的 TryAcquire 用)
+    + 经 submitted 回执带给父(handle.modules,编排器据此算冲突).
     """
 
     def __init__(self, modules: Optional[Iterable[str]] = None):
@@ -292,13 +291,25 @@ class Routine(ABC):
             self.ctx._runtime.register_subscriber(rid, namespace, topic, handler)
             await self.ctx.subscribe_topic(topic, namespace=namespace)
 
-    async def on_created(self, rid: str,
-                         kwargs: Dict[str, Any]) -> Optional[Modules]:
-        """on_created 钩子:routine 被创建时调一次(早于 start).
+    @classmethod
+    def modules(cls, kwargs: Optional[Dict[str, Any]] = None) -> Modules:
+        """声明占用的模块(类方法,无实例可调).
 
-        返回值是本 routine 声明占用的 modules----``Modules([...])`` 声明占用;
-        返回 ``None`` 表示不占模块.created 回报会 await 本钩子完成才发----
-        只做轻量初始化 + 算 modules,慢逻辑放 run().
+        modules 是"类型 + 入参"的纯函数,与实例状态无关----
+        静态 routine 忽略 kwargs 返回常量;动态 routine 按 kwargs 算
+        (kwargs=None 问静态默认,注册期/清单用).默认不占.
+        单一真理源:created 回报经本方法取值回带 kernel(node.declared)
+        + 经 submitted 回执带给父(handle.modules,编排器静态冲突预测用).
+        """
+        return Modules()
+
+    async def on_created(self, rid: str,
+                         kwargs: Dict[str, Any]) -> None:
+        """on_created 钩子:routine 被创建时调一次(早于 start),纯轻量初始化.
+
+        模块声明走 ``modules()`` 类方法,本钩子不返回值(返回非 None 是
+        协议违规,立即报错).created 回报会 await 本钩子完成才发----
+        慢逻辑放 run().
         """
         return None
 

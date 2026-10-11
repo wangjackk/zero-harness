@@ -87,12 +87,12 @@ class SessionWriter:
     ) -> None:
         """记录工具输出.
 
-        output     - for_llm 过滤后的字符串 (喂给 LLM 的, 对齐旧格式)
+        output     - content 过滤后的字符串 (喂给 LLM 的, 对齐旧格式)
         raw_result - 原始工具返回值 (dict/str/None), 供前端展示完整结果
                      (含 cwd/exit_code 等元数据). None 时不存.
 
         全量存储, 不在写入层截断. DB 是 source of truth, 截断应由消费方
-        (给 LLM 的 for_llm 过滤 / 压缩 agent 的 token 预算控制) 按需做.
+        (给 LLM 的 content 过滤 / 压缩 agent 的 token 预算控制) 按需做.
         """
         entry: dict[str, Any] = {
             'type': 'function_call_output',

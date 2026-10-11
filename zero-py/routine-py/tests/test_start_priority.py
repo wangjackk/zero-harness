@@ -83,9 +83,12 @@ class _Hold(Routine):
 
     _stop: asyncio.Event
 
+    @classmethod
+    def modules(cls, kwargs=None) -> Modules:
+        return Modules(['body'])
+
     async def on_created(self, rid: str, kwargs):
         self._stop = asyncio.Event()
-        return Modules(['body'])
 
     async def run(self, kwargs):
         await self._stop.wait()
