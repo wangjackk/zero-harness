@@ -1,0 +1,150 @@
+# LLM 配置模板: 复制为 models.yaml 后填入真实 key (models.yaml 已 gitignore).
+#
+# 真实 key 不落 git, 两条路:
+#   1. 环境变量引用 (推荐): api_key: $DEEPSEEK_API_KEY ---- 支持在
+#      app/.env (gitignored) 里定义, models_store 启动时加载;
+#   2. 直接明文: 写在本地 models.yaml, 永不提交.
+#
+# models 下分 provider, 每个 provider 下直接分 model.
+# model 键 = 实际 API model id (厂商给的, 走通访问的唯一必需参数);
+# 引用格式 "<provider>/<model_id>", 如 "seed/glm-5.3".
+#
+# provider 级字段:
+#   api_key / base_url / apis
+#   apis: 协议矩阵 {协议: {能力声明}} ---- (provider, 协议) 的客观事实.
+#     空矩阵/无矩阵 = 仅隐式声明 openai-responses. 协议选择完全归 agent 层
+#     (策略: 显式 protocol > 矩阵推导 openai-responses > openai-completions
+#     > anthropic-messages). 当前能力字段:
+#     - base_url: 协议级端点覆盖 (协议特例); 缺省沿用 provider 级 base_url,
+#       由 SDK 拼协议路径 (/responses, /chat/completions, /v1/messages).
+#     - previous_response_id: Responses API 服务端续聊缓存是否真实生效
+#       (openai-responses, 默认 true). deepseek 实测静默忽略: 接受参数
+#       不报错但无状态, 增量链恒断, LLM 每轮只见孤立消息 (工具 feedback
+#       后答非所问/开场白式回复). 声明 false 的 provider 走该协议时
+#       全量发历史.
+# model 级字段 (键 = 实际 API id):
+#   name:        显示别名 (可选, 纯前端展示; 键太长时的友好名, 不作索引)
+#   max_context: 上下文窗口 (tokens)
+#   max_tokens:  单次输出上限 (tokens)
+#   image:       支持图片输入 (可选 bool, 缺省 false; text 恒支持)
+#   reasoning:   thinking 能力声明 (不进 extra, 不透传 API):
+#     事实 (提供侧): can_disable: true = 支持关 thinking;
+#       off: off 档发给 API 的值 (如 none), can_disable 时生效.
+#     策略 (agent 侧, 这里只存默认): effort = 默认档位, agent 层
+#       可覆盖 (XmlAgentInput.reasoning), 未覆盖时用此默认.
+#     未声明 reasoning = 非思考模型; 未声明 can_disable = 不支持关
+#     (如 glm-5.3 强制思考, none/minimal/thinking:disabled 均被服务端
+#     400 拒绝), set_effort off 会报错.
+#     非标准 thinking 参数 (如 mimo 的 thinking.type) 不加 schema 字段,
+#     走 extra 透传.
+#   extra: 纯 API 请求体透传字段 (如 store: true), 原样合并进请求.
+#   tools: 原生 API tools 字段项, 如 {type: web_search}.
+
+default: seed/glm-5.3
+
+models:
+  deepseek:
+    api_key: $DEEPSEEK_API_KEY
+    base_url: https://api.deepseek.com
+    apis:
+      openai-completions: {}
+      openai-responses:
+        previous_response_id: false
+    deepseek-flash:
+      max_context: 1048576
+      max_tokens: 16384
+      image: true
+      reasoning:
+        effort: high
+        can_disable: true
+        off: none
+  seed:
+    api_key: $ARK_API_KEY
+    base_url: https://ark.cn-beijing.volces.com/api/plan/v3
+    apis:
+      openai-responses: {}
+    glm-5.3:
+      max_context: 2000000
+      reasoning:
+        can_disable: false
+        effort: high
+      extra:
+        store: true
+    doubao-seed-2.1-turbo:
+      name: doubao-turbo
+      max_context: 256000
+      image: true
+      reasoning:
+        can_disable: true
+        effort: high
+        off: none
+      extra:
+        store: true
+  ali:
+    api_key: $ALI_API_KEY
+    base_url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v3
+    glm-5.3:
+      max_context: 1048576
+    qwen3.7-max:
+      max_context: 1048576
+      reasoning:
+        effort: high
+        can_disable: true
+      tools:
+      - {type: web_search}
+      - {type: web_extractor}
+  ali-token:
+    api_key: $ALI_TOKEN_API_KEY
+    base_url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v3
+    # token-plan 域名 Responses API 实测可用模型
+    # qwen 系列 reasoning.effort 实测有效: high/medium/low 开 thinking,
+    # none 关 thinking (can_disable 实测验证: 0 reasoning delta).
+    qwen3.7-max:
+      max_context: 1048576
+      reasoning:
+        effort: high
+        can_disable: true
+    qwen3.8-max:
+      max_context: 1048576
+      reasoning:
+        effort: high
+        can_disable: true
+    deepseek-v4-flash-0731:
+      max_context: 1048576
+      reasoning:
+        effort: high
+        can_disable: true
+  openrouter:
+    api_key: $OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    anthropic/claude-sonnet-4.6:
+      name: claude-4.6
+      max_context: 200000
+      extra: {}
+  mockllm:
+    api_key: test-key
+    base_url: http://127.0.0.1:18765/v1
+    apis:
+      openai-completions: {}
+    faker:
+      max_context: 128000
+      max_tokens: 8192
+      reasoning:
+        effort: high
+        can_disable: true
+  xiaomi-mimo:
+    api_key: $MIMO_API_KEY
+    base_url: https://token-plan-cn.xiaomimimo.com/v1
+    apis:
+      openai-responses:
+        previous_response_id: false
+      openai-completions: {}
+    mimo-v2.6-pro:
+      name: mimo-pro
+      max_context: 1000000
+      max_tokens: 128000
+      image: true
+      reasoning:
+        can_disable: true
+        effort: high
+        off: none

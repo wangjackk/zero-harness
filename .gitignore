@@ -1,5 +1,5 @@
 # secrets (真实密钥文件, 只提交 models.yaml.example)
-zero/models.yaml
+zero-py/app/models.yaml
 .env
 
 # python
