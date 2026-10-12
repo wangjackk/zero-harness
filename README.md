@@ -12,21 +12,25 @@ Multi-language routine orchestration framework + LLM agent application skeleton.
 is a routine, even the loader and the watcher are routines. Routines can be written in
 any language. Each hub is an independent process — any language, any device.
 
-Routines are enabled/disabled via `zero/routines.yaml` (comment out an entry to disable);
-hot reload applies automatically.
+The kernel is embedded in the Python host process (asyncio implementation shipped with
+`routine-py`, no separate deployment). External hubs (Rust / TypeScript / remote devices)
+dial in via grpc.
+
+Routines are enabled/disabled via `zero-py/app/routines.yaml` (comment out an entry to
+disable); hot reload applies automatically.
 
 ## Quick Start (Windows)
 
-Prerequisites: [Go](https://golang.google.cn/dl/), [uv](https://docs.astral.sh/uv/getting-started/installation/), bun or node.
+Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/installation/), bun or node.
 
-1. Copy `zero/models.yaml.example` to `zero/models.yaml` and fill in your api_key.
+1. Copy `zero-py/app/models.yaml.example` to `zero-py/app/models.yaml` and fill in your api_key.
 2. Double-click `start.bat` in the repo root.
 
 Open <http://localhost:5173> in your browser.
 
 ## Example: Hello Routine
 
-Create `zero/routines/user/hello.py`:
+Create `zero-py/app/routines/user/hello.py`:
 
 ```python
 from typing import Any, Dict
@@ -40,7 +44,7 @@ class Hello(Routine):
         return f"Hello, {kwargs.get('name', 'World')}!"
 ```
 
-Add one line to `zero/routines.yaml` (hot reload applies it automatically):
+Add one line to `zero-py/app/routines.yaml` (hot reload applies it automatically):
 
 ```yaml
 - routines/user/hello.py
@@ -49,13 +53,12 @@ Add one line to `zero/routines.yaml` (hot reload applies it automatically):
 Call it:
 
 ```bash
-curl -X POST http://localhost:7781/run/hello -H "Content-Type: application/json" -d '{"name":"World"}'
+curl -X POST http://localhost:7781/run_routine -H "Content-Type: application/json" -d '{"name":"hello","kwargs":{"name":"World"}}'
 # {"ok":true,"result":"Hello, World!"}
 ```
 
 ## More
 
 - [zero-example](https://github.com/wangjackk/zero-example) — a complete application built on zero-harness (agents, presets, skills, TTS, frontend)
-- [zero2/routine/docs/](zero2/routine/docs/) — framework API and concepts
-- [zero/docs/](zero/docs/) — zero project conventions and end-to-end walkthroughs
-- [routine-rs/examples/](routine-rs/examples/) — Rust SDK examples
+- [zero-py/routine-py/routine/docs/](zero-py/routine-py/routine/docs/) — framework API and concepts
+- [zero-rs/routine-rs/examples/](zero-rs/routine-rs/examples/) — Rust SDK examples
