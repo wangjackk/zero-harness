@@ -6,6 +6,13 @@ zero-py/app/models.yaml
 zero-py/app/routines/user/music/assets/*
 !zero-py/app/routines/user/music/assets/meta.json
 
+# runtime artifacts (运行时产物: 缓存/上传/截图/日志)
+zero-py/app/cache/
+runtime/
+zero-py/runtime/
+*.log
+.tmp*
+
 # python
 __pycache__/
 *.py[cod]
