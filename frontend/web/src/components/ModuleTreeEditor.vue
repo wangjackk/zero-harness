@@ -52,16 +52,19 @@ const error = ref('')
 
 let uidSeq = 0
 
-/** 后端编辑事务: 成功返回 true, 失败显示 error. */
+/** 后端编辑事务: 成功返回 true, 失败显示 error.
+ * 统一走 /run_routine {name, kwargs} -> {ok, result | error}. */
 async function applyOp(payload: Record<string, any>): Promise<boolean> {
   try {
-    const res = await fetch(`${props.httpBase}/tree/apply`, {
+    const res = await fetch(`${props.httpBase}/run_routine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ name: 'tree/apply', kwargs: payload }),
     })
     const data = await res.json()
     if (!data.ok) throw new Error(data.error || 'apply failed')
+    const result = data.result || {}
+    if (!result.ok) throw new Error(result.error || 'apply failed')
     error.value = ''
     return true
   } catch (e) {
@@ -221,10 +224,16 @@ async function fetchTree() {
   loading.value = true
   error.value = ''
   try {
-    const res = await fetch(`${props.httpBase}/tree`)
+    const res = await fetch(`${props.httpBase}/run_routine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'tree/get' }),
+    })
     const data = await res.json()
     if (!data.ok) throw new Error(data.error || 'load failed')
-    const built = fromFlat(data.modules || {})
+    const result = data.result || {}
+    if (!result.ok) throw new Error(result.error || 'load failed')
+    const built = fromFlat(result.modules || {})
     root.value = built.root
     orphans.value = built.orphans
   } catch (e) {

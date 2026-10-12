@@ -1,6 +1,7 @@
-"""Agent 管理的 HTTP/WS handler 函数.
+"""Agent 管理的 WS handler 函数.
 
-由 ``server.WebServer._on_client_message`` 和 ``app.build_app`` 调用.
+由 ``server.WebServer._on_client_message`` 调用 (HTTP 面已收敛到
+/run_routine, agent 管理的 HTTP 等价路由已删).
 模块级函数(接收 ``inst`` 第一参数),复用 self.ctx.req 查询 manager routine.
 
 kind -> manager 路由: prime (coding agent) / xml (reactive chat agent).
