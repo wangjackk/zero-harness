@@ -1,23 +1,25 @@
 """WebServer ---- HTTP + WS 前门 routine (FastAPI + uvicorn).
 
 职责:
-- HTTP 端点:``/health`` ``/routines`` ``/library_skills`` ``/run_routine``
-  (POST/GET, 名字走 body/查询参数, 格式自由可含 ``/``; X-Agent-Id 头指定调用方身份) ``/agents*``
-  ``/docs``(路由定义见 ``app.build_app``)
+- HTTP 端点:``/health`` ``/run_routine``(POST, 名字走 body, 格式自由可含
+  ``/``; X-Agent-Id 头指定调用方身份) ``/upload`` ``/files`` ``/docs``
+  (路由定义见 ``app.build_app``)----routine 能力的唯一 HTTP 契约
+  是 /run_routine, 其余专用路由(agents/models/tree 等)已删, 统一走 routine
 - WS 端点:``/ws``----前端主通道,处理 user_input/run/agent/ui_request 等
   消息,广播 assistant_output/feedback/sys_prompt/session_changed 等框架事件
 
 一个 uvicorn server 同时跑 HTTP + WS,监听地址默认读 ``app/config.yaml``
 (``network.web_server``,``WebServerInput`` pydantic default_factory 取值;
 类型归一+范围检查,run 内不再手写校验).
-``/routines`` 走 ``self.get_routines()``(kernel catalog 跨 hub 全量).
+routine 目录查询走 ``/run_routine`` 调 ``routine/list``(kernel catalog 跨
+hub 全量).
 
 passive 自动起,uvicorn server 由 instance 持有: run 起 / stop 优雅关
 (should_exit → serve 退出, 5s 硬取消兜底). reload 与其他 routine 同语义:
 kernel 停老实例(server 随之优雅关)→ auto-start 新实例重绑端口, 无共享
 单例无复用分支; 重复 start 撞端口直接报错.
-拆分参考:_json / app / agents 各管一摊,本模块只管 routine 生命周期 +
-框架事件订阅 + WS 消息分发.
+拆分参考:_json / app / server 各管一摊,本模块只管 routine 生命周期 +
+框架事件订阅 + WS 消息分发(_agents handler 是 WS 消息的实现方).
 """
 from __future__ import annotations
 

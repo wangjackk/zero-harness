@@ -1,10 +1,13 @@
-"""FastAPI app 构造:所有 HTTP 路由 + WS 端点.
+"""FastAPI app 构造:HTTP 路由 + WS 端点.
 
 由 ``server.WebServer._start_server`` 调用.设计成独立模块,让 server.py
 只关心 routine 生命周期 + 框架事件订阅,@app 路由定义集中在此.
 
 路由直接闭包捕获 WebServer instance(app 与 uvicorn server 同生命周期,
 instance stop 即 server 优雅关闭, 路由不会 outlive instance).
+
+HTTP 面最小化: 所有 routine 能力统一走 /run_routine (routine 本身就是
+HTTP 与业务间的唯一契约), 专用路由只保留基础设施 (健康/文件传输).
 """
 from __future__ import annotations
 
@@ -16,7 +19,6 @@ from fastapi import Body, FastAPI, Header, Request, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import agents as _agents
 from ._json import _Json
 
 logger = logging.getLogger(__name__)
@@ -75,90 +77,6 @@ def build_app(inst) -> FastAPI:
         ext = file.suffix.lstrip('.').lower()
         return FileResponse(file, media_type=_MIME_BY_EXT.get(ext, 'application/octet-stream'))
 
-    @app.get('/models')
-    async def _models():
-        """暴露 models.yaml 配置, 供前端 create agent 时选模型.
-
-        返回结构: {default: 'seed/glm-5.2', models: [
-            {key, provider, name, model, max_context, reasoning_effort, has_tools}
-        ]}
-        """
-        try:
-            from app.routines.user.agents._core import models_store
-            models = []
-            for key, cfg in models_store.flatten().items():
-                provider = key.split('/', 1)[0] if '/' in key else key
-                reasoning_cfg = cfg.get('reasoning')
-                effort = (
-                    reasoning_cfg.get('effort')
-                    if isinstance(reasoning_cfg, dict) else None
-                )
-                models.append({
-                    'key': key,
-                    'provider': provider,
-                    'name': cfg.get('model', key),
-                    'max_context': int(cfg.get('max_context', 0)),
-                    'reasoning_effort': effort,
-                    'has_tools': bool(cfg.get('tools')),
-                })
-            return _Json({'default': models_store.default_key(),
-                          'models': models})
-        except Exception as exc:
-            logger.warning('[http] /models error: %s', exc)
-            return _Json({'default': '', 'models': [], 'error': str(exc)})
-
-    @app.get('/routines')
-    async def _routines():
-        """跨 hub 全量 routine 列表(走 kernel catalog,跟 WS get_routines 一致)."""
-        try:
-            routines = await inst.get_routines()
-        except NotImplementedError:
-            return _Json({'routines': []})
-        except Exception as exc:
-            logger.warning('[http] /routines error: %s', exc)
-            return _Json({'routines': []})
-        out = []
-        for r in routines:
-            meta = r.get('meta') or {}
-            out.append({
-                'name': r.get('name', ''),
-                'is_passive': bool((r.get('is_passive') or {}).get('flag', False)),
-                'hub_id': r.get('hub_id', ''),
-                'meta': meta,
-            })
-        return _Json({'routines': out})
-
-    @app.get('/library_skills')
-    async def _library_skills():
-        try:
-            from app.routines.user.skills.registry import list_library_skills, list_prime_skills
-            skills = list_library_skills()
-            prime_skills = list_prime_skills()
-            return _Json({'ok': True, 'skills': skills, 'prime_skills': prime_skills})
-        except Exception as exc:
-            return _Json({'ok': False, 'error': str(exc), 'skills': [], 'prime_skills': []})
-
-    @app.get('/tree')
-    async def _tree():
-        """模块树静态定义 (转发 tree/get routine), 前端模块树编辑器读取."""
-        try:
-            return _Json(await inst.call('tree/get'))
-        except Exception as exc:
-            logger.warning('[http] /tree error: %s', exc)
-            return _Json({'ok': False, 'error': str(exc), 'modules': {}})
-
-    @app.post('/tree/apply')
-    async def _tree_apply(body: Dict[str, Any] = Body(default_factory=dict)):
-        """模块树编辑事务 (转发 tree/apply routine): kernel + tree.json 即时生效.
-
-        body: {op: add|remove|reorder|rename, ...}.
-        """
-        try:
-            return _Json(await inst.call('tree/apply', body))
-        except Exception as exc:
-            logger.warning('[http] /tree/apply error: %s', exc)
-            return _Json({'ok': False, 'error': str(exc)})
-
     async def _execute_routine(name: str, kwargs: Dict[str, Any],
                                 agent_id: str) -> _Json:
         """查 agent rid → req(rid, 'run', {target, kwargs}) 执行 routine.
@@ -199,65 +117,6 @@ def build_app(inst) -> FastAPI:
             return _Json({'ok': False, 'error': 'kwargs must be an object'})
         agent_id = (x_agent_id or 'user').strip() or 'user'
         return await _execute_routine(name, kwargs, agent_id)
-
-    @app.get('/run_routine')
-    async def _run_routine_get(name: str = '', kwargs: str = '',
-                                x_agent_id: str = Header(default='user')):
-        """GET 版 (只读 routine 浏览器直开调试).
-
-        /run_routine?name=pi/list_models&kwargs={"k":"v"}
-        (kwargs 为 JSON 字符串, 缺省 {}).
-        """
-        name = (name or '').strip()
-        if not name:
-            return _Json({'ok': False, 'error': 'name is empty'})
-        try:
-            kw = json.loads(kwargs) if kwargs.strip() else {}
-        except json.JSONDecodeError as exc:
-            return _Json({'ok': False, 'error': f'kwargs invalid json: {exc}'})
-        if not isinstance(kw, dict):
-            return _Json({'ok': False, 'error': 'kwargs must be an object'})
-        agent_id = (x_agent_id or 'user').strip() or 'user'
-        return await _execute_routine(name, kw, agent_id)
-
-    # ---- agents: HTTP 等价物,复用 _on_* 内部方法 ----
-    # WS handler 签名是 (msg, reply),reply 是 async (dict) -> None.
-    # HTTP 端用 box dict 收集 reply 的内容,最后 _Json(box) 返回.
-    # 这样 WS / HTTP 走同一份业务 logic,不重复实现.
-
-    async def _run_ws_handler(handler, msg: dict) -> dict:
-        box: dict = {}
-
-        async def reply(d: dict) -> None:
-            box.update(d)
-
-        await handler(inst, msg, reply)
-        return box
-
-    @app.get('/agents')
-    async def _http_agents():
-        """列出所有 agent(prime + user/world)."""
-        return _Json(await _run_ws_handler(_agents.on_list_agents, {}))
-
-    @app.post('/agents/create')
-    async def _http_agent_create(body: Dict[str, Any] = Body(default_factory=dict)):
-        """创建 agent.body:kind/project_dir/agent_id/model/..."""
-        return _Json(await _run_ws_handler(_agents.on_create_agent, body))
-
-    @app.post('/agents/stop')
-    async def _http_agent_stop(body: Dict[str, Any] = Body(default_factory=dict)):
-        """停止 agent.body:{agent_id}."""
-        return _Json(await _run_ws_handler(_agents.on_stop_agent, body))
-
-    @app.post('/agents/resume')
-    async def _http_agent_resume(body: Dict[str, Any] = Body(default_factory=dict)):
-        """恢复 agent.body:{kind, agent_id, model, ...}."""
-        return _Json(await _run_ws_handler(_agents.on_resume_agent, body))
-
-    @app.post('/agents/delete')
-    async def _http_agent_delete(body: Dict[str, Any] = Body(default_factory=dict)):
-        """删除 agent (DB 行 + messages). body:{agent_id}. live 拒绝."""
-        return _Json(await _run_ws_handler(_agents.on_delete_agent, body))
 
     # ------------------------------------------------------------------
     # WS 端点
