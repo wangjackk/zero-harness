@@ -2,6 +2,10 @@
 zero-py/app/models.yaml
 .env
 
+# music assets (音频文件本地保留, 只提交曲库元数据 meta.json)
+zero-py/app/routines/user/music/assets/*
+!zero-py/app/routines/user/music/assets/meta.json
+
 # python
 __pycache__/
 *.py[cod]
