@@ -18,7 +18,9 @@ from .screenshot import Screenshot
 # from .wechat_config import WeChatConfig
 from .sysinfo import SysInfo
 from .evolve import Evolve
+from .mini_agent import MiniAgent
+from .approval_gate import ApprovalGate
 
 __all__ = ['Screenshot',
     # 'WeChatSend', 'WeChatWatch', 'WeChatConfig',
-    'SysInfo', 'Evolve']
+    'SysInfo', 'Evolve', 'MiniAgent', 'ApprovalGate']
