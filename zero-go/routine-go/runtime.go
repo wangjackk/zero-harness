@@ -15,7 +15,7 @@ type ServerRuntime struct {
 	runningInstances map[string]*invocationState // prid → state
 
 	// future 表
-	submitFutures    map[string]chan submitResult
+	createFutures    map[string]chan createResult
 	acquireFutures   map[string]chan ackResult
 	loadFutures      map[string]chan ackResult
 	unloadFutures    map[string]chan ackResult
@@ -57,7 +57,7 @@ func NewServerRuntime(registry *Registry, modules []string) *ServerRuntime {
 		Modules:           modules,
 		logger:            GetLogger().Named("RoutineHub"),
 		runningInstances:  make(map[string]*invocationState),
-		submitFutures:     make(map[string]chan submitResult),
+		createFutures:     make(map[string]chan createResult),
 		acquireFutures:    make(map[string]chan ackResult),
 		loadFutures:       make(map[string]chan ackResult),
 		unloadFutures:     make(map[string]chan ackResult),
@@ -192,19 +192,19 @@ func (r *ServerRuntime) PopCreated(rid string) *invocationState {
 	return s
 }
 
-// --- submit future 表 ---
+// --- create future 表 ---
 
-func (r *ServerRuntime) RegisterSubmitFuture(reqID string, ch chan submitResult) {
+func (r *ServerRuntime) RegisterCreateFuture(reqID string, ch chan createResult) {
 	r.mu.Lock()
-	r.submitFutures[reqID] = ch
+	r.createFutures[reqID] = ch
 	r.mu.Unlock()
 }
 
-func (r *ServerRuntime) PopSubmitFuture(reqID string) chan submitResult {
+func (r *ServerRuntime) PopCreateFuture(reqID string) chan createResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	ch := r.submitFutures[reqID]
-	delete(r.submitFutures, reqID)
+	ch := r.createFutures[reqID]
+	delete(r.createFutures, reqID)
 	return ch
 }
 

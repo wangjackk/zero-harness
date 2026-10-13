@@ -13,8 +13,8 @@ var ReqTimeout = errors.New("req timeout")
 // StartError handle.start()/try_start() 失败(模块冲突/父未 started).
 var StartError = errors.New("start failed")
 
-// SubmitError ctx.submit() 失败(kernel 拒了 submit).
-var SubmitError = errors.New("submit failed")
+// CreateError ctx.create() 失败(kernel 拒了 create).
+var CreateError = errors.New("create failed")
 
 // AcquireError ctx.acquire() 失败(acquired ok=false,含撞车被拒).
 var AcquireError = errors.New("acquire failed")

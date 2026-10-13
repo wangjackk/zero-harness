@@ -18,7 +18,7 @@ const (
 	ReasonUnknown     = "UNKNOWN"
 	ReasonAuto        = "AUTO"
 	ReasonStop        = "STOP"
-	ReasonUnsubmitted = "UNSUBMITTED"
+	ReasonDestroyed = "DESTROYED"
 	ReasonError       = "ERROR"
 	ReasonCancel      = "CANCEL"
 	ReasonForce       = "FORCE"
@@ -29,6 +29,7 @@ const (
 var reasonToEnum = map[string]string{
 	"auto":       ReasonAuto,
 	"stop":       ReasonStop,
+	"destroyed":  ReasonDestroyed,
 	"error":      ReasonError,
 	"cancel":     ReasonCancel,
 	"force":      ReasonForce,
@@ -54,11 +55,11 @@ const (
 
 // routine 调 routine 反向事件(py→kernel,走同一条 Stream).
 const (
-	RoutineSubmit            = "routine.submit"
-	RoutineUnsubmit          = "routine.unsubmit"
+	RoutineCreate            = "routine.create"
+	RoutineDestroy          = "routine.destroy"
 	RoutineStart             = "routine.start" // 带可选 priority(int,缺省 10=常规默认档;0~9 低档):冲突时 incoming > holder 才驱逐后 start
 	RoutineStop              = "routine.stop"
-	RoutineSubmitted         = "routine.submitted"
+	RoutineCreated         = "routine.created"
 	RoutineRejected          = "routine.rejected"
 	RoutineAcquire           = "routine.acquire"
 	RoutineAcquired          = "routine.acquired"

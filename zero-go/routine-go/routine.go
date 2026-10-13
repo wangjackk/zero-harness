@@ -22,7 +22,7 @@ type Routine interface {
 	Name() string
 	// Meta 自由扩展元数据(tool/readonly/input_schema/description 等)
 	Meta() map[string]any
-	// IsPassive 是否被动 routine(kernel 自动 start,不允许业务侧手动 submit)
+	// IsPassive 是否被动 routine(kernel 自动 start,不允许业务侧手动 create)
 	IsPassive() bool
 	// Run 业务入口(跑到完成或 yield body)
 	Run(ctx *RunContext, kwargs map[string]any) (any, error)
@@ -31,7 +31,11 @@ type Routine interface {
 // LifecycleHooks 可选 lifecycle 回调.routine 实现此接口获得 lifecycle 通知.
 type LifecycleHooks interface {
 	// Stop 正规 stop 流程;routine 在此 set flag 让 Run 退出.可返回结果.
+	// 仅管 started 态的终止.
 	Stop() (any, error)
+	// Destroy destroy 钩子:created 态(已 create 未 start)被销毁时的资源撤销.
+	// start 前实例可能已收 body 持有资源 ---- 在此撤销.与 Stop 分野.
+	Destroy() error
 	// OnCreated created 钩子(早于 start).返回声明的 modules.
 	OnCreated(rid string, kwargs map[string]any) ([]string, error)
 	// OnStarted started 钩子(lifecycle.started 已回报,Run 之前).
@@ -80,6 +84,7 @@ type BaseRoutine struct{}
 func (b *BaseRoutine) Meta() map[string]any          { return map[string]any{} }
 func (b *BaseRoutine) IsPassive() bool                { return false }
 func (b *BaseRoutine) Stop() (any, error)             { return nil, nil }
+func (b *BaseRoutine) Destroy() error                 { return nil }
 func (b *BaseRoutine) OnCreated(rid string, kwargs map[string]any) ([]string, error) {
 	return nil, nil
 }

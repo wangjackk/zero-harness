@@ -66,7 +66,7 @@ func (h *RoutineHub) buildInboundHandlers() {
 		LifecycleStarted:             h.onLifecycleStarted,
 		LifecycleStopped:             h.onLifecycleStopped,
 		RoutineRejected:              h.onRoutineRejected,
-		RoutineSubmitted:             h.onRoutineSubmitted,
+		RoutineCreated:             h.onRoutineCreated,
 		RoutineAcquired:              h.onRoutineAcquired,
 		RoutineModuleLoaded:          h.onRoutineModuleLoaded,
 		RoutineModuleUnloaded:        h.onRoutineModuleUnloaded,
@@ -130,10 +130,10 @@ func (h *RoutineHub) RequestStop(id string, peerID string) error {
 	return nil
 }
 
-// SendRoutineSubmit 发 routine.submit 给 kernel.
-func (h *RoutineHub) SendRoutineSubmit(reqID, parentID, name string, kwargs map[string]any, peerID string) error {
+// SendRoutineCreate 发 routine.create 给 kernel.
+func (h *RoutineHub) SendRoutineCreate(reqID, parentID, name string, kwargs map[string]any, peerID string) error {
 	return h.sendEvent(map[string]any{
-		"event":     RoutineSubmit,
+		"event":     RoutineCreate,
 		"req_id":    reqID,
 		"parent_id": parentID,
 		"name":      name,
@@ -159,9 +159,9 @@ func (h *RoutineHub) SendRoutineStop(childID string, peerID string) error {
 	return h.sendEvent(map[string]any{"event": RoutineStop, "child_id": childID}, peerID)
 }
 
-// SendRoutineUnsubmit 发 routine.unsubmit.
-func (h *RoutineHub) SendRoutineUnsubmit(childID string, peerID string) error {
-	return h.sendEvent(map[string]any{"event": RoutineUnsubmit, "child_id": childID}, peerID)
+// SendRoutineDestroy 发 routine.destroy.
+func (h *RoutineHub) SendRoutineDestroy(childID string, peerID string) error {
+	return h.sendEvent(map[string]any{"event": RoutineDestroy, "child_id": childID}, peerID)
 }
 
 // SendRoutineAcquire 发 routine.acquire.
@@ -596,9 +596,9 @@ func endsWithRid(prid, rid string) bool {
 	return prid[len(prid)-len(rid)-1] == ':' && prid[len(prid)-len(rid):] == rid
 }
 
-func (h *RoutineHub) onRoutineSubmitted(msg map[string]any) {
+func (h *RoutineHub) onRoutineCreated(msg map[string]any) {
 	reqID, _ := msg["req_id"].(string)
-	fut := h.Runtime.PopSubmitFuture(reqID)
+	fut := h.Runtime.PopCreateFuture(reqID)
 	if fut == nil {
 		return
 	}
@@ -608,7 +608,7 @@ func (h *RoutineHub) onRoutineSubmitted(msg map[string]any) {
 	default:
 	}
 	if errStr, _ := msg["error"].(string); errStr != "" {
-		fut <- submitResult{err: errStr}
+		fut <- createResult{err: errStr}
 		return
 	}
 	childID, _ := msg["child_id"].(string)
@@ -619,7 +619,7 @@ func (h *RoutineHub) onRoutineSubmitted(msg map[string]any) {
 			modules = append(modules, fmt.Sprint(m))
 		}
 	}
-	fut <- submitResult{childID: childID, modules: modules}
+	fut <- createResult{childID: childID, modules: modules}
 }
 
 func (h *RoutineHub) resolveAckFuture(reqID string, msg map[string]any, sentinel error, errDefault string) {
