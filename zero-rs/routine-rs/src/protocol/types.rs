@@ -6,7 +6,7 @@ pub type RoutineMeta = Map<String, Value>;
 
 /// `lifecycle.stopped` 回报里的 reason 取值。
 ///
-/// 对齐 Python `ControlDoneReason`:7 值。UNKNOWN 保留作默认/未知兜底。
+/// 对齐 Python `ControlDoneReason`:8 值。UNKNOWN 保留作默认/未知兜底。
 /// kernel 对 reason 是 dumb-forward(不按值分流),故扩值无需 kernel 侧配合。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -14,6 +14,7 @@ pub enum ControlDoneReason {
     Unknown,
     Auto,
     Stop,
+    Destroyed,
     Error,
     Cancel,
     Force,
@@ -32,6 +33,7 @@ impl ControlDoneReason {
             Self::Unknown => "UNKNOWN",
             Self::Auto => "AUTO",
             Self::Stop => "STOP",
+            Self::Destroyed => "DESTROYED",
             Self::Error => "ERROR",
             Self::Cancel => "CANCEL",
             Self::Force => "FORCE",

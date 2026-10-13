@@ -1,6 +1,6 @@
 //! smoke_caller ---- 在途调用兜底冒烟的 rs 侧 caller.
 //!
-//! passive 的 smoke_rs_caller 自启后: 等 ts 侧 smoke_target 注册 → submit +
+//! passive 的 smoke_rs_caller 自启后: 等 ts 侧 smoke_target 注册 → create +
 //! start → 并发两条在途调用(slow req + handle wait)。由测试方中途 kill ts
 //! 进程, 验证 kernel 合成失败帧让 rs 侧立即抛错(与 py caller 同一种错误
 //! 报告), 而不是挂到超时。
@@ -67,10 +67,10 @@ impl Routine for SmokeCaller {
                 "smoke_target not registered in 60s".to_string(),
             ));
         }
-        println!("RS CALLER: target registered, submit + start");
+        println!("RS CALLER: target registered, create + start");
 
         let (child_id, _) = ctx
-            .submit("smoke_target", None)
+            .create("smoke_target", None)
             .await
             .map_err(RoutineError::Message)?;
         ctx.start_child(&child_id, 10).await   // 10 = 常规默认档

@@ -1,10 +1,10 @@
 """RunContext ---- 每次 ``run()`` invocation 的运行上下文.
 
-身份字段 id / name + lifecycle 出口(ack_start / request_stop)+ submit 能力
+身份字段 id / name + lifecycle 出口(ack_start / request_stop)+ create 能力
 (routine 调 routine,经 kernel 回环).
 
-submit 流程:发 routine.submit{req_id, name, kwargs, parent_id=self.id} 给
-kernel → kernel 建子命令(Create,不 Start)→ 回 routine.submitted{req_id,
+create 流程:发 routine.create{req_id, name, kwargs, parent_id=self.id} 给
+kernel → kernel 建子命令(Create,不 Start)→ 回 routine.created{req_id,
 child_id, modules} → 拿到 child_id 建 RoutineHandle 注册到 runtime handle 表.
 
 handle.start()/stop() 发 routine.start/stop 给 kernel → kernel 走编排
@@ -47,7 +47,7 @@ class Phase(str, Enum):
 class RunContext:
     """每次 ``run()`` 重新构造的运行上下文;lifecycle 在 created 之后绑给 routine."""
 
-    ACK_TIMEOUT = 30.0  # submit/acquire/release 等 kernel ack 默认超时
+    ACK_TIMEOUT = 30.0  # create/acquire/release 等 kernel ack 默认超时
 
     def __init__(self, *, id: str, name: str,
                  io: 'RoutineHub', routine: 'Routine',
@@ -79,7 +79,7 @@ class RunContext:
     def _require_parent_started(self, action: str) -> None:
         """父 routine 必须 started(ack_start 后)--否则抛 RuntimeError.
 
-        handle 层 start/stop 子 routine 前的守卫.submit/unsubmit 不查(created 即可).
+        handle 层 start/stop 子 routine 前的守卫.create/destroy 不查(created 即可).
         """
         if self._routine._phase is not Phase.STARTED:
             raise RuntimeError(
@@ -87,43 +87,43 @@ class RunContext:
                 f'(parent routine not started)'
             )
 
-    # --- routine 调 routine(submit) ---
+    # --- routine 调 routine(create) ---
 
-    async def submit(self, name: str,
+    async def create(self, name: str,
                      kwargs: Optional[Dict[str, Any]] = None) -> 'RoutineHandle':
         """提交一个子 routine,经 kernel 回环:建命令(created),created 回报后返回
         handle.
 
         handle.modules = 子 routine on_created() 返回的占用 modules(经 created
-        回报 → kernel → submitted 回执带回).编排器据此算冲突
+        回报 → kernel → created 回执带回).编排器据此算冲突
         (``ctx.conflict(h1.modules, h2.modules)``).
         """
         from .handle import RoutineHandle
 
         req_id = _new_req_id()
         fut = asyncio.get_running_loop().create_future()
-        self._runtime.register_submit_future(req_id, fut)
+        self._runtime.register_create_future(req_id, fut)
 
         try:
-            await self._io.send_routine_submit(
+            await self._io.send_routine_create(
                 req_id=req_id, parent_id=self.id, name=name,
                 kwargs=kwargs or {},
             )
-            # submitted 回执:(child_id string, modules list|None)
+            # created 回执:(child_id string, modules list|None)
             child_id, modules = await asyncio.wait_for(fut, timeout=self.ACK_TIMEOUT)
         finally:
-            self._runtime.pop_submit_future(req_id)
+            self._runtime.pop_create_future(req_id)
 
         handle = RoutineHandle(child_id, name, ctx=self, modules=modules)
         self._io.register_handle(child_id, handle)
-        # 拿到 handle 时子一定已 created(kernel 等 created 回报才发 submitted):
+        # 拿到 handle 时子一定已 created(kernel 等 created 回报才发 created):
         # created 路由表 + ctx 都已就绪----可直接 send / req / publish.
         return handle
 
     async def call(self, name: str,
                    kwargs: Optional[Dict[str, Any]] = None,
                    priority: int = 10) -> Any:   # 10 = 常规默认档
-        """同步拿子 routine 结果:submit → start → wait 一步到位.
+        """同步拿子 routine 结果:create → start → wait 一步到位.
 
         priority: start 优先级(档位约定见 routine.py 头注).模块冲突时
         incoming > 全部 holder 才驱逐他们后 start(严格大于, 平级不抢);
@@ -140,7 +140,7 @@ class RunContext:
                 f'(parent routine not started, cannot call child)'
             )
         kw = dict(kwargs or {})
-        handle = await self.submit(name, kw)
+        handle = await self.create(name, kw)
         await handle.start(priority)
         return await handle
 

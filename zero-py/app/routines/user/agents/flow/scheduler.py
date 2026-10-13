@@ -1,7 +1,7 @@
 """工具执行: 常驻 Shell 编排 (cone 串并行) + pre_execute/result 扩展点.
 
 串并行判定不靠 meta 标志位 (concurrency_safe 不消费): 复用业务侧
-Shell (zero xml 包) ---- push 尽快 submit, start 是调度点, 与左兄弟
+Shell (zero xml 包) ---- push 尽快 create, start 是调度点, 与左兄弟
 的 modules cone 交集冲突则串行, 不冲突则并行. modules 是 kernel 解析
 的占用真理源 (工具 on_created 返回), 与 TryAcquire 同源 ---- 工具要
 串行就声明 modules, 天然并行就不声明.

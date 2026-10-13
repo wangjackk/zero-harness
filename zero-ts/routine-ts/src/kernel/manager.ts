@@ -33,8 +33,8 @@ import {
   ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
   ROUTINE_LOAD_MODULE,
   ROUTINE_MODULE_LOADED, ROUTINE_RELEASE, ROUTINE_RELEASED,
-  ROUTINE_START, ROUTINE_STOP, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
-  ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_UNSUBMIT,
+  ROUTINE_START, ROUTINE_STOP, ROUTINE_CREATE, ROUTINE_CREATED,
+  ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_DESTROY,
   ROUTINE_REJECTED, ROUTINE_YIELD, ROUTINE_YIELDED,
   ControlDoneReason,
   type Msg, type Payload,
@@ -137,10 +137,10 @@ export class Kernel {
       [LIFECYCLE_WATCH, (m, s) => this.onLifecycleWatch(m, s)],
       [LIFECYCLE_UNWATCH, (m, s) => this.onLifecycleUnwatch(s)],
       [ROUTINE_YIELD, (m, s) => this.onYield(m, s)],
-      [ROUTINE_SUBMIT, (m, s) => this.onRoutineSubmit(m, s)],
+      [ROUTINE_CREATE, (m, s) => this.onRoutineCreate(m, s)],
       [ROUTINE_START, (m, s) => this.onRoutineStart(m, s)],
       [ROUTINE_STOP, (m, s) => this.onRoutineStop(m, s)],
-      [ROUTINE_UNSUBMIT, (m, s) => this.onRoutineUnsubmit(m, s)],
+      [ROUTINE_DESTROY, (m, s) => this.onRoutineDestroy(m, s)],
       [ROUTINE_ACQUIRE, (m, s) => this.onRoutineAcquire(m, s)],
       [ROUTINE_RELEASE, (m, s) => this.onRoutineRelease(m, s)],
       [ROUTINE_LOAD_MODULE, (m, s) => this.onRoutineLoadModule(m, s)],
@@ -301,14 +301,14 @@ export class Kernel {
     n.cmd.start()
   }
 
-  /** 处理 routine.submit:建 created 态命令返回 child_id.passive 拒手动. */
-  private onSubmit(parentId: number, name: string, kwargs: Payload): number {
+  /** 处理 routine.create:建 created 态命令返回 child_id.passive 拒手动. */
+  private onCreate(parentId: number, name: string, kwargs: Payload): number {
     const route = this.routes.get(name)
     if (route && route.isPassive) {
-      throw new Error(`routine ${name} is passive (auto-started by kernel); manual submit is not allowed`)
+      throw new Error(`routine ${name} is passive (auto-started by kernel); manual create is not allowed`)
     }
     const n = this.createNode(parentId, name, kwargs)
-    log.info(`➡️ submit ${n.cmd}`)
+    log.info(`➡️ create ${n.cmd}`)
     return n.cmd.id
   }
 
@@ -397,7 +397,7 @@ export class Kernel {
     for (const c of [...n.children]) await this.stopNode(c, true, forceBy)
 
     if (n.cmd.state === State.CREATED) {
-      // created 态(已 submit 未 start):发 destroy 让 hub 销毁 instance
+      // created 态(已 create 未 start):发 destroy 让 hub 销毁 instance
       // (先发再删: 发给 node owner, 对齐 Go sendDestroy)
       this.emitLifecycleStop('destroyed', n)
       this.unsubscribeRid(String(n.cmd.id))
@@ -611,19 +611,19 @@ export class Kernel {
     if (rid) this.relayToParent(rid, { ...msg, event: ROUTINE_YIELDED })
   }
 
-  /** routine.submit:建 created 态 → 发 lifecycle.created → 等 created 回报
-   *  → 回 routine.submitted{child_id, modules} 给 submit 发起方
-   *  (source, 对齐 Go OnSubmitSubmitted(sourceClientID, ...)). */
-  private async onRoutineSubmit(msg: Msg, source: string): Promise<void> {
+  /** routine.create:建 created 态 → 发 lifecycle.created → 等 created 回报
+   *  → 回 routine.created{child_id, modules} 给 create 发起方
+   *  (source, 对齐 py kernel _on_routine_create). */
+  private async onRoutineCreate(msg: Msg, source: string): Promise<void> {
     const reqId = String(msg.req_id ?? '')
     const name = String(msg.name ?? '')
     const kwargs = msg.kwargs ?? {}
     const parentId = toInt(msg.parent_id) || 0
     let childId: number
     try {
-      childId = this.onSubmit(parentId, name, kwargs)
+      childId = this.onCreate(parentId, name, kwargs)
     } catch (e: any) {
-      this.sendTo(source, { event: ROUTINE_SUBMITTED, req_id: reqId, error: String(e?.message ?? e) })
+      this.sendTo(source, { event: ROUTINE_CREATED, req_id: reqId, error: String(e?.message ?? e) })
       return
     }
     const n = this.nodes.get(childId)!
@@ -636,17 +636,17 @@ export class Kernel {
       try {
         r = await withTimeout(n.createdFut.promise, Kernel.CREATED_TIMEOUT * 1000, `routine ${name} created`)
       } catch {
-        this.sendTo(source, { event: ROUTINE_SUBMITTED, req_id: reqId, error: `routine ${name} created timeout` })
+        this.sendTo(source, { event: ROUTINE_CREATED, req_id: reqId, error: `routine ${name} created timeout` })
         return
       }
       if (r.error) {
-        this.sendTo(source, { event: ROUTINE_SUBMITTED, req_id: reqId, error: r.error })
+        this.sendTo(source, { event: ROUTINE_CREATED, req_id: reqId, error: r.error })
       } else {
         n.declared = r.modules
-        this.sendTo(source, { event: ROUTINE_SUBMITTED, req_id: reqId, child_id: String(childId), modules: r.modules })
+        this.sendTo(source, { event: ROUTINE_CREATED, req_id: reqId, child_id: String(childId), modules: r.modules })
       }
     }
-    wait().catch(e => log.error(`routine.submit wait failed: ${e?.stack ?? e}`))
+    wait().catch(e => log.error(`routine.create wait failed: ${e?.stack ?? e}`))
   }
 
   private async onRoutineStart(msg: Msg, source: string): Promise<void> {
@@ -758,27 +758,27 @@ export class Kernel {
     }
   }
 
-  private async onRoutineUnsubmit(msg: Msg, source: string): Promise<void> {
+  private async onRoutineDestroy(msg: Msg, source: string): Promise<void> {
     const childId = toInt(msg.child_id) || 0
     try {
       const n = this.requireNode(childId)
       if (n.cmd.state !== State.CREATED) {
-        throw new Error(`cannot unsubmit routine ${n.cmd}: already started (state=${n.cmd.state}), use stop instead`)
+        throw new Error(`cannot destroy routine ${n.cmd}: already started (state=${n.cmd.state}), use stop instead`)
       }
       // 先发再删: destroy 发给 node owner(对齐 Go sendDestroy)
       this.unsubscribeRid(String(childId))
       this.sendTo(n.owner, { event: LIFECYCLE_DESTROY, id: String(childId) })
       // 主动 relay stopped 给父: node 即将删除, owner hub 的 destroy
       // 回报(stopped)到达时 node 已不存在, 无法中转 ---- 父 handle 的
-      // unsubmit ack 会永久挂起. relay 须在 remove 之前(node 带 parent).
+      // destroy ack 会永久挂起. relay 须在 remove 之前(node 带 parent).
       this.relayToParent(childId, {
         event: LIFECYCLE_STOPPED, id: String(childId),
-        reason: ControlDoneReason.UNSUBMITTED,
+        reason: ControlDoneReason.DESTROYED,
       })
       this.removeNode(childId)
-      log.info(`↩️ unsubmit ${n.cmd}`)
+      log.info(`↩️ destroy ${n.cmd}`)
     } catch (e: any) {
-      this.sendTo(source, { event: ROUTINE_REJECTED, op: 'unsubmit', child_id: String(childId), error: String(e?.message ?? e) })
+      this.sendTo(source, { event: ROUTINE_REJECTED, op: 'destroy', child_id: String(childId), error: String(e?.message ?? e) })
     }
   }
 

@@ -8,7 +8,7 @@ use crate::{
         events::{
             CATALOG_PUSHED, LIFECYCLE_HEARTBEAT, LIFECYCLE_START, LIFECYCLE_STOP,
             LIFECYCLE_STOPPED, MESSAGE_DELIVERED, MESSAGE_REQ_DELIVERED,
-            MESSAGE_REQ_REPLY_DELIVERED, PUBSUB_DELIVERED, ROUTINE_SUBMITTED,
+            MESSAGE_REQ_REPLY_DELIVERED, PUBSUB_DELIVERED, ROUTINE_CREATED,
         },
         JsonObject, RawWireEvent,
     },
@@ -58,12 +58,12 @@ impl BusinessEventRouter {
             LIFECYCLE_STOP => self.lifecycle.handle_stop(peer_id, msg).await?,
             LIFECYCLE_HEARTBEAT => self.lifecycle.handle_heartbeat(peer_id, msg).await?,
             // 父 routine 调子 routine 的回执路径:
-            // - routine.submitted: kernel 回 submit 的回执,带 child_id + modules
+            // - routine.created: kernel 回 create 的回执,带 child_id + modules
             // - lifecycle.stopped: 子 routine 完成后 kernel 中转回父 server,
             //   带 result/error. 父 call/wait 据此唤醒.
             //   注意:跟 lifecycle.stop(kernel 主动停本 server 的 routine)不同,
             //   stopped 是子完成通知,本 server 不持有子 instance,只唤醒 waiter.
-            ROUTINE_SUBMITTED => self.handle_routine_submitted(msg).await,
+            ROUTINE_CREATED => self.handle_routine_created(msg).await,
             LIFECYCLE_STOPPED => self.handle_lifecycle_stopped(msg).await,
             CATALOG_PUSHED => {
                 // catalog.push 全量 push 的回执(registered/skipped)。
@@ -105,20 +105,20 @@ impl BusinessEventRouter {
         Ok(())
     }
 
-    /// 处理 routine.submitted 回执:唤醒 submit future.
+    /// 处理 routine.created 回执:唤醒 create future.
     /// wire 字段: req_id, child_id, modules?, error?
-    async fn handle_routine_submitted(&self, msg: JsonObject) {
+    async fn handle_routine_created(&self, msg: JsonObject) {
         let req_id = msg
             .get("req_id")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
         if req_id.is_empty() {
-            tracing::warn!("routine.submitted missing req_id");
+            tracing::warn!("routine.created missing req_id");
             return;
         }
-        let Some(sender) = self.runtime.pop_submit_future(&req_id).await else {
-            tracing::warn!("routine.submitted no waiter for req_id={req_id}");
+        let Some(sender) = self.runtime.pop_create_future(&req_id).await else {
+            tracing::warn!("routine.created no waiter for req_id={req_id}");
             return;
         };
         if let Some(err) = msg.get("error").and_then(Value::as_str) {

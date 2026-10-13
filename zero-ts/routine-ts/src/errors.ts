@@ -17,7 +17,7 @@ export class StreamTimeout extends TimeoutErr {}
  * 不当异常抛:start/tryStart 返回 `StartError | null`. */
 export class StartError extends Error {}
 
-export class SubmitError extends Error {}
+export class CreateError extends Error {}
 
 export class AcquireError extends Error {}
 

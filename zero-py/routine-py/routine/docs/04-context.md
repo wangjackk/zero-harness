@@ -28,19 +28,19 @@
 
 详见 [05-handle.md](./05-handle.md)。这里只列签名。
 
-### `await ctx.submit(name, kwargs=None) -> RoutineHandle`
+### `await ctx.create(name, kwargs=None) -> RoutineHandle`
 
 提交子 routine,经 kernel 回环:建命令(created),created 时返回 `RoutineHandle`。**不要求父 started**(created 即可)。
 
 ```python
-handle = await self.ctx.submit('echo', {'text': 'hi'})
+handle = await self.ctx.create('echo', {'text': 'hi'})
 # handle.id = kernel 分配的 child_id
 # handle.modules = 子 routine on_created() 返回的占用 modules
 ```
 
 ### `await ctx.call(name, kwargs=None, priority=10) -> Any`
 
-同步拿子 routine 结果:submit → start(priority) → wait 一步到位。**要求父 started**。
+同步拿子 routine 结果:create → start(priority) → wait 一步到位。**要求父 started**。
 
 ```python
 result = await self.ctx.call('echo', {'text': 'hi'})
@@ -68,7 +68,7 @@ result = await self.ctx.call('car/track', {}, priority=20)
 | `ctx.conflict(mods_a, mods_b) -> bool` | **纯本地**算两组 modules 是否冲突(cone 交集非空) | `RuntimeError`(tree 未缓存) |
 | `await ctx.get_module_tree() -> Optional[ModuleTree]` | 主动拉 `module.tree` 刷新缓存 | — |
 
-**所有运行时操作都要求父 routine 已 started**(未 started 抛 `RuntimeError`)。`submit/unsubmit` 是例外(created 即可)。
+**所有运行时操作都要求父 routine 已 started**(未 started 抛 `RuntimeError`)。`create/destroy` 是例外(created 即可)。
 
 ### `conflict` 本地预测
 
@@ -193,7 +193,7 @@ async def run(self, kwargs):
 
 | 操作 | created 后 | started 后 |
 |---|:---:|:---:|
-| `submit` / `unsubmit` | ✅ | ✅ |
+| `create` / `destroy` | ✅ | ✅ |
 | `send`(单向消息) | ✅(收)/ ✅(发,需有 target id) | ✅ |
 | `req` / `stream_req` | ✅(target 必须 started 才能回执) | ✅ |
 | `publish` | ✅ | ✅ |

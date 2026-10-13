@@ -35,7 +35,7 @@ export class ServerRuntime {
   private _mailboxes = new Map<string, MailboxCtl>()
 
   private _tasks = new Set<Promise<any>>()
-  private _submitFutures = new Map<string, Deferred<{ childId: string; modules: string[] | null }>>()
+  private _createFutures = new Map<string, Deferred<{ childId: string; modules: string[] | null }>>()
   private _acquireFutures = new Map<string, Deferred<void>>()
   private _loadFutures = new Map<string, Deferred<void>>()
   private _unloadFutures = new Map<string, Deferred<void>>()
@@ -90,15 +90,15 @@ export class ServerRuntime {
     return this.runningInstances.get(rid) ?? new cls()
   }
 
-  // --- submit future 表 ---
+  // --- create future 表 ---
 
-  registerSubmitFuture(reqId: string, fut: Deferred<{ childId: string; modules: string[] | null }>): void {
-    this._submitFutures.set(reqId, fut)
+  registerCreateFuture(reqId: string, fut: Deferred<{ childId: string; modules: string[] | null }>): void {
+    this._createFutures.set(reqId, fut)
   }
 
-  popSubmitFuture(reqId: string): Deferred<{ childId: string; modules: string[] | null }> | undefined {
-    const f = this._submitFutures.get(reqId)
-    this._submitFutures.delete(reqId)
+  popCreateFuture(reqId: string): Deferred<{ childId: string; modules: string[] | null }> | undefined {
+    const f = this._createFutures.get(reqId)
+    this._createFutures.delete(reqId)
     return f
   }
 

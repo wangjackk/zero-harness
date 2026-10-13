@@ -400,12 +400,12 @@ export class XmlAgent extends Routine {
     if (this._epoch !== epoch) throw new Interrupted()
   }
 
-  /** 工具桥的可停 call: submit → start → wait, abort 触发时 stop 子 routine. */
+  /** 工具桥的可停 call: create → start → wait, abort 触发时 stop 子 routine. */
   async callStoppable(
     name: string, kwargs: Record<string, any>, signal?: AbortSignal,
   ): Promise<any> {
     if (!signal) return await this.call(name, kwargs)
-    const handle = await this.submit(name, kwargs)
+    const handle = await this.create(name, kwargs)
     await handle.start()
     const onAbort = () => { void handle.stop().catch(() => {}) }
     if (signal.aborted) onAbort()
@@ -461,7 +461,7 @@ export class XmlAgent extends Routine {
       // 确保段 handle: mouth 被上一段占用时等待重试 (py 靠 shell 模块排队)
       while (!this._speakHandle && !this._speakPumpStop) {
         try {
-          const handle = await this.submit('speak')
+          const handle = await this.create('speak')
           await handle.start()
           this._speakHandle = handle
           this._speakActives.add(handle)

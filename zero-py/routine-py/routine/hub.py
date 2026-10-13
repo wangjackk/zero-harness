@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Type
 
 from .errors import (
     AcquireError, DeregisterError, LoadModuleError, RegisterError, ReloadError,
-    ReleaseError, SubmitError, UnloadModuleError,
+    ReleaseError, CreateError, UnloadModuleError,
 )
 from .lifecycle import LifecycleManager
 from .module_tree import ModuleTree
@@ -34,9 +34,9 @@ from .protocol import (
     MESSAGE_STREAM_OPEN_DELIVERED, PUBSUB_DELIVERED, PUBSUB_PUBLISH,
     PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE, ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
     ROUTINE_LOAD_MODULE, ROUTINE_MODULE_LOADED, ROUTINE_MODULE_UNLOADED,
-    ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
+    ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_CREATE, ROUTINE_CREATED,
     ROUTINE_REJECTED, ROUTINE_START, ROUTINE_STOP, ROUTINE_UNLOAD_MODULE,
-    ROUTINE_UNSUBMIT,
+    ROUTINE_DESTROY,
 )
 from .routine import RoutineSource, Routines, passive_wire
 from .runtime import ServerRuntime
@@ -82,7 +82,7 @@ class RoutineHub:
             LIFECYCLE_STARTED: self._on_lifecycle_started,
             LIFECYCLE_STOPPED: self._on_lifecycle_stopped,
             ROUTINE_REJECTED: self._on_routine_rejected,
-            ROUTINE_SUBMITTED: self._on_routine_submitted,
+            ROUTINE_CREATED: self._on_routine_created,
             ROUTINE_ACQUIRED: self._on_routine_acquired,
             ROUTINE_MODULE_LOADED: self._on_routine_module_loaded,
             ROUTINE_MODULE_UNLOADED: self._on_routine_module_unloaded,
@@ -134,10 +134,10 @@ class RoutineHub:
 
     async def send_lifecycle_created(self, *, id: str,
                                      modules: Optional[List[str]] = None) -> None:
-        # created 回报给 kernel:kernel 等 this 回报后才发 routine.submitted 给父,
-        # 所以父 submit 拿到 id 时 instance 一定已 created.带 modules(modules
+        # created 回报给 kernel:kernel 等 this 回报后才发 routine.created 给父,
+        # 所以父 create 拿到 id 时 instance 一定已 created.带 modules(modules
         # 类方法返回值)----kernel 存进 node.declared(Start 的 TryAcquire 用)+ 经
-        # submitted 回执带给父 handle.
+        # created 回执带给父 handle.
         payload: Dict[str, Any] = {'event': LIFECYCLE_CREATED, 'id': id}
         if modules is not None:
             payload['modules'] = modules
@@ -160,10 +160,10 @@ class RoutineHub:
 
     # --- routine 调 routine 反向事件(hub→kernel) ---
 
-    async def send_routine_submit(self, *, req_id: str, parent_id: str,
+    async def send_routine_create(self, *, req_id: str, parent_id: str,
                                   name: str, kwargs: Dict[str, Any]) -> None:
         await self._send_event({
-            'event': ROUTINE_SUBMIT,
+            'event': ROUTINE_CREATE,
             'req_id': req_id,
             'parent_id': parent_id,
             'name': name,
@@ -183,8 +183,8 @@ class RoutineHub:
     async def send_routine_stop(self, *, child_id: str) -> None:
         await self._send_event({'event': ROUTINE_STOP, 'child_id': child_id})
 
-    async def send_routine_unsubmit(self, *, child_id: str) -> None:
-        await self._send_event({'event': ROUTINE_UNSUBMIT, 'child_id': child_id})
+    async def send_routine_destroy(self, *, child_id: str) -> None:
+        await self._send_event({'event': ROUTINE_DESTROY, 'child_id': child_id})
 
     async def send_routine_acquire(self, *, req_id: str, id: str,
                                    modules: list) -> None:
@@ -488,7 +488,7 @@ class RoutineHub:
             if not error and reason == ControlDoneReason.ERROR.value:
                 error = f'routine stopped with reason={reason}'
             handle.notify_done(result=msg.get('result'), error=error, reason=reason)
-            # 先 resolve handle._ack(stop/unsubmit 成功回执)再 pop_handle
+            # 先 resolve handle._ack(stop/destroy 成功回执)再 pop_handle
             handle._resolve_ack(None)
             self.runtime.pop_handle(cid)
         # instance 清理由各自路径负责:created 态走 handle_destroy(_cleanup),
@@ -509,16 +509,16 @@ class RoutineHub:
             if not is_try and cid:
                 self.lifecycle._cleanup(cid)
         else:
-            # stop/unsubmit 失败:逻辑错误(已 start 调 unsubmit 等),抛异常
+            # stop/destroy 失败:逻辑错误(已 start 调 destroy 等),抛异常
             if handle is not None:
                 handle._reject_ack(RuntimeError(err))
 
-    async def _on_routine_submitted(self, msg: Dict[str, Any]) -> None:
+    async def _on_routine_created(self, msg: Dict[str, Any]) -> None:
         req_id = msg.get('req_id', '')
-        fut = self.runtime.pop_submit_future(req_id)
+        fut = self.runtime.pop_create_future(req_id)
         if fut is not None and not fut.done():
             if msg.get('error'):
-                fut.set_exception(SubmitError(str(msg['error'])))
+                fut.set_exception(CreateError(str(msg['error'])))
             else:
                 child_id = str(msg.get('child_id', ''))
                 modules = msg.get('modules')
@@ -705,7 +705,7 @@ class RoutineHub:
     async def _on_yielded(self, msg: Dict[str, Any]) -> None:
         """kernel 中转回来的 routine.yielded{id, data, is_final, error}.
 
-        按 id(child_id)找父侧 submit 时注册的 handle,喂它的 yield 迭代队列.
+        按 id(child_id)找父侧 create 时注册的 handle,喂它的 yield 迭代队列.
         """
         child_id = msg.get('id', '')
         handle = self.runtime.get_handle(child_id)

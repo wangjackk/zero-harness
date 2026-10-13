@@ -1,7 +1,7 @@
 """xml_agent -- reactive agent (ContextProvider memory + built-in LLM, autonomous unit).
 
 Multi-instance model: XmlAgents resident manager spawns XmlAgent children
-on request; CreateXmlAgent is the entry routine the bridge submits. Each
+on request; CreateXmlAgent is the entry routine the bridge creates. Each
 child runs concurrently, isolated by agent_id.
 
 自治 routine 集: 只依赖 routine SDK + pip 包, 不依赖应用内其他模块

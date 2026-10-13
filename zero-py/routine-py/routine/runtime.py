@@ -25,8 +25,8 @@ class ServerRuntime:
         # load/unload 后变更重推).未推送前为 None----ctx.conflict 读时若 None
         # 抛清晰错.业务侧编排策略本地算 cone/conflict.
         self.module_tree: Optional[ModuleTree] = None
-        # submit 回执:req_id → future(等 routine.submitted 带 child_id 回来)
-        self._submit_futures: Dict[str, asyncio.Future] = {}
+        # create 回执:req_id → future(等 routine.created 带 child_id 回来)
+        self._create_futures: Dict[str, asyncio.Future] = {}
         # 运行时占领/释放回执:req_id → future(等 routine.acquired/released ack)
         self._acquire_futures: Dict[str, asyncio.Future] = {}
         # load/unload 子模块回执
@@ -93,13 +93,13 @@ class ServerRuntime:
             return inst
         return cls()
 
-    # --- submit future 表 ---
+    # --- create future 表 ---
 
-    def register_submit_future(self, req_id: str, fut: asyncio.Future) -> None:
-        self._submit_futures[req_id] = fut
+    def register_create_future(self, req_id: str, fut: asyncio.Future) -> None:
+        self._create_futures[req_id] = fut
 
-    def pop_submit_future(self, req_id: str) -> Optional[asyncio.Future]:
-        return self._submit_futures.pop(req_id, None)
+    def pop_create_future(self, req_id: str) -> Optional[asyncio.Future]:
+        return self._create_futures.pop(req_id, None)
 
     # --- acquire/release future 表 ---
 

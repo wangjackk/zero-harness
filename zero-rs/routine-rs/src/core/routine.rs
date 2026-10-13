@@ -103,6 +103,14 @@ pub trait Routine: Send + Sync {
         Ok(None)
     }
 
+    /// destroy hook: created 态被销毁时的资源撤销(与 stop 分野)。
+    /// 仅在 create 之后、未 start 的实例被 destroy 时调用(started 实例的
+    /// 终止走 stop)。start 前实例可能已收 body 持有资源 —— 在此撤销。
+    /// 对齐 Python `Routine.destroy`。
+    async fn destroy(&self) -> Result<Option<JsonValue>, RoutineError> {
+        Ok(None)
+    }
+
     /// 收到 message.delivered 的回调(实例 mailbox 串行投递,同实例严格保序)。
     /// 对齐 Python `on_message`。
     async fn on_message(

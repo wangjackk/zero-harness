@@ -2,7 +2,7 @@
 
 设计上:command queue + loop,``processLeftSiblings`` 算左兄弟阻塞
 (``CanBlockRightSibling``:``wait`` 无条件阻塞;否则 scope 交集→串行,不交集→并行).
-本模块把这套编排策略搬到 py 业务侧(zero),建在 ``routine.ctx`` 的 submit/start/await
+本模块把这套编排策略搬到 py 业务侧(zero),建在 ``routine.ctx`` 的 create/start/await
 + conflict 原语上.kernel(``kernel/shell.Manager``)只管正确性不变量
 (互斥 + 生命周期 + 总线 + 级联 stop),不内置编排策略----策略属于业务侧,跟将来可能
 加的 DAG / FSM / 行为树平起平坐.
@@ -26,9 +26,9 @@
     await shell.push('wait', {'duration': 0.5})  # wait 等 a 完成,再 sleep 0.5s
     await shell.push('b')                         # b 等 wait 完成(无条件)
 
-push 返回框架原生 ``RoutineHandle``(跟 ``ctx.submit`` 一致):``await handle`` 拿
+push 返回框架原生 ``RoutineHandle``(跟 ``ctx.create`` 一致):``await handle`` 拿
 结果,``handle.stop()`` 中途停,``handle.id`` 给 p2p/req 定向,``async for`` 迭代
-body.语义对标 Go:``push`` 尽快 submit(create 态建 handle,对标 push→Ready
+body.语义对标 Go:``push`` 尽快 create(create 态建 handle,对标 push→Ready
 建订阅),``start`` 是调度点(等左兄弟完成后由 Shell 内部调,对标 loop 的
 TryStart).故调用方拿到 handle 后可 ``await``/``stop``/迭代 body,但不应自己 start.
 
@@ -68,7 +68,7 @@ class Shell:
     """模块自动串并行编排 shell(业务侧,参考 Go Shell).
 
     入参 ``routine`` 是编排的父 routine(正在跑 ``start()`` 的那个).Shell 经
-    ``routine.ctx`` 的 submit/start/await + conflict 投递子 routine:
+    ``routine.ctx`` 的 create/start/await + conflict 投递子 routine:
     左兄弟冲突→串行,不冲突→并行.
     """
 
@@ -88,7 +88,7 @@ class Shell:
         # shell 整体 done 标志 + Event(wait_done 等).所有 entry done 且 complete 后 fire.
         self._done_fired: bool = False
         self._done_evt: asyncio.Event = asyncio.Event()
-        # armed=False 时 push 只 submit(父未 started,不能 start_child);arm() 后
+        # armed=False 时 push 只 create(父未 started,不能 start_child);arm() 后
         # 才 start.auto_arm=True(默认)构造即 arm----适配 auto_sp 这种"父已 started
         # 才用 Shell"的场景.XmlRoutine 这种 created 就流式 push,start 后才 start 的
         # 编排器用 auto_arm=False.
@@ -109,7 +109,7 @@ class Shell:
                    kwargs: Optional[Dict[str, Any]] = None) -> 'RoutineHandle':
         """提交一条子 routine 命令,返回它的 ``RoutineHandle``.
 
-        对标 ``Shell.AddCommand`` + ``processLeftSiblings``:push 尽快 submit
+        对标 ``Shell.AddCommand`` + ``processLeftSiblings``:push 尽快 create
         (create 态建 handle,对标 push→Ready 建订阅).start 是调度点----本命令
         跟其左兄弟逐个判 ``CanBlockRightSibling``:冲突(cone 交集)的左兄弟须 stop
         后本命令才 start(串行);不冲突的并行.start 由 Shell 内部在左兄弟就绪后
@@ -118,8 +118,8 @@ class Shell:
 
         ``complete()`` 后再 ``push`` 抛 RuntimeError(命令加载已结束).
 
-        modules 从 submit 返回的 ``handle.modules`` 拿(子 routine created() 返回,
-        经 created 回报 → kernel → submitted 回执带回).这是占用真理源----编排器据此
+        modules 从 create 返回的 ``handle.modules`` 拿(子 routine created() 返回,
+        经 created 回报 → kernel → created 回执带回).这是占用真理源----编排器据此
         算冲突,跟 kernel Start 的 TryAcquire 一致(handle.modules = node.declared).
         static/dynamic 统一:created() 返固定 list 或按 kwargs 现算,都经同一条回报.
 
@@ -139,12 +139,12 @@ class Shell:
             raise RuntimeError('Shell interrupted, cannot push')
         ctx = self._ctx
         is_barrier = (name in ['wait', 'WAIT'])
-        # push 尽快 submit(create 态----拿 handle 给调用方;对标 push→尽快 Ready
+        # push 尽快 create(create 态----拿 handle 给调用方;对标 push→尽快 Ready
         # 建订阅).start 是调度点,延后到 _Entry._run 里(等冲突左兄弟完成后再
         # start)----对标 Ready 后由 Shell loop 决定何时 TryStart.
         # create 不占模块,只 start 占----故提交期无冲突,start 期才有.
         # handle.modules 由 kernel 解析(static 缓存 / dynamic 现算),是占用真理源.
-        handle = await ctx.submit(name, kwargs or {})
+        handle = await ctx.create(name, kwargs or {})
         mods = handle.modules if handle.modules is not None else []
         entry = _Entry(self, handle, mods, is_barrier)
         self._entries.append(entry)
@@ -155,10 +155,10 @@ class Shell:
     def arm(self) -> None:
         """标记父 routine 已 started,允许 Shell 开始 start 已 push 的 handle.
 
-        ``auto_arm=False`` 时 push 只 submit(父未 started,``start_child`` 会拒);
+        ``auto_arm=False`` 时 push 只 create(父未 started,``start_child`` 会拒);
         父 ``start()`` 被调后调本方法,schedule 所有 pending entry + 后续 push 立即
         schedule.幂等.用于 XmlRoutine 这类"created 就流式 push,start 后才 start"
-        的编排器----对标 Shell "push 尽快 submit,loop 在 started 后才 TryStart".
+        的编排器----对标 Shell "push 尽快 create,loop 在 started 后才 TryStart".
         """
         if self._armed:
             return
@@ -234,7 +234,7 @@ class Shell:
 
         跟正常 stop 的对照:
           - 正常 stop:bottom-up,父等子(``handle.wait`` 收 stopped)
-          - interrupt:top-down,父推子,绕开等待立刻 stop/unsubmit 全部
+          - interrupt:top-down,父推子,绕开等待立刻 stop/destroy 全部
 
         典型用法(编排者 stop hook)::
 
@@ -318,7 +318,7 @@ class _Entry:
     """Shell 内部跟踪条目(handle + 编排状态).``push`` 把 handle 返回给调用方,
     ``_Entry`` 负责等左兄弟 + start handle + 收 result.
 
-    push 已 submit(create 态建 handle----对标 push→Ready);``_run`` 负责 start
+    push 已 create(create 态建 handle----对标 push→Ready);``_run`` 负责 start
     调度:等冲突的左兄弟完成(对标 ``StartWait(sib, Stopped)``)→ ``handle.start()``
     → ``await handle``;result 放 StartError / 异常 / 返回值;``finally`` set
     ``_done`` 放行后继(失败已释放模块,后继冲突前提消失).
@@ -400,4 +400,4 @@ class _Entry:
         if self.handle.is_started():
             await self.handle.stop(fire=True)
         else:
-            await self.handle.unsubmit(fire=True)
+            await self.handle.destroy(fire=True)

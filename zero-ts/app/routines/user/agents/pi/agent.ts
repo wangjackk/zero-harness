@@ -454,14 +454,14 @@ export class PiAgent extends Routine {
 
   // ── 事件处理 ──
 
-  /** 工具桥的可停 call: submit → start → wait, abort 触发时 stop 子 routine.
+  /** 工具桥的可停 call: create → start → wait, abort 触发时 stop 子 routine.
    *  py 侧 ipython 的 stop hook 会 interrupt_kernel, 正在跑的 cell 在执行点
    *  抛 KeyboardInterrupt → run() 收敛 → handle.wait() 快速返回. */
   async callStoppable(
     name: string, kwargs: Record<string, any>, signal?: AbortSignal,
   ): Promise<any> {
     if (!signal) return await this.call(name, kwargs)
-    const handle = await this.submit(name, kwargs)
+    const handle = await this.create(name, kwargs)
     await handle.start()
     const onAbort = () => { void handle.stop().catch(() => {}) }
     if (signal.aborted) onAbort()

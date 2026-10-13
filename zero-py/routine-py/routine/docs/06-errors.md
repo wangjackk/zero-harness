@@ -11,7 +11,7 @@ routine SDK 的异常分两类:
 
 | 异常 | 基类 | 触发场景 | 可恢复? |
 |---|---|---|---|
-| `SubmitError` | `Exception` | `ctx.submit()` 被 kernel 拒(name 找不到 / kwargs 不合法) | 改入参后重新 submit |
+| `CreateError` | `Exception` | `ctx.create()` 被 kernel 拒(name 找不到 / kwargs 不合法) | 改入参后重新 create |
 | `StartError` | `Exception` | `handle.start(priority)`/`try_start` 撞冲突 / 父未 started | `try_start` 返回值可重试;`start` 失败后 handle 失效 |
 | `AcquireError` | `Exception` | `ctx.acquire` 失败(模块被占且档位不足 / 驱逐后竞态) | 是——重试(try 语义自行 catch) |
 | `ReleaseError` | `Exception` | `ctx.release` 失败(罕见,rid 未 started) | 检查 lifecycle 状态 |
@@ -30,7 +30,7 @@ routine SDK 的异常分两类:
 
 ```python
 from routine import (
-    SubmitError, StartError,
+    CreateError, StartError,
     AcquireError, ReleaseError,
     ReqError, ReqTimeout,
     StreamError, StreamCancelled, StreamTimeout,
@@ -45,19 +45,19 @@ from routine.errors import LoadModuleError, UnloadModuleError
 
 ## typed exception 详解
 
-### `SubmitError`
+### `CreateError`
 
-`ctx.submit()` 失败——kernel 拒了 submit(`routine.submitted` 带 `error`)。
+`ctx.create()` 失败——kernel 拒了 create(`routine.created` 带 `error`)。
 
 - **常见原因**:`name` 找不到 / `kwargs` 不合法。
-- **跟 `StartError` 区别**:submit 失败在 created 阶段(建子命令前),start 失败在 start 阶段(占模块时)。
-- **可恢复**:改入参后重新 submit。
+- **跟 `StartError` 区别**:create 失败在 created 阶段(建子命令前),start 失败在 start 阶段(占模块时)。
+- **可恢复**:改入参后重新 create。
 
 ```python
 try:
-    handle = await self.submit('nonexistent', {})
-except SubmitError as exc:
-    self._logger.warning('submit failed: %s', exc)
+    handle = await self.create('nonexistent', {})
+except CreateError as exc:
+    self._logger.warning('create failed: %s', exc)
 ```
 
 ### `StartError`
@@ -75,7 +75,7 @@ except SubmitError as exc:
 模块冲突是正常业务情况(占住者还没释放),不该打断调用方 `run()` 体——所以 `try_start` 把它做成返回值,而不是异常:
 
 ```python
-handle = await self.submit('worker', {'task_id': 42})
+handle = await self.create('worker', {'task_id': 42})
 err = await handle.try_start()
 if err:
     # 模块冲突,稍后重试(handle 仍可用)
@@ -182,7 +182,7 @@ except StreamError as exc:
 | `no active context` | `Routine.ctx` 在 `bind_ctx` 前访问 | 在 `on_created` 后访问 ctx |
 | `must start() before X` | `ctx.call/acquire/release/force_*/load_module/unload_module` 在父 started 前调 | 先 `ack_start` / 等 `run()` 开始 |
 | `module tree not cached yet` | `ctx.conflict` 在 kernel 推 module.tree 前调 | 先 `await ctx.get_module_tree()` |
-| `no ctx bound, cannot X` | `handle.start/stop/unsubmit` 在未绑 ctx 的 handle 上调 | handle 由 `ctx.submit` 创建,正常不会未绑 |
+| `no ctx bound, cannot X` | `handle.start/stop/destroy` 在未绑 ctx 的 handle 上调 | handle 由 `ctx.create` 创建,正常不会未绑 |
 | `another start/stop in flight` | `handle._send_and_wait` 重入 | 等上一个 start/stop 完成再调 |
 | `request_stop requires peer_id` | `RoutineHub.request_stop` 没传 peer_id | 传 peer_id |
 | `Cannot bind to address` | gRPC 端口被占 | 改地址 / 释放端口 |
@@ -193,7 +193,7 @@ except StreamError as exc:
 `handle.wait()` 在子 routine 异常停止时 raise `RuntimeError(self.error)`——`error` 是子 `run()` 抛出的异常字符串:
 
 ```python
-handle = await self.submit('worker', {...})
+handle = await self.create('worker', {...})
 await handle.start()
 try:
     result = await handle
@@ -264,13 +264,13 @@ raise RuntimeError('worker never starts')
 
 | 调用 | 抛什么 | 何时 |
 |---|---|---|
-| `ctx.submit` | `SubmitError` | kernel 拒 submit |
-| `ctx.submit` | `RuntimeError` | 调用 bug(不应发生) |
+| `ctx.create` | `CreateError` | kernel 拒 create |
+| `ctx.create` | `RuntimeError` | 调用 bug(不应发生) |
 | `handle.try_start` | (返回值) | `Optional[StartError]`,None=成功 |
 | `handle.start` | `StartError` | kernel 拒 start,handle 失效 |
 | `handle.start(priority>0)` | `StartError` | 驱逐后仍冲突或存在 `>=` 平级 holder,handle 失效 |
 | `handle.stop` | `RuntimeError` | 另一个 stop/start in flight |
-| `handle.unsubmit` | `RuntimeError` | 已 started 的 routine 调 unsubmit |
+| `handle.destroy` | `RuntimeError` | 已 started 的 routine 调 destroy |
 | `handle.wait` / `await handle` | `RuntimeError(self.error)` | 子异常停止 |
 | `ctx.call` | `StartError` / `RuntimeError` | start 失败(含 priority 驱逐分支) / 子异常 |
 | `ctx.acquire` | `AcquireError` | 模块被占且档位不足(或驱逐后竞态) |

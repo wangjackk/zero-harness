@@ -15,7 +15,7 @@ use tonic::transport::Server;
 pub use lifecycle::LifecycleManager;
 pub use queries::QueryService;
 pub use router::BusinessEventRouter;
-pub use state::{HandleWaiter, ServerRuntime, SubmitWaiter};
+pub use state::{HandleWaiter, ServerRuntime, CreateWaiter};
 pub use transport::OutboundTransport;
 
 pub use crate::grpc::client::{GrpcClient, GrpcClientOptions};

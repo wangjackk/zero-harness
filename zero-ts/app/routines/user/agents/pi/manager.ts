@@ -291,7 +291,7 @@ export class PiAgentManager extends Routine {
     }
     let handle
     try {
-      handle = await this.submit(AGENT_ROUTINE_NAME, childKwargs)
+      handle = await this.create(AGENT_ROUTINE_NAME, childKwargs)
       await handle.start()
     } catch (exc: any) {
       log.error(`spawn pi agent ${agentId} failed: ${exc?.message ?? exc}`)

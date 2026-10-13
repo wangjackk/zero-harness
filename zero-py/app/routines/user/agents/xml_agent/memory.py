@@ -104,7 +104,7 @@ class Memory:
             if after is not None:
                 after()
 
-    def _submit_write(self, fn: Callable[[], None]) -> None:
+    def _create_write(self, fn: Callable[[], None]) -> None:
         """投一个写到后台线程,立即返回(不阻塞事件循环)."""
         self._write_q.put((fn, None))
 
@@ -264,7 +264,7 @@ class Memory:
                                 (title, aid),
                             )
 
-        self._submit_write(_write)
+        self._create_write(_write)
 
     def load_history(
         self,
@@ -546,7 +546,7 @@ class Memory:
                     (message_id, session_id, 'user', content, 0, ts, extend, 'summary'),
                 )
 
-        self._submit_write(_write)
+        self._create_write(_write)
 
     # ------------------------------------------------------------------
     # agents 表管理 (agent = session, 每个独立)
@@ -638,7 +638,7 @@ class Memory:
                     'WHERE agent_id = ?',
                     (json.dumps(cur), _now_iso(), agent_id),
                 )
-        self._submit_write(_write)
+        self._create_write(_write)
 
     def delete_agent(self, agent_id: str) -> None:
         """删除 agent: agents 行 + 该 session 的所有 messages.

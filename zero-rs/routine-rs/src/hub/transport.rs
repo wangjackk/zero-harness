@@ -1,5 +1,5 @@
 use crate::{
-    core::{HandleReply, ReqReply, RoutineIo, SubmitReply},
+    core::{HandleReply, ReqReply, RoutineIo, CreateReply},
     grpc,
     protocol::{
         events::{
@@ -161,23 +161,23 @@ impl RoutineIo for OutboundTransport {
         .await
     }
 
-    async fn register_submit_future(
+    async fn register_create_future(
         &self,
         req_id: String,
-        sender: oneshot::Sender<SubmitReply>,
+        sender: oneshot::Sender<CreateReply>,
     ) {
-        // SubmitReply 和 SubmitWaiter 内部类型一致 (Result<(String, Option<Vec<String>>), String>),
+        // CreateReply 和 CreateWaiter 内部类型一致 (Result<(String, Option<Vec<String>>), String>),
         // 直接转发到 runtime 的 future 表.
         self.runtime
-            .register_submit_future(&req_id, sender)
+            .register_create_future(&req_id, sender)
             .await;
     }
 
-    async fn pop_submit_future(
+    async fn pop_create_future(
         &self,
         req_id: &str,
-    ) -> Option<oneshot::Sender<SubmitReply>> {
-        self.runtime.pop_submit_future(req_id).await
+    ) -> Option<oneshot::Sender<CreateReply>> {
+        self.runtime.pop_create_future(req_id).await
     }
 
     async fn register_handle_waiter(

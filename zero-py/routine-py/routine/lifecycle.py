@@ -21,6 +21,7 @@ from .routine import Routine
 _REASON_TO_ENUM: Dict[str, ControlDoneReason] = {
     'auto': ControlDoneReason.AUTO,
     'stop': ControlDoneReason.STOP,
+    'destroyed': ControlDoneReason.DESTROYED,
     'error': ControlDoneReason.ERROR,
     'cancel': ControlDoneReason.CANCEL,
     'force': ControlDoneReason.FORCE,
@@ -80,7 +81,7 @@ class LifecycleManager:
             runtime=self.runtime, transport=self.hub.transport,
         )
         instance.bind_ctx(ctx)
-        # init_kwargs = submit 入参(routine 的唯一入参来源)
+        # init_kwargs = create 入参(routine 的唯一入参来源)
         instance.set_init_kwargs(kwargs)
         # pubsub 订阅在 created:同步 await--created 回报前确保 kernel 订阅表
         # 已更新,避免 publish race.
@@ -140,7 +141,7 @@ class LifecycleManager:
             return
         ctx = instance.ctx  # created 已绑;init_kwargs 已在 created 存
 
-        # run 入参:用 created 时存入 instance.init_kwargs 的那份 submit kwargs
+        # run 入参:用 created 时存入 instance.init_kwargs 的那份 create kwargs
         start_kwargs = instance.init_kwargs or {}
 
         async def runner():
@@ -199,11 +200,12 @@ class LifecycleManager:
             raise
 
     async def handle_destroy(self, msg: Dict[str, Any]) -> None:
-        """lifecycle.destroy:kernel 销毁 created 态 routine(已 submit 未 start).
+        """lifecycle.destroy:kernel 销毁 created 态 routine(已 create 未 start).
 
-        destroy 也是终止 ---- 走 stop hook(资源撤销的统一契约: created 态
-        实例可能在 start 前已收 body 持有资源)后 on_stopped + 回报 +
-        cleanup. 用于:unsubmit / start 失败清理 / 父终止级联清 created 子.
+        created 态销毁走独立 destroy hook(与 stop 分野: stop 一个从未
+        start 的实例语义荒谬) ---- start 前实例可能已收 body 持有资源,
+        destroy hook 负责撤销. 用于:destroy / start 失败清理 / 父终止
+        级联清 created 子.
         """
         rid = str(msg.get('id', ''))
         instance = self.runtime.running_instances.get(rid)
@@ -213,18 +215,18 @@ class LifecycleManager:
         stop_result = None
         try:
             stop_result = await asyncio.wait_for(
-                instance.stop(), timeout=self.STOP_TIMEOUT,
+                instance.destroy(), timeout=self.STOP_TIMEOUT,
             )
         except asyncio.TimeoutError:
             self.runtime.logger.warning(
-                f'{instance.name}#{rid} destroy: stop() timeout',
+                f'{instance.name}#{rid} destroy: destroy() timeout',
             )
         except Exception as exc:
             self.runtime.logger.exception(
-                f'{instance.name}#{rid} destroy: stop() failed: {exc}',
+                f'{instance.name}#{rid} destroy: destroy() failed: {exc}',
             )
-        await instance.on_stopped(reason='stop', result=stop_result)
-        await self._send_stopped(rid, instance=instance, reason='stop')
+        await instance.on_stopped(reason='destroyed', result=stop_result)
+        await self._send_stopped(rid, instance=instance, reason='destroyed')
         self._cleanup(rid)
 
     async def _graceful_stop(self, rid: str, instance: Routine, *,

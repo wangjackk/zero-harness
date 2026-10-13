@@ -59,16 +59,16 @@ class Act(XmlRoutine):
         self._child_count: int = 0
         self._done_count: int = 0
         self._body_done: asyncio.Event = asyncio.Event()
-        # agent_id: agent submit act 时传入, push 工具子前注入到 ev.kwargs.
+        # agent_id: agent create act 时传入, push 工具子前注入到 ev.kwargs.
         # tool routine 通过 agent/rid 查 rid 后 ctx.req(rid, 'agent_state') 反向获取 skill_dir 等.
         self._agent_id: str | None = None
-        # routine 标签 {全名: 别名}: agent submit act 时传入 (本轮快照),
+        # routine 标签 {全名: 别名}: agent create act 时传入 (本轮快照),
         # on_xml_event 里把别名标签映射回全名再派发 (内部翻成 {别名: 全名} 反查表).
         self._aliases: dict[str, str] = {}
         # handle.id -> 输入 kwargs (过滤掉框架注入字段后), 供 _on_child_done 带进 yield 结果.
         self._child_inputs: dict[str, dict] = {}
         # 当前 speak 子 handle(顶层裸文本逐字显示).
-        # on_body_text is_first 时 submit speak, 流式 send text, is_last 时 send _eof + await done.
+        # on_body_text is_first 时 create speak, 流式 send text, is_last 时 send _eof + await done.
         self._speak_handle: Any = None
 
     async def on_created(self, rid: str, kwargs: Dict[str, Any]) -> None:
@@ -103,7 +103,7 @@ class Act(XmlRoutine):
                 return
             if chunk.is_first:
                 # 只透传 agent 身份: 情绪是 agent 的活状态, speak 起 run
-                # 时经 agent/state 现取 tts_instruction, 不在 submit 处快照
+                # 时经 agent/state 现取 tts_instruction, 不在 create 处快照
                 self._speak_handle = await self._body_shell.push(
                     'speak', {AGENT_ID_KEY: self._agent_id})
             if chunk.text:

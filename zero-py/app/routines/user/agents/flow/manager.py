@@ -3,7 +3,7 @@
 职责边界: FlowHub 是纯前门(HTTP/WS 协议适配), agent 生命周期(spawn/stop/
 list/delete + 直击 agent 的转发)集中在本 manager:
 
-- spawn: ``submit('flow_agent', kwargs)`` 直起, 不经 preset 与 sqlite Store
+- spawn: ``create('flow_agent', kwargs)`` 直起, 不经 preset 与 sqlite Store
 - 存储: 集中索引 ``~/.zero/flow-agents.json`` (发现不扫盘) + workspace 内
   agent.json (hub 元数据); EventLog JSONL 仍是唯一真相
 - 变更通知: ``publish('agents_changed' / 'conversation_open')`` ---- 前门
@@ -163,7 +163,7 @@ class FlowManager(Routine):
             'condense_config': data.get('condense_config'),
         }
         try:
-            handle = await self.submit(_AGENT_ROUTINE, child_kwargs)
+            handle = await self.create(_AGENT_ROUTINE, child_kwargs)
             await handle.start()
         except Exception as exc:
             _log.error('spawn flow agent %s failed: %r', agent_id, exc)

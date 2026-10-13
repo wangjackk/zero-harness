@@ -115,7 +115,7 @@ class Evolve(Routine):
         return {'ok': True, 'classes': found, 'sha256': hashlib.sha256(code.encode('utf-8')).hexdigest()[:12]}
 
     async def _invoke(self, name: str, kwargs: Dict[str, Any], timeout: float = 30.0) -> Any:
-        handle = await self.submit(name, dict(kwargs))
+        handle = await self.create(name, dict(kwargs))
         await handle.start()
         return await asyncio.wait_for(handle, timeout=timeout)
 

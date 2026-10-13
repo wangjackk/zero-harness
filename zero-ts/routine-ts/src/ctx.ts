@@ -1,10 +1,10 @@
 /** RunContext ---- 每次 ``run()`` invocation 的运行上下文(移植 z2/ctx.py).
 
- 身份字段 id / name + lifecycle 出口(ackStart / requestStop)+ submit 能力
+ 身份字段 id / name + lifecycle 出口(ackStart / requestStop)+ create 能力
  (routine 调 routine,经 kernel 回环).
 
- submit 流程:发 routine.submit{req_id, name, kwargs, parent_id=self.id} 给
- kernel → kernel 建子命令(Create,不 Start)→ 回 routine.submitted{req_id,
+ create 流程:发 routine.create{req_id, name, kwargs, parent_id=self.id} 给
+ kernel → kernel 建子命令(Create,不 Start)→ 回 routine.created{req_id,
  child_id, modules} → 拿到 child_id 建 RoutineHandle 注册到 runtime handle 表.
 
  handle.start()/stop() 发 routine.start/stop 给 kernel → kernel 走编排
@@ -46,7 +46,7 @@ export interface ProviderStream {
 }
 
 export class RunContext {
-  static ACK_TIMEOUT = 30.0  // submit/acquire/release 等 kernel ack 默认超时(秒)
+  static ACK_TIMEOUT = 30.0  // create/acquire/release 等 kernel ack 默认超时(秒)
 
   /** hub 引用(下划线约定私有,handle 层同模块簇内使用). */
   readonly _io: RoutineHub
@@ -74,43 +74,43 @@ export class RunContext {
   }
 
   /** 父 routine 必须 started(ackStart 后)----否则抛错.handle 层 start/stop
-   * 子 routine 前的守卫.submit/unsubmit 不查(created 即可). */
+   * 子 routine 前的守卫.create/destroy 不查(created 即可). */
   requireParentStarted(action: string): void {
     if (this._routine._phase !== 'started') {
       throw new Error(`${this.name}: must start() before ${action} (parent routine not started)`)
     }
   }
 
-  // --- routine 调 routine(submit) ---
+  // --- routine 调 routine(create) ---
 
   /** 提交一个子 routine,经 kernel 回环:建命令(created),created 回报后返回
    * handle.handle.modules = 子 routine modules() 静态方法声明的占用 modules. */
-  async submit(name: string, kwargs: Payload | null = null): Promise<RoutineHandle> {
+  async create(name: string, kwargs: Payload | null = null): Promise<RoutineHandle> {
     const reqId = newReqId()
     const fut = new Deferred<{ childId: string; modules: string[] | null }>()
-    this.runtime.registerSubmitFuture(reqId, fut)
+    this.runtime.registerCreateFuture(reqId, fut)
     let r: { childId: string; modules: string[] | null }
     try {
-      await this._io.sendRoutineSubmit({ reqId, parentId: this.id, name, kwargs: kwargs ?? {} })
-      r = await withTimeout(fut.promise, RunContext.ACK_TIMEOUT * 1000, `submit ${name}`)
+      await this._io.sendRoutineCreate({ reqId, parentId: this.id, name, kwargs: kwargs ?? {} })
+      r = await withTimeout(fut.promise, RunContext.ACK_TIMEOUT * 1000, `create ${name}`)
     } finally {
-      this.runtime.popSubmitFuture(reqId)
+      this.runtime.popCreateFuture(reqId)
     }
     const handle = new RoutineHandle(r.childId, name, { ctx: this, modules: r.modules })
     this._io.registerHandle(r.childId, handle)
-    // 拿到 handle 时子一定已 created(kernel 等 created 回报才发 submitted):
+    // 拿到 handle 时子一定已 created(kernel 等 created 回报才发 created):
     // created 路由表 + ctx 都已就绪----可直接 send / req / publish.
     return handle
   }
 
-  /** 同步拿子 routine 结果:submit → start(priority) → wait 一步到位.
+  /** 同步拿子 routine 结果:create → start(priority) → wait 一步到位.
    * start 失败抛 StartError;子异常停止抛 Error;正常返回 result.
    * priority: start 优先级(档位约定见 routine.ts 头注).模块冲突时
    * incoming 严格大于全部第三方 holder 才驱逐(语义同 handle.start). */
   async call(name: string, kwargs: Payload | null = null, priority: number = 10): Promise<any> {
     this.requireStarted('call()')
     const kw: Payload = { ...(kwargs ?? {}) }
-    const handle = await this.submit(name, kw)
+    const handle = await this.create(name, kw)
     await handle.start(priority)
     return await handle.wait()
   }

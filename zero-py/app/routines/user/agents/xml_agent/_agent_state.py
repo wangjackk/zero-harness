@@ -17,5 +17,5 @@ class AgentState(BaseModel):
     project_root: str | None = None
     session_id: str | None = None
     # 当前 mood 出的 TTS 语音指令(中性带为空): speak 起 run 时现取,
-    # 不随 act submit 快照 ---- 情绪是 agent 的活状态
+    # 不随 act create 快照 ---- 情绪是 agent 的活状态
     tts_instruction: str | None = None

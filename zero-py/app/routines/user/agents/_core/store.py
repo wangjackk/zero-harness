@@ -143,7 +143,7 @@ class Store:
             self._local.conn = None
             conn.close()
 
-    def _submit_write(self, fn: Callable[[], None]) -> None:
+    def _create_write(self, fn: Callable[[], None]) -> None:
         """queue a write closure on the background writer; return immediately."""
         self._write_q.put((fn, None))
 
@@ -255,7 +255,7 @@ class Store:
                         (content[:60], agent_id_, ''),
                     )
 
-        self._submit_write(_write)
+        self._create_write(_write)
 
     def _raw_insert(
         self,
@@ -276,7 +276,7 @@ class Store:
                     (agent_id_, session_id_, typ_, ts_, data_),
                 )
 
-        self._submit_write(_write)
+        self._create_write(_write)
 
     def replay(
         self,
@@ -496,7 +496,7 @@ class Store:
                     (model_, preset, now_, agent_id_),
                 )
 
-        self._submit_write(_write)
+        self._create_write(_write)
 
     def list_agents(self) -> list[dict[str, Any]]:
         """all agent rows, newest-updated first (返回元数据 + session_id + preset)."""
@@ -561,7 +561,7 @@ class Store:
                     'DELETE FROM agents WHERE agent_id = ?', (agent_id_,)
                 )
 
-        self._submit_write(_write)
+        self._create_write(_write)
 
     # ------------------------------------------------------------------
     # session 消息读取 (agent_id + session_id 联合查询)

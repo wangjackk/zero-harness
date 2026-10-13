@@ -3,7 +3,7 @@
 is_passive=True -> kernel auto-starts on connect (single resident instance).
 Driven via req (bridge -> entry routine -> manager):
 
-  - create_agent  : submit+start a XmlAgent child, return agent_id
+  - create_agent  : create+start a XmlAgent child, return agent_id
   - list_agents   : enumerate agents (live + historical, from the sqlite Memory)
   - stop_agent    : cascade-stop a child
 
@@ -33,7 +33,7 @@ from .llm import LLMClient, _DEFAULT_MODEL
 
 _log = setup_logger('xml_agent.manager')
 
-# child routine name -- what manager submits.
+# child routine name -- what manager creates.
 _AGENT_ROUTINE_NAME = 'xml/agent'
 # resident manager routine name -- what XmlAgentCreate locates by name to
 # req into.
@@ -242,7 +242,7 @@ class XmlAgents(Routine):
                 except Exception as exc:
                     _log.warning('stop child %s on manager stop: %r', agent_id, exc)
         self._agents.clear()
-        # wake_track 也是本 manager submit 的 child, 一并收口
+        # wake_track 也是本 manager create 的 child, 一并收口
         handle = self._wake_track
         self._wake_track = None
         if handle is not None and not handle.is_done():
@@ -295,8 +295,8 @@ class XmlAgents(Routine):
 
     async def _arm_wake_track(self, cal_angle=None) -> None:
         """唤醒即重新武装 car/wake_track: stop 旧实例(打断在跑 align/
-        track, finally 零速)再带 first_cal_angle submit 新实例 ---- 每次
-        唤醒窗口重新计时, 实例恒唯一不堆积. 车离线等 SubmitError 静默
+        track, finally 零速)再带 first_cal_angle create 新实例 ---- 每次
+        唤醒窗口重新计时, 实例恒唯一不堆积. 车离线等 CreateError 静默
         降级 ---- 语音链不受影响. Lock 串行化并发 wake 帧的 re-arm."""
         async with self._wake_track_lock:
             handle = self._wake_track
@@ -307,7 +307,7 @@ class XmlAgents(Routine):
                 except Exception as exc:
                     _log.warning('stop old wake_track: %r', exc)
             try:
-                handle = await self.submit(
+                handle = await self.create(
                     'car/wake_track', {'first_cal_angle': cal_angle})
                 await handle.start()
                 self._wake_track = handle
@@ -426,7 +426,7 @@ class XmlAgents(Routine):
         self, agent_id: str, data: dict, *, is_resume: bool, session_id: str,
         model: str, protocol: str | None = None,
     ) -> dict:
-        """公共 spawn 逻辑: 解析参数 → submit+start child → 记录 live.
+        """公共 spawn 逻辑: 解析参数 → create+start child → 记录 live.
 
         create / resume 共用, 区别仅在前置校验 (agent_id 来源 + DB 检查) 和
         register_agent (由调用方各自处理). model / protocol 由调用方解析完毕
@@ -447,7 +447,7 @@ class XmlAgents(Routine):
                 child_kwargs[opt_key] = data[opt_key]
         try:
             # 预检 LLM 配置 (model/protocol 组合 + reasoning 覆盖档位):
-            # 在 submit 前拦截未知 model / 未声明协议 / 非法档位, spawn
+            # 在 create 前拦截未知 model / 未声明协议 / 非法档位, spawn
             # 直接返回错误而不是起一个坏 child.
             probe = LLMClient(model, protocol=protocol)
             effort = (data.get('reasoning') or {}).get('effort')
@@ -455,7 +455,7 @@ class XmlAgents(Routine):
                 probe.set_reasoning_effort(
                     None if effort == 'none' else effort)
             reasoning_effort = probe.reasoning_effort
-            handle = await self.submit(_AGENT_ROUTINE_NAME, child_kwargs)
+            handle = await self.create(_AGENT_ROUTINE_NAME, child_kwargs)
             await handle.start()
         except Exception as exc:
             action = 'resume' if is_resume else 'create'
@@ -629,8 +629,8 @@ class CreateXmlAgentOutput(BaseModel):
 class CreateXmlAgent(Routine):
     """entry routine: spawn a xml agent via the resident manager.
 
-    bridge submits this routine (ctx.call) -> run locates the resident
-    XmlAgents manager by name and reqs it to submit+start a XmlAgent
+    bridge creates this routine (ctx.call) -> run locates the resident
+    XmlAgents manager by name and reqs it to create+start a XmlAgent
     child. returns the new agent_id.
     """
 
@@ -646,7 +646,7 @@ class CreateXmlAgent(Routine):
         ),
     }
 
-    # req timeout: manager submit+start; normally < 1s. 10s generous ceiling.
+    # req timeout: manager create+start; normally < 1s. 10s generous ceiling.
     _REQ_TIMEOUT = 10.0
 
     async def run(self, kwargs: Dict[str, Any]) -> dict:

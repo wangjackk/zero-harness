@@ -1,4 +1,4 @@
-/** RoutineHandle ---- 父侧拿到的"指向一次 submit 的子 routine"的本地句柄.
+/** RoutineHandle ---- 父侧拿到的"指向一次 create 的子 routine"的本地句柄.
 
  handle.id = kernel 分配的 command id(string).
  notify 路径统一经 kernel 中转:子 routine 自己发 lifecycle.started/stopped 给
@@ -14,14 +14,14 @@ import type { RunContext } from './ctx'
 // body 迭代终结哨兵(distinguish from yielded null / result)
 const BODY_DONE = Symbol('routine.bodyDone')
 
-// start/stop/unsubmit 等 ack 默认超时(对齐 ctx ACK_TIMEOUT=30s): kernel 回执
+// start/stop/destroy 等 ack 默认超时(对齐 ctx ACK_TIMEOUT=30s): kernel 回执
 // 丢失/路由遗漏时抛 TimeoutErr, 不永久挂起.
 const ACK_TIMEOUT = 30_000
 
 export class RoutineHandle {
   readonly id: string
   name: string | null
-  /** submit 时 kernel 确定的占用 modules(created 回报带回).编排器据此算冲突. */
+  /** create 时 kernel 确定的占用 modules(created 回报带回).编排器据此算冲突. */
   modules: string[] | null
   /** start 成功后镜像的档位(kernel Node.priority 的调用方视图).null=尚未
    * start.编排器可读(h1.priority vs h2.priority 辅助裁决). */
@@ -37,7 +37,7 @@ export class RoutineHandle {
   private _ctx: RunContext | null
   private _started = new AsyncEvent()
   private _done = new AsyncEvent()
-  /** start/try_start/stop/unsubmit 的 ack future.hub.onInbound 收
+  /** start/try_start/stop/destroy 的 ack future.hub.onInbound 收
    * lifecycle.started/stopped / routine.rejected 时按 child_id 找到本 handle,
    * 调 resolveAck/rejectAck 唤醒. */
   private _ack: DeferredLike | null = null
@@ -88,7 +88,7 @@ export class RoutineHandle {
     if (ack?.resolve) ack.resolve(value)
   }
 
-  /** hub.onInbound 收到 rejected(op=stop/unsubmit)时调.幂等. */
+  /** hub.onInbound 收到 rejected(op=stop/destroy)时调.幂等. */
   _rejectAck(exc: Error): void {
     const ack = this._ack
     if (ack?.reject) ack.reject(exc)
@@ -152,16 +152,16 @@ export class RoutineHandle {
     await this.sendAndWait(() => this._ctx!._io.sendRoutineStop({ childId: this.id }))
   }
 
-  /** 撤销提交:清 created 态子命令(未 start 的).跟 submit 对称.已 start 的
-   * 调本方法会被 kernel 拒(rejected op=unsubmit)----该用 stop. */
-  async unsubmit(opts: { fire?: boolean } = {}): Promise<void> {
-    if (!this._ctx) throw new Error(`${this}: no ctx bound, cannot unsubmit`)
-    this.requireNotDone('unsubmit')
+  /** 销毁 created 态子命令(未 start 的).跟 create 对称.已 start 的
+   * 调本方法会被 kernel 拒(rejected op=destroy)----该用 stop. */
+  async destroy(opts: { fire?: boolean } = {}): Promise<void> {
+    if (!this._ctx) throw new Error(`${this}: no ctx bound, cannot destroy`)
+    this.requireNotDone('destroy')
     if (opts.fire) {
-      await this._ctx._io.sendRoutineUnsubmit({ childId: this.id })
+      await this._ctx._io.sendRoutineDestroy({ childId: this.id })
       return
     }
-    await this.sendAndWait(() => this._ctx!._io.sendRoutineUnsubmit({ childId: this.id }))
+    await this.sendAndWait(() => this._ctx!._io.sendRoutineDestroy({ childId: this.id }))
   }
 
   // --- waits ---

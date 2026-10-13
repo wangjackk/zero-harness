@@ -2,7 +2,7 @@ use crate::{
     core::{
         messaging::{RequestHandler, RequestSpec, RoutineSource, SubscribeHandler, SubscribeSpec},
         BaseModule, HandleReply, RoutineError, RoutineOutput, RoutineRegistry,
-        RunContext, SubmitReply, Routine,
+        RunContext, CreateReply, Routine,
     },
     grpc::routine::Frame,
     protocol::{JsonObject, JsonValue},
@@ -22,9 +22,9 @@ use tokio_util::sync::CancellationToken;
 /// mailbox 慢回调阈值:超过打 warning,定位积压源头(对齐 Python _MAIL_SLOW_MS)。
 const MAIL_SLOW: Duration = Duration::from_secs(2);
 
-/// submit 回执等待者: req_id → oneshot sender.
-/// 父 routine submit 后等 routine.submitted{req_id, child_id, modules} 回执.
-pub type SubmitWaiter = oneshot::Sender<SubmitReply>;
+/// create 回执等待者: req_id → oneshot sender.
+/// 父 routine create 后等 routine.created{req_id, child_id, modules} 回执.
+pub type CreateWaiter = oneshot::Sender<CreateReply>;
 
 /// 子 routine 完成等待者: child_id → oneshot sender.
 /// 父 routine call/handle.wait 等 lifecycle.stopped{id=child_id, result, error} 中转回.
@@ -74,6 +74,11 @@ impl RoutineInstance {
 
     pub async fn stop(&self) -> Result<Option<JsonValue>, RoutineError> {
         self.routine.stop().await
+    }
+
+    /// created 态销毁的 destroy hook(与 stop 分野)。
+    pub async fn destroy(&self) -> Result<Option<JsonValue>, RoutineError> {
+        self.routine.destroy().await
     }
 
     /// 实例 mailbox 消费者逐条调(串行保序)。
@@ -126,7 +131,7 @@ pub struct InvocationState {
     pub finalized: bool,
     pub run_task: Option<JoinHandle<()>>,
     pub ctx: Option<RunContext>,
-    /// submit 入参(lifecycle.created 投递):created 时存,start 时用。
+    /// create 入参(lifecycle.created 投递):created 时存,start 时用。
     /// kernel 的 sendStart 不带 kwargs----对齐 Python `_init_kwargs` 模式。
     pub init_kwargs: JsonObject,
     /// routine 名(created 时填,resolve_source 补 source.name 用)。
@@ -160,9 +165,9 @@ pub struct ServerRuntime {
     pub running_instances: Mutex<HashMap<String, InvocationState>>,
     pub last_heartbeat: Mutex<HashMap<String, Instant>>,
     pub watchdog_started: AtomicBool,
-    /// submit 回执等待表: req_id → waiter. 父 routine submit 后注册,等
-    /// routine.submitted 回执唤醒. 对齐 Python runtime.register_submit_future.
-    pub submit_futures: Mutex<HashMap<String, SubmitWaiter>>,
+    /// create 回执等待表: req_id → waiter. 父 routine create 后注册,等
+    /// routine.created 回执唤醒. 对齐 Python runtime.register_create_future.
+    pub create_futures: Mutex<HashMap<String, CreateWaiter>>,
     /// 子 routine 完成等待表: child_id → waiter. 父 routine call/handle.wait
     /// 注册,等 lifecycle.stopped 中转回唤醒. 对齐 Python handle._wait_event.
     pub handle_waiters: Mutex<HashMap<String, HandleWaiter>>,
@@ -188,7 +193,7 @@ impl ServerRuntime {
             running_instances: Mutex::new(HashMap::new()),
             last_heartbeat: Mutex::new(HashMap::new()),
             watchdog_started: AtomicBool::new(false),
-            submit_futures: Mutex::new(HashMap::new()),
+            create_futures: Mutex::new(HashMap::new()),
             handle_waiters: Mutex::new(HashMap::new()),
             req_waiters: Mutex::new(HashMap::new()),
             mailboxes: Mutex::new(HashMap::new()),
@@ -385,21 +390,21 @@ impl ServerRuntime {
         })
     }
 
-    // --- submit / wait future 表 ---
+    // --- create / wait future 表 ---
 
-    pub async fn register_submit_future(
+    pub async fn register_create_future(
         &self,
         req_id: &str,
-        sender: SubmitWaiter,
+        sender: CreateWaiter,
     ) {
-        self.submit_futures
+        self.create_futures
             .lock()
             .await
             .insert(req_id.to_string(), sender);
     }
 
-    pub async fn pop_submit_future(&self, req_id: &str) -> Option<SubmitWaiter> {
-        self.submit_futures.lock().await.remove(req_id)
+    pub async fn pop_create_future(&self, req_id: &str) -> Option<CreateWaiter> {
+        self.create_futures.lock().await.remove(req_id)
     }
 
     pub async fn register_handle_waiter(

@@ -15,7 +15,7 @@ track(下一拍自退, finally 零速), 不等本轮 max_run_s 自然耗完.
 reacting 刷新, 强制收会话 ---- idle 广播在 agent 被硬杀等极端路径下
 可能丢失, 伴随方靠自己的兜底语义保证不悬挂.
 
-car/track 不可用(车离线/未注册, SubmitError)时退回待机等下一个
+car/track 不可用(车离线/未注册, CreateError)时退回待机等下一个
 reacting, 绝不退出(passive 常驻); 档位不足(StartError, 罕见)短歇重试.
 """
 from __future__ import annotations
@@ -131,7 +131,7 @@ class CarGaze(Routine):
                     # 会话不因让位而断 ---- 仍由 idle/deadline 收口.
                     await asyncio.sleep(RETRY_S)
                 except Exception as exc:
-                    # SubmitError(车离线): 无可跟踪对象, 退回待机等下个
+                    # CreateError(车离线): 无可跟踪对象, 退回待机等下个
                     # reacting(passive 常驻不退出); 其余异常同路, 避免空转
                     # 轰炸 ---- 会话由下一个 reacting 重新拉起.
                     _log.info('gaze session closed by: %s', exc)

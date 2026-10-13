@@ -1,4 +1,4 @@
-"""RoutineHandle ---- 父侧拿到的"指向一次 submit 的子 routine"的本地句柄.
+"""RoutineHandle ---- 父侧拿到的"指向一次 create 的子 routine"的本地句柄.
 
 handle.id = kernel 分配的 command id(string).
 
@@ -16,19 +16,19 @@ from .errors import StartError
 # body 迭代终结哨兵(distinguish from yielded None / result)
 _BODY_DONE = object()
 
-# start/stop/unsubmit 等 ack 默认超时(对齐 ctx.ACK_TIMEOUT): kernel 回执
+# start/stop/destroy 等 ack 默认超时(对齐 ctx.ACK_TIMEOUT): kernel 回执
 # 丢失/路由遗漏时抛 TimeoutError, 不永久挂起.
 _ACK_TIMEOUT = 30.0
 
 
 class RoutineHandle:
-    """父侧 submit handle.子 routine 的 run 是 async generator(yield)时,
+    """父侧 create handle.子 routine 的 run 是 async generator(yield)时,
     handle 也是 async iterable:``async for item in handle:`` 拿到每个 yield 项."""
 
     def __init__(self, child_id: str, name: str, ctx=None, modules=None):
         self.id: str = child_id
         self.name: Optional[str] = name
-        # submit 时 kernel 确定的占用 modules(created 回报带回).编排器据此算
+        # create 时 kernel 确定的占用 modules(created 回报带回).编排器据此算
         # 冲突(``ctx.conflict(h1.modules, h2.modules)``).
         self.modules: Optional[list] = modules
         # start 成功后镜像的档位(kernel Node.priority 的调用方视图).
@@ -42,7 +42,7 @@ class RoutineHandle:
         self._ctx = ctx
         self._started = asyncio.Event()
         self._done = asyncio.Event()
-        # start/try_start/stop/unsubmit 的 ack future.
+        # start/try_start/stop/destroy 的 ack future.
         # hub.on_inbound 收 lifecycle.started/stopped / routine.rejected 时按
         # child_id 经 _handles 表找到本 handle,调 _resolve_ack/_reject_ack 唤醒.
         self._ack: Optional[asyncio.Future] = None
@@ -96,7 +96,7 @@ class RoutineHandle:
             self._ack.set_result(value)
 
     def _reject_ack(self, exc: BaseException) -> None:
-        """hub.on_inbound 收到 rejected(op=stop/unsubmit)时调.幂等."""
+        """hub.on_inbound 收到 rejected(op=stop/destroy)时调.幂等."""
         if self._ack is not None and not self._ack.done():
             self._ack.set_exception(exc)
 
@@ -187,21 +187,21 @@ class RoutineHandle:
             expects_err=False,
         )
 
-    async def unsubmit(self, *, fire: bool = False) -> None:
-        """撤销提交:清 created 态子命令(未 start 的).跟 submit 对称.
+    async def destroy(self, *, fire: bool = False) -> None:
+        """撤销提交:清 created 态子命令(未 start 的).跟 create 对称.
 
-        已 start 的 routine 调本方法会被 kernel 拒(rejected op=unsubmit)--
-        该用 stop.不要求父 started(submit 也不要求).
+        已 start 的 routine 调本方法会被 kernel 拒(rejected op=destroy)--
+        该用 stop.不要求父 started(create 也不要求).
         """
-        await self._require_ctx('unsubmit')
-        await self._require_not_done('unsubmit')
+        await self._require_ctx('destroy')
+        await self._require_not_done('destroy')
         if fire:
-            await self._ctx._io.send_routine_unsubmit(  # type: ignore[union-attr]
+            await self._ctx._io.send_routine_destroy(  # type: ignore[union-attr]
                 child_id=self.id,
             )
             return
         await self._send_and_wait(
-            self._ctx._io.send_routine_unsubmit(  # type: ignore[union-attr]
+            self._ctx._io.send_routine_destroy(  # type: ignore[union-attr]
                 child_id=self.id,
             ),
             expects_err=False,

@@ -96,7 +96,7 @@ async function entryClasses(rel: string, seen: Set<RoutineClass>): Promise<Routi
 /** yaml 条目 kwargs 覆盖式注入 passive 类的 isPassive(PassiveConfig).
  *
  * 覆盖不叠加: yaml kwargs 是部署配置的完整声明. 非 passive 类忽略
- * (手动 submit 传参, 与 yaml 无关). */
+ * (手动 create 传参, 与 yaml 无关). */
 function injectPassiveKwargs(classes: RoutineClass[], kw: Record<string, any>): void {
   if (!kw || !Object.keys(kw).length) return
   for (const cls of classes) {
