@@ -22,6 +22,7 @@ import type { ServerRuntime } from './runtime'
 const REASON_TO_ENUM: Record<string, string> = {
   auto: ControlDoneReason.AUTO,
   stop: ControlDoneReason.STOP,
+  destroyed: ControlDoneReason.DESTROYED,
   error: ControlDoneReason.ERROR,
   cancel: ControlDoneReason.CANCEL,
   force: ControlDoneReason.FORCE,
@@ -77,7 +78,7 @@ export class LifecycleManager {
     // 发生在 connect 之后, transport 必非空)
     const ctx = new RunContext(rid, name, this.hub, instance, this.runtime, this.hub.transport!)
     instance.bindCtx(ctx)
-    // initKwargs = submit 入参(routine 的唯一入参来源)
+    // initKwargs = create 入参(routine 的唯一入参来源)
     instance.setInitKwargs(kwargs)
     // pubsub 订阅在 created:同步 await----created 回报前确保 kernel 订阅表
     // 已更新,避免 publish race.
@@ -142,7 +143,7 @@ export class LifecycleManager {
     }
     const ctx = instance.ctx  // created 已绑;initKwargs 已在 created 存
 
-    // run 入参:用 created 时存入 instance.initKwargs 的那份 submit kwargs
+    // run 入参:用 created 时存入 instance.initKwargs 的那份 create kwargs
     const startKwargs = instance.initKwargs ?? {}
 
     const runner = async (): Promise<void> => {
@@ -198,27 +199,27 @@ export class LifecycleManager {
     }
   }
 
-  /** lifecycle.destroy: kernel 销毁 created 态 routine(已 submit 未 start).
-   * destroy 也是终止 ---- 走 stop hook(资源撤销的统一契约: created 态实例
-   * 可能在 start 前已收 body 持有资源)后 onStopped + 回报 + cleanup.
-   * 用于:unsubmit / start 失败清理 / 父终止级联清 created 子. */
+  /** lifecycle.destroy: kernel 销毁 created 态 routine(已 create 未 start).
+   * created 态销毁走独立 destroy hook(与 stop 分野: stop 一个从未 start 的
+   * 实例语义荒谬) ---- start 前实例可能已收 body 持有资源, destroy hook
+   * 负责撤销. 用于:destroy / start 失败清理 / 父终止级联清 created 子. */
   async handleDestroy(msg: Msg): Promise<void> {
     const rid = String(msg.id ?? '')
     const instance = this.runtime.runningInstances.get(rid)
     if (!instance) return
     instance._requestStop()
-    let stopResult: any = undefined
+    let destroyResult: any = undefined
     try {
-      stopResult = await withTimeout(instance.stop(), LifecycleManager.STOP_TIMEOUT * 1000, 'stop()')
+      destroyResult = await withTimeout(instance.destroy(), LifecycleManager.STOP_TIMEOUT * 1000, 'destroy()')
     } catch (e: any) {
       if (e instanceof TimeoutErr) {
-        this.runtime.logger.warning(`${instance.name}#${rid} destroy: stop() timeout`)
+        this.runtime.logger.warning(`${instance.name}#${rid} destroy: destroy() timeout`)
       } else {
-        this.runtime.logger.error(`${instance.name}#${rid} destroy: stop() failed: ${e?.stack ?? e}`)
+        this.runtime.logger.error(`${instance.name}#${rid} destroy: destroy() failed: ${e?.stack ?? e}`)
       }
     }
-    await instance.onStopped('stop', stopResult)
-    await this.sendStopped(rid, { instance, reason: 'stop', result: stopResult })
+    await instance.onStopped('destroyed', destroyResult)
+    await this.sendStopped(rid, { instance, reason: 'destroyed', result: destroyResult })
     this.cleanup(rid)
   }
 

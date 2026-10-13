@@ -1,7 +1,7 @@
 """CamSnap ---- 车头相机拍照(薄壳): bus_listener req snap 的 routine 面.
 
 拍照逻辑内聚在 bus_listener(rgb 流临时订阅 + 排干留最新 + JPG 落盘);
-本 routine 只做 req 寻址转发, 让拍照进 submit/工具面 ---- 与 screenshot
+本 routine 只做 req 寻址转发, 让拍照进 create/工具面 ---- 与 screenshot
 对称: snap=车头相机看世界, screenshot=本机屏幕. bus_listener 不在跑 =
 车端总线不可用, 直接报错.
 """

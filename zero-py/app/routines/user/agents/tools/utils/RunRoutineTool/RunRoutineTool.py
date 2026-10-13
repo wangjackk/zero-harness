@@ -1,6 +1,6 @@
 """RunRoutine ---- 通用 routine 执行器,跨 conn 调任意已注册 routine.
 
-底层是 submit+start+wait_for(timeout):kernel 路由表查 name 所属 conn,跨 conn wire
+底层是 create+start+wait_for(timeout):kernel 路由表查 name 所属 conn,跨 conn wire
 转发给目标 host 执行,agent 不感知 host 边界.超时后 stop 挂住的 routine.
 
 设计要点:
@@ -14,7 +14,7 @@ import asyncio
 from typing import Any, ClassVar, Dict
 
 from pydantic import BaseModel, Field, ValidationError
-from routine import Routine, SubmitError
+from routine import Routine, CreateError
 
 from app.routines.user.agents._core.paths import AGENT_ID_KEY
 from .prompt import DESCRIPTION
@@ -45,7 +45,7 @@ class RunRoutineOutput(BaseModel):
 class RunRoutine(Routine):
     """Invoke any registered routine by name (cross-conn via kernel router).
 
-    submit + start + wait_for(timeout): kernel routes by name → owning conn,
+    create + start + wait_for(timeout): kernel routes by name → owning conn,
     returns the routine result, or {error: ...} on failure / timeout.
     does not raise: failures surfaced as error field for the LLM.
     """
@@ -71,9 +71,9 @@ class RunRoutine(Routine):
             agent_id = kwargs.pop(AGENT_ID_KEY, None)
             if agent_id:
                 call_kwargs[AGENT_ID_KEY] = agent_id
-            # 用 submit+start+wait_for 替代无超时的 self.call(),
+            # 用 create+start+wait_for 替代无超时的 self.call(),
             # 超时后 handle.stop(fire=True) 清理挂住的 routine.
-            handle = await self.submit(inp.name, call_kwargs)
+            handle = await self.create(inp.name, call_kwargs)
             await handle.start()
             try:
                 result = await asyncio.wait_for(handle, timeout=self._TIMEOUT)
@@ -90,11 +90,11 @@ class RunRoutine(Routine):
                 'error': f'ValidationError: {exc}',
                 'content': f'参数校验失败: {exc}. 请检查 name 和 kwargs 是否符合 RunRoutineInput schema (name 必填, kwargs 为 dict).',
             }
-        except SubmitError as exc:
-            self._logger.warning('run_routine: %s submit failed: %s', name, exc)
+        except CreateError as exc:
+            self._logger.warning('run_routine: %s create failed: %s', name, exc)
             return {
-                'error': f'SubmitError: {exc}',
-                'content': f'routine {name!r} 未注册或被 kernel 拒绝 submit: {exc}. 请检查 routine 名称拼写, 或确认 routine 已加载.',
+                'error': f'CreateError: {exc}',
+                'content': f'routine {name!r} 未注册或被 kernel 拒绝 create: {exc}. 请检查 routine 名称拼写, 或确认 routine 已加载.',
             }
         except Exception as exc:
             self._logger.warning('run_routine: %s failed: %s', name, exc, exc_info=True)

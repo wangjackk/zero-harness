@@ -878,7 +878,7 @@ mod tests {
 
     /// 端到端复现生产死锁时序并验证修复：B（created 态孤儿，body 在 start
     /// 前已投递 → Feed 入队 started=false）被 destroy（框架 handle_destroy
-    /// 走 stop hook → tts.cancel() 撤回，本测试以等价的 cancel() 直发模拟）
+    /// 走 destroy hook → tts.cancel() 撤回，本测试以等价的 cancel() 直发模拟）
     /// 后，A 与后续 C 必须都能正常完成。修复前 B 永堵队首（digestible 门
     /// 永 false），C 的 wait_done 永挂。
     ///
@@ -905,8 +905,8 @@ mod tests {
             let side = async {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 b.feed("orphan", Arc::new(Mutex::new(None))).await.unwrap();
-                // created 态被 destroy: 框架 handle_destroy 走 stop hook
-                // → speak.stop() → tts.cancel() 撤回队列命令.
+                // created 态被 destroy: 框架 handle_destroy 走 destroy hook
+                // → speak.destroy() → tts.cancel() 撤回队列命令.
                 b.cancel();
                 a.finish().unwrap();
             };

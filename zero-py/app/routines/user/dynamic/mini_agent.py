@@ -88,7 +88,7 @@ class MiniAgent(Routine):
         return '\n'.join(lines)
 
     async def _call_tool(self, name: str, kwargs: Dict[str, Any], timeout: float) -> Any:
-        handle = await self.submit(name, dict(kwargs))
+        handle = await self.create(name, dict(kwargs))
         await handle.start()
         return await asyncio.wait_for(handle, timeout=timeout)
 

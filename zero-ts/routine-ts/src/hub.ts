@@ -13,7 +13,7 @@
 import { Deferred, withTimeout } from './async'
 import {
   AcquireError, DeregisterError, LoadModuleError, RegisterError, ReloadError,
-  ReleaseError, SubmitError, UnloadModuleError,
+  CreateError, ReleaseError, UnloadModuleError,
 } from './errors'
 import type { Logger } from './logger'
 import { LifecycleManager } from './lifecycle'
@@ -39,9 +39,9 @@ import {
   MESSAGE_STREAM_OPEN_DELIVERED, PUBSUB_DELIVERED, PUBSUB_PUBLISH,
   PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE, ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
   ROUTINE_LOAD_MODULE, ROUTINE_MODULE_LOADED, ROUTINE_MODULE_UNLOADED,
-  ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
+  ROUTINE_RELEASE, ROUTINE_RELEASED, ROUTINE_CREATE, ROUTINE_CREATED,
   ROUTINE_REJECTED, ROUTINE_START, ROUTINE_STOP, ROUTINE_UNLOAD_MODULE,
-  ROUTINE_UNSUBMIT,
+  ROUTINE_DESTROY,
   type Msg, type Payload,
 } from './protocol'
 import {
@@ -93,7 +93,7 @@ export class RoutineHub {
       [LIFECYCLE_STARTED, m => this.onLifecycleStarted(m)],
       [LIFECYCLE_STOPPED, m => this.onLifecycleStopped(m)],
       [ROUTINE_REJECTED, m => this.onRoutineRejected(m)],
-      [ROUTINE_SUBMITTED, m => this.onRoutineSubmitted(m)],
+      [ROUTINE_CREATED, m => this.onRoutineCreated(m)],
       [ROUTINE_ACQUIRED, m => this.onRoutineAcquired(m)],
       [ROUTINE_MODULE_LOADED, m => this.onRoutineModuleLoaded(m)],
       [ROUTINE_MODULE_UNLOADED, m => this.onRoutineModuleUnloaded(m)],
@@ -142,10 +142,10 @@ export class RoutineHub {
     await this.sendEvent({ event: LIFECYCLE_STARTED, id })
   }
 
-  /** created 回报给 kernel:kernel 等 this 回报后才发 routine.submitted 给父,
-   * 所以父 submit 拿到 id 时 instance 一定已 created.带 modules(modules
+  /** created 回报给 kernel:kernel 等 this 回报后才发 routine.created 给父,
+   * 所以父 create 拿到 id 时 instance 一定已 created.带 modules(modules
    * 静态方法返回值)----kernel 存进 node.declared(start 的 tryAcquire 用)+ 经
-   * submitted 回执带给父 handle. */
+   * created 回执带给父 handle. */
   async sendLifecycleCreated(id: string, modules: string[] | null = null): Promise<void> {
     const payload: Msg = { event: LIFECYCLE_CREATED, id }
     if (modules !== null) payload.modules = modules
@@ -162,9 +162,9 @@ export class RoutineHub {
 
   // --- routine 调 routine 反向事件(hub→kernel) ---
 
-  async sendRoutineSubmit(o: { reqId: string; parentId: string; name: string; kwargs: Payload }): Promise<void> {
+  async sendRoutineCreate(o: { reqId: string; parentId: string; name: string; kwargs: Payload }): Promise<void> {
     await this.sendEvent({
-      event: ROUTINE_SUBMIT, req_id: o.reqId, parent_id: o.parentId,
+      event: ROUTINE_CREATE, req_id: o.reqId, parent_id: o.parentId,
       name: o.name, kwargs: o.kwargs,
     })
   }
@@ -180,8 +180,8 @@ export class RoutineHub {
     await this.sendEvent({ event: ROUTINE_STOP, child_id: o.childId })
   }
 
-  async sendRoutineUnsubmit(o: { childId: string }): Promise<void> {
-    await this.sendEvent({ event: ROUTINE_UNSUBMIT, child_id: o.childId })
+  async sendRoutineDestroy(o: { childId: string }): Promise<void> {
+    await this.sendEvent({ event: ROUTINE_DESTROY, child_id: o.childId })
   }
 
   async sendRoutineAcquire(o: { reqId: string; id: string; modules: string[] }): Promise<void> {
@@ -455,7 +455,7 @@ export class RoutineHub {
         error = `routine stopped with reason=${reason}`
       }
       handle.notifyDone(msg.result, error, reason)
-      // 先 resolve handle.ack(stop/unsubmit 成功回执)再 popHandle
+      // 先 resolve handle.ack(stop/destroy 成功回执)再 popHandle
       handle._resolveAck(undefined)
       this.runtime.popHandle(cid)
     }
@@ -476,16 +476,16 @@ export class RoutineHub {
       const isTry = Boolean(msg.try)
       if (!isTry && cid) this.lifecycle.cleanup(cid)
     } else {
-      // stop/unsubmit 失败:逻辑错误(已 start 调 unsubmit 等),抛异常
+      // stop/destroy 失败:逻辑错误(已 start 调 destroy 等),抛异常
       handle?._rejectAck(new Error(err))
     }
   }
 
-  private async onRoutineSubmitted(msg: Msg): Promise<void> {
-    const fut = this.runtime.popSubmitFuture(String(msg.req_id ?? ''))
+  private async onRoutineCreated(msg: Msg): Promise<void> {
+    const fut = this.runtime.popCreateFuture(String(msg.req_id ?? ''))
     if (!fut || fut.done) return
     if (msg.error) {
-      fut.reject(new SubmitError(String(msg.error)))
+      fut.reject(new CreateError(String(msg.error)))
       return
     }
     let modules = msg.modules
@@ -691,7 +691,7 @@ export class RoutineHub {
 
   /** kernel 中转回来的 routine.yielded{id, data, is_final, error}.
    *
-   * 按 id(child_id)找父侧 submit 时注册的 handle,喂它的 yield 迭代队列. */
+   * 按 id(child_id)找父侧 create 时注册的 handle,喂它的 yield 迭代队列. */
   private async onYielded(msg: Msg): Promise<void> {
     const childId = String(msg.id ?? '')
     const handle = this.runtime.getHandle(childId)

@@ -73,7 +73,7 @@ class ApprovalGate(Routine):
             f.write(json.dumps(row, ensure_ascii=False, default=str) + '\n')
 
     async def _invoke(self, name: str, kwargs: Dict[str, Any], timeout: float) -> Any:
-        handle = await self.submit(name, dict(kwargs))
+        handle = await self.create(name, dict(kwargs))
         await handle.start()
         return await asyncio.wait_for(handle, timeout=timeout)
 

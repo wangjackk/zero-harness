@@ -4,7 +4,7 @@
   XmlRoutine 的 body_shell/parser/on_body_chunk 一套它都不用,继承是历史残留.
 - **记忆用 XmlContextProvider**(见 ``provider.py``):封装 Memory(sqlite 持久化)
   + OVMemory(OpenViking 长期记忆),默认启用 OV.
-- **每轮 react 直推一个 act 子**(submit+start+stop 直管,act 才是 XmlRoutine,
+- **每轮 react 直推一个 act 子**(create+start+stop 直管,act 才是 XmlRoutine,
   工具子由 act 的 body_shell 派生).
 - **打断逻辑 inline**(epoch + cancel).
 - **LLM 调用内置**(``llm.py``,Responses API 流式),不依赖外部模块.
@@ -35,7 +35,7 @@ from .memory import get_memory
 # wire 契约常量: act 注入调用方 agent_id 到 tool routine kwargs, tool 侧按同名键读取.
 AGENT_ID_KEY = 'from_agent_id'
 
-# legacy shared constants removed: per-instance agent_id (from manager submit
+# legacy shared constants removed: per-instance agent_id (from manager create
 # kwargs) replaces the old shared 'react' id/namespace.
 # WS bridge 的 routine name(HttpServer.name 蛇形,集成原 AgentWSBridge)->注册时经
 # ctx.get_running_routines 向 kernel 查 running 列表按 name 找 HttpServer 的 id.本
@@ -133,7 +133,7 @@ class XmlAgent(Routine):
 
     # routine 命名空间 xml/agent/*: entry routines 见 manager.py
     # (xml/agent/create|list|stop|resume|delete|set_alias), 本类是子 agent
-    # 本体 (manager 按 name submit).
+    # 本体 (manager 按 name create).
     name = 'xml/agent'
 
     # is_passive removed: dynamic instance spawned by XmlAgents manager.
@@ -562,7 +562,7 @@ class XmlAgent(Routine):
         """入口情绪评估: Jev Scorex2 出增量 -> 积分 -> 更新 mood (本轮生效).
 
         在消息落库后启动, 与 react/LLM 完全并行 ---- 落地即 publish(前端
-        徽标), TTS 指令不随 act submit 快照, 由 speak 起 run 时经
+        徽标), TTS 指令不随 act create 快照, 由 speak 起 run 时经
         agent/state 现取(speak 的 session 建立晚于 speak run, 读到的一定
         是本值). Jev 失败跳过本轮 (mood 保持, 回落靠 decay), 不阻断
         react ---- 情绪是背景染色, 不是闸门 (对比 reflex).
@@ -760,21 +760,21 @@ class XmlAgent(Routine):
             )
 
             # 每轮 react 直推一个 act 子(本轮唯一子--工具子由 act 的 body_shell
-            # 派生,不经 agent).submit + start + stop 直管,无需 Shell(Shell 为多兄弟
+            # 派生,不经 agent).create + start + stop 直管,无需 Shell(Shell 为多兄弟
             # 排序/barrier 而设,单子纯开销).对标 self.push('act')(走 routine 的 shell).
             # agent_id: act 在 push 工具子前注入, tool routine 通过 agent/rid
             # 查 rid 后 ctx.req(rid, 'agent_state') 反向获取 skill_dir 等信息.
             _t = _time.perf_counter()
             # 情绪评估在入口已并行启动(_spawn_emotion), 与 LLM 竞速; speak
-            # 起 run 时经 agent/state 现取 tts_instruction, submit 不等不快照
-            act = await self.submit('act', {
+            # 起 run 时经 agent/state 现取 tts_instruction, create 不等不快照
+            act = await self.create('act', {
                 AGENT_ID_KEY: self._agent_id,
                 # 标签映射表 {全名: 别名}: act 分发时把别名标签映射回全名 (本轮快照)
                 'routine_aliases': dict(self._routine_aliases),
             })
             self._cur_act = act
             await act.start()
-            _ms_act_submit = _ms(_t)
+            _ms_act_create = _ms(_t)
 
             # LLM 流式 XML -> ctx.send 喂给 act 的 body(走 act.on_message
             # -> parser -> body_shell 派发工具子).mailbox 保发送序.
@@ -792,7 +792,7 @@ class XmlAgent(Routine):
                         if kind == 'text' and payload:
                             if not _first_token_logged:
                                 self._logger.info(
-                                    f'react timing: act_submit={_ms_act_submit}ms '
+                                    f'react timing: act_create={_ms_act_create}ms '
                                     f'llm_first_token={_ms(_t)}ms'
                                 )
                                 _first_token_logged = True

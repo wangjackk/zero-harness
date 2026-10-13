@@ -36,7 +36,7 @@ class Modules(list):
 
     ``Modules(['body'])`` 声明占用;默认不占(空).单一真理源:经
     lifecycle.created 回报回带 kernel(node.declared,Start 的 TryAcquire 用)
-    + 经 submitted 回执带给父(handle.modules,编排器据此算冲突).
+    + 经 created 回执带给父(handle.modules,编排器据此算冲突).
     """
 
     def __init__(self, modules: Optional[Iterable[str]] = None):
@@ -156,7 +156,7 @@ class Routine(ABC):
         # 生命周期相位:CREATED(从未 start)→STARTED(运行中)→STOPPED(start 后
         # 被 stop/驱逐).ctx 守卫据此区分"还没 start"(报错)与"已停"(no-op).
         self._phase: Phase = Phase.CREATED
-        # submit 入参(routine 的唯一入参来源):created 时投递存储,run() 复用.
+        # create 入参(routine 的唯一入参来源):created 时投递存储,run() 复用.
         self._init_kwargs: Dict[str, Any] = {}
         # 父 routine id(kernel 经 lifecycle.created 带来,None=无父 root).
         self._parent_rid: Optional[str] = None
@@ -201,15 +201,23 @@ class Routine(ABC):
         """正规 stop 流程;routine 在此 set event 让 ``run`` 退出.可返回结果."""
         pass
 
-    async def submit(self, routine_name: str,
+    async def destroy(self) -> None:
+        """destroy hook: created 态被销毁时的资源撤销(与 stop 分野).
+
+        仅在 create 之后、未 start 的实例被 destroy 时调用(started 实例
+        的终止走 stop).start 前实例可能已收 body 持有资源 ---- 在此撤销.
+        """
+        pass
+
+    async def create(self, routine_name: str,
                      kwargs: Optional[Dict[str, Any]] = None) -> 'Any':
-        """提交子 routine(经 kernel 回环).详见 ``ctx.submit``."""
-        return await self.ctx.submit(routine_name, kwargs)
+        """提交子 routine(经 kernel 回环).详见 ``ctx.create``."""
+        return await self.ctx.create(routine_name, kwargs)
 
     async def call(self, routine_name: str,
                    kwargs: Optional[Dict[str, Any]] = None,
                    priority: int = 10) -> Any:
-        """同步拿子 routine 结果(submit→start→wait 一步到位).详见 ``ctx.call``."""
+        """同步拿子 routine 结果(create→start→wait 一步到位).详见 ``ctx.call``."""
         return await self.ctx.call(routine_name, kwargs, priority)
 
     # --- 运行时模块占领/释放(跟类静态声明同一底层 TryAcquire/Release) ---
@@ -299,7 +307,7 @@ class Routine(ABC):
         静态 routine 忽略 kwargs 返回常量;动态 routine 按 kwargs 算
         (kwargs=None 问静态默认,注册期/清单用).默认不占.
         单一真理源:created 回报经本方法取值回带 kernel(node.declared)
-        + 经 submitted 回执带给父(handle.modules,编排器静态冲突预测用).
+        + 经 created 回执带给父(handle.modules,编排器静态冲突预测用).
         """
         return Modules()
 

@@ -212,7 +212,7 @@ class ReactLoop:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ToolExecutor:
-    """工具执行编排: 校验 → submit+start → gather → 写回 → feedback."""
+    """工具执行编排: 校验 → create+start → gather → 写回 → feedback."""
 
     def __init__(self, agent: 'ReactorAgent') -> None:
         self._a = agent
@@ -236,7 +236,7 @@ class ToolExecutor:
             else:
                 known.append(fc)
 
-        # submit known tools + 并发 start (工具 routine 不声明 modules, 无冲突全并行)
+        # create known tools + 并发 start (工具 routine 不声明 modules, 无冲突全并行)
         from app.routines.user.agents._core.paths import AGENT_ID_KEY
         tasks: list[asyncio.Task] = []
         for fc in known:
@@ -244,7 +244,7 @@ class ToolExecutor:
             args = self._parse_args(fc)
             tool_args = dict(args)
             tool_args[AGENT_ID_KEY] = self._a._agent_id
-            h = await self._a.ctx.submit(fc.name, tool_args)
+            h = await self._a.ctx.create(fc.name, tool_args)
             handles[fc.call_id] = h
             h.on_started_handler = self._make_started_handler(fc, args, epoch, message_id)
             tasks.append(asyncio.create_task(self._run_handle(h)))
@@ -256,7 +256,7 @@ class ToolExecutor:
             except asyncio.CancelledError:
                 # epoch 切换被打断: 停掉全部 handles 再放行 cancel.
                 for h in handles.values():
-                    coro = h.stop(fire=True) if h.is_started() else h.unsubmit(fire=True)
+                    coro = h.stop(fire=True) if h.is_started() else h.destroy(fire=True)
                     try:
                         await coro
                     except Exception:

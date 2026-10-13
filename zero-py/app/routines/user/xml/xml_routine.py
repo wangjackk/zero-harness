@@ -106,7 +106,7 @@ class XmlRoutine(Routine):
         # 不该留任何后台 task.reject 清理不走 on_stopped(业务 task 业务自管,
         # 框架不代 cancel),生命周期绑定 started 才是干净边界.
         # body_shell:done 触发 on_body_shell_done -> request_stop 让 run 自然退出.
-        # auto_arm=False:created 阶段 push 只 submit(父未 started);on_started arm() 后才 start.
+        # auto_arm=False:created 阶段 push 只 create(父未 started);on_started arm() 后才 start.
         # shell_id=BODY_SHELL_ID:on_xml_event 里据它区分 body 派生 push vs normal_shell.
         self._body_shell = Shell(
             self, shell_id=self.XML_BODY_SHELL_ID, auto_arm=False,
@@ -199,7 +199,7 @@ class XmlRoutine(Routine):
                    kwargs: Optional[Dict[str, Any]] = None) -> 'RoutineHandle':
         """代码主动 push 到 normal_shell(对标 self.push = normal shell).
 
-        区别于 ``self.submit``(裸 submit 不经编排):push 进 normal_shell 享受串并行
+        区别于 ``self.create``(裸 create 不经编排):push 进 normal_shell 享受串并行
         编排(冲突串行,不冲突并行).子类业务编排用本方法,XML body 派生的 push
         走 body_shell(``on_xml_event`` 默认派发,不调本方法).
         """
@@ -310,7 +310,7 @@ class XmlRoutine(Routine):
         想要"默认行为 + 额外动作"可 ``await super().on_xml_event(ev)`` 再加.
         """
         if isinstance(ev, ChildOpen):
-            # push 返回的 handle.modules 是占用真理源(submitted 回执带回).
+            # push 返回的 handle.modules 是占用真理源(created 回执带回).
             # 子类 override on_xml_event 可在 super() 后用 self._cur_handle 设回调/收集.
             self._cur_handle = await self._body_shell.push(ev.name, ev.kwargs)
             self._cur_self_closing = ev.is_self_closing

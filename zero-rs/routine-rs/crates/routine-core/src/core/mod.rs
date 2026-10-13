@@ -10,7 +10,7 @@ pub mod routine;
 pub mod stream;
 
 pub use context::{
-    HandleReply, ReqReply, RoutineIo, RunContext, RunContextOptions, SubmitReply,
+    HandleReply, ReqReply, RoutineIo, RunContext, RunContextOptions, CreateReply,
 };
 pub use messaging::{
     request_spec, subscribe_spec, Namespace, RequestHandler, RequestSpec, RoutineSource,

@@ -36,7 +36,7 @@ _hub: list = []   # main() 灌入 RoutineHub 引用(case 8 动态 register 用)
 
 
 class _Driver(Routine):
-    """被动自动拉起的编排器: _jobs 任务进, submit+start(priority)+wait,
+    """被动自动拉起的编排器: _jobs 任务进, create+start(priority)+wait,
     结果/异常进 _results.每个 job 独立 task ---- A 挂着的同时能起 B."""
 
     name = 'driver'
@@ -54,7 +54,7 @@ class _Driver(Routine):
         tag, target, pri, *rest = job
         try_ = rest[0] if rest else False
         try:
-            h = await self.submit(target, {})
+            h = await self.create(target, {})
             if try_:
                 r = await h.try_start()
                 _results.put_nowait({'tag': tag, 'phase': 'start',

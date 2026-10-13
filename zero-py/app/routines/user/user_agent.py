@@ -75,7 +75,7 @@ class UserAgent(Routine):
     async def on_run(self, source, data: dict) -> dict:
         """HTTP 转发的 routine 调用. 注入 from_agent_id='user' 后 call 目标.
 
-        手写 submit → start → wait (同 ctx.call), 目标 handle 记到
+        手写 create → start → wait (同 ctx.call), 目标 handle 记到
         _cur_run 支持 interrupt req 打断 (RoutineRunner 停止按钮).
         """
         target = str(data.get('target') or '')
@@ -86,7 +86,7 @@ class UserAgent(Routine):
             return {'ok': False, 'error': 'kwargs must be a dict'}
         kwargs[AGENT_ID_KEY] = _USER_AGENT_ID
         try:
-            handle = await self.submit(target, kwargs)
+            handle = await self.create(target, kwargs)
             self._cur_run = handle
             try:
                 await handle.start()

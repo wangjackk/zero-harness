@@ -1,6 +1,6 @@
 # 05 · RoutineHandle
 
-`RoutineHandle` 是父侧持有的"指向一次 submit 的子 routine"的本地句柄。`self.submit()` 返回它,后续通过它控制子 routine 的 start/stop/wait。
+`RoutineHandle` 是父侧持有的"指向一次 create 的子 routine"的本地句柄。`self.create()` 返回它,后续通过它控制子 routine 的 start/stop/wait。
 
 文件:[handle.py](../routine/handle.py)
 
@@ -19,7 +19,7 @@
 
 | 方法 | 返回 | 说明 |
 |---|---|---|
-| `handle.modules` | `Optional[list]` | submit 时 kernel 确定的占用模块(created 回报带回) |
+| `handle.modules` | `Optional[list]` | create 时 kernel 确定的占用模块(created 回报带回) |
 | `handle.priority` | `Optional[int]` | start 成功后镜像的档位(None=尚未 start) |
 | `handle.is_started()` | `bool` | 收到 `lifecycle.started` 后 True |
 | `handle.is_done()` | `bool` | 收到 `lifecycle.stopped` 后 True |
@@ -31,7 +31,7 @@
 让 kernel start 子命令(占模块 + 运行)。**全有或全无**——失败时 kernel 清 node+订阅,本侧清 created instance,handle 失效不可重试。
 
 ```python
-handle = await self.submit('worker', {'task_id': 42})
+handle = await self.create('worker', {'task_id': 42})
 await handle.start()               # 常规: 失败 raise StartError
 await handle.start(20)             # 高优: 冲突时驱逐低优 holder 后 start
 ```
@@ -45,7 +45,7 @@ await handle.start(20)             # 高优: 冲突时驱逐低优 holder 后 st
 让 kernel start 子命令,**失败时保留可重试**(不清 instance/node)。失败返回 `StartError`(None=成功),不抛——模块冲突是正常业务情况(占住者还没释放),不该打断调用方 `run()` 体。
 
 ```python
-handle = await self.submit('worker', {'task_id': 42})
+handle = await self.create('worker', {'task_id': 42})
 err = await handle.try_start()
 if err:
     # 模块冲突,稍后重试
@@ -67,18 +67,18 @@ await handle.stop(fire=True)     # fire-and-forget,只发 wire 不等 ack
 - `fire=False`(默认):发 `routine.stop` 后等 `lifecycle.stopped` 回执确认子已停——返回时子确定停完。需父 started。
 - `fire=True`:fire-and-forget,绕过 ack 等待。供 `Shell.interrupt` top-down 并发打断用——子的 `lifecycle.stopped` 到达后由 `handle.wait` 自然解除。
 
-### `await handle.unsubmit(*, fire=False) -> None`
+### `await handle.destroy(*, fire=False) -> None`
 
-撤销提交:清 created 态子命令(未 start 的)。跟 `submit` 对称。
+撤销提交:清 created 态子命令(未 start 的)。跟 `create` 对称。
 
 ```python
-handle = await self.submit('worker', {...})
+handle = await self.create('worker', {...})
 # 还没 start,改变主意了
-await handle.unsubmit()   # 清 created 态
+await handle.destroy()   # 清 created 态
 ```
 
-- 已 start 的 routine 调本方法会被 kernel 拒(`rejected op=unsubmit`)——该用 `stop`。
-- **不要求父 started**(submit 也不要求)。
+- 已 start 的 routine 调本方法会被 kernel 拒(`rejected op=destroy`)——该用 `stop`。
+- **不要求父 started**(create 也不要求)。
 
 ## 等待
 
@@ -87,7 +87,7 @@ await handle.unsubmit()   # 清 created 态
 等 `lifecycle.stopped`。成功 → 返回 result;失败/异常停掉 → raise `RuntimeError(error)`。
 
 ```python
-handle = await self.submit('echo', {'text': 'hi'})
+handle = await self.create('echo', {'text': 'hi'})
 await handle.start()
 result = await handle.wait()    # {'echo': 'hi'}
 ```
@@ -110,7 +110,7 @@ result = await handle   # 等价 await handle.wait()
 
 ```python
 # 等价于:
-# handle = await self.submit('echo', {'text': 'hi'})
+# handle = await self.create('echo', {'text': 'hi'})
 # await handle.start()
 # return await handle
 result = await self.call('echo', {'text': 'hi'})
@@ -133,7 +133,7 @@ class Counter(Routine):
             await asyncio.sleep(0.1)
 
 # 父侧
-handle = await self.submit('counter', {'n': 5})
+handle = await self.create('counter', {'n': 5})
 await handle.start()
 async for item in handle:
     print(item)   # 0, 1, 2, 3, 4
@@ -153,7 +153,7 @@ async def on_started(h: RoutineHandle) -> None:
 async def on_stopped(h: RoutineHandle) -> None:
     print(f'子 {h.id} stopped, result={h.result}')
 
-handle = await self.submit('worker', {...})
+handle = await self.create('worker', {...})
 handle.on_started_handler = on_started
 handle.on_stopped_handler = on_stopped
 await handle.start()
@@ -171,8 +171,8 @@ class Orchestrator(Routine):
 
     async def run(self, kwargs):
         # 提交两个子任务
-        h1 = await self.submit('write', {'path': '/a'})
-        h2 = await self.submit('write', {'path': '/b'})
+        h1 = await self.create('write', {'path': '/a'})
+        h2 = await self.create('write', {'path': '/b'})
 
         # 用 conflict 本地预测算串/并行
         if self.ctx.conflict(h1.modules, h2.modules):

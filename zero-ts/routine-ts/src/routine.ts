@@ -138,7 +138,7 @@ export abstract class Routine {
   /** 生命周期相位:created(从未 start)→ started(运行中)→ stopped(start 后
    * 被 stop/驱逐).ctx 守卫据此区分"还没 start"(报错)与"已停"(no-op). */
   _phase: Phase = 'created'
-  /** submit 入参(routine 的唯一入参来源). */
+  /** create 入参(routine 的唯一入参来源). */
   _initKwargs: Payload = {}
   _parentRid: string | null = null
   _logger: Logger
@@ -198,12 +198,17 @@ export abstract class Routine {
   /** 正规 stop 流程;routine 在此 set event 让 run 退出.可返回结果. */
   async stop(): Promise<any> {}
 
-  /** 提交子 routine(经 kernel 回环).详见 ctx.submit. */
-  async submit(routineName: string, kwargs?: Payload): Promise<import('./handle').RoutineHandle> {
-    return await this.ctx.submit(routineName, kwargs)
+  /** destroy hook: created 态被销毁时的资源撤销(与 stop 分野).
+   * 仅在 create 之后、未 start 的实例被 destroy 时调用(started 实例的
+   * 终止走 stop).start 前实例可能已收 body 持有资源 ---- 在此撤销. */
+  async destroy(): Promise<any> {}
+
+  /** 提交子 routine(经 kernel 回环).详见 ctx.create. */
+  async create(routineName: string, kwargs?: Payload): Promise<import('./handle').RoutineHandle> {
+    return await this.ctx.create(routineName, kwargs)
   }
 
-  /** 同步拿子 routine 结果(submit→start→wait 一步到位).priority 语义见
+  /** 同步拿子 routine 结果(create→start→wait 一步到位).priority 语义见
    * handle.start(冲突驱逐裁决). */
   async call(routineName: string, kwargs?: Payload, priority: number = 10): Promise<any> {
     return await this.ctx.call(routineName, kwargs, priority)
@@ -278,7 +283,7 @@ export abstract class Routine {
    * 静态 routine 忽略 kwargs 返回常量;动态 routine 按 kwargs 算
    * (kwargs=null 问静态默认,注册期/清单用).返回 null(默认)或空数组表示不占.
    * 单一真理源:created 回报经本方法取值回带 kernel(node.declared)
-   * + 经 submitted 回执带给父(handle.modules,编排器静态冲突预测用). */
+   * + 经 created 回执带给父(handle.modules,编排器静态冲突预测用). */
   static modules(kwargs: Payload | null = null): Modules { return null }
 
   /** on_created 钩子:routine 被创建时调一次(早于 start),纯轻量初始化.

@@ -15,7 +15,7 @@ class ControlDoneReason(str, Enum):
     UNKNOWN = 'UNKNOWN'
     AUTO = 'AUTO'
     STOP = 'STOP'
-    UNSUBMITTED = 'UNSUBMITTED'
+    DESTROYED = 'DESTROYED'
     ERROR = 'ERROR'
     CANCEL = 'CANCEL'
     FORCE = 'FORCE'
@@ -31,13 +31,13 @@ LIFECYCLE_STARTED = 'lifecycle.started'      # hub→kernel 已启动
 LIFECYCLE_STOPPED = 'lifecycle.stopped'      # hub→kernel 已停止(带 reason/result/error)
 
 # --- routine 调 kernel 请求/回执(hub→kernel→hub)---
-ROUTINE_SUBMIT = 'routine.submit'
-ROUTINE_SUBMITTED = 'routine.submitted'
+ROUTINE_CREATE = 'routine.create'
+ROUTINE_CREATED = 'routine.created'
 ROUTINE_REJECTED = 'routine.rejected'
 ROUTINE_START = 'routine.start'      # 带可选 priority(int, 默认 0): 冲突时
                                       # incoming > holder 才驱逐后 start
 ROUTINE_STOP = 'routine.stop'
-ROUTINE_UNSUBMIT = 'routine.unsubmit'
+ROUTINE_DESTROY = 'routine.destroy'
 ROUTINE_ACQUIRE = 'routine.acquire'
 ROUTINE_ACQUIRED = 'routine.acquired'
 ROUTINE_RELEASE = 'routine.release'

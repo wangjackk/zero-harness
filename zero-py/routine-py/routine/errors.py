@@ -30,8 +30,8 @@ class StartError(Exception):
     """
 
 
-class SubmitError(Exception):
-    """``ctx.submit()`` 失败:kernel 拒了 submit(routine.submitted 带 error)."""
+class CreateError(Exception):
+    """``ctx.create()`` 失败:kernel 拒了 create(routine.created 带 error)."""
 
 
 class AcquireError(Exception):

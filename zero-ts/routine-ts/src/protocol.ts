@@ -13,7 +13,7 @@ export const ControlDoneReason = {
   UNKNOWN: 'UNKNOWN',
   AUTO: 'AUTO',
   STOP: 'STOP',
-  UNSUBMITTED: 'UNSUBMITTED',
+  DESTROYED: 'DESTROYED',
   ERROR: 'ERROR',
   CANCEL: 'CANCEL',
   FORCE: 'FORCE',
@@ -30,12 +30,12 @@ export const LIFECYCLE_STARTED = 'lifecycle.started'      // hub→kernel 已启
 export const LIFECYCLE_STOPPED = 'lifecycle.stopped'      // hub→kernel 已停止(带 reason/result/error)
 
 // --- routine 调 kernel 请求/回执(hub→kernel→hub)---
-export const ROUTINE_SUBMIT = 'routine.submit'
-export const ROUTINE_SUBMITTED = 'routine.submitted'
+export const ROUTINE_CREATE = 'routine.create'
+export const ROUTINE_CREATED = 'routine.created'
 export const ROUTINE_REJECTED = 'routine.rejected'
 export const ROUTINE_START = 'routine.start'   // 带可选 priority(number, 缺省 10=常规默认档; 0~9 低档): 冲突时 incoming > holder 才驱逐后 start
 export const ROUTINE_STOP = 'routine.stop'
-export const ROUTINE_UNSUBMIT = 'routine.unsubmit'
+export const ROUTINE_DESTROY = 'routine.destroy'
 export const ROUTINE_ACQUIRE = 'routine.acquire'
 export const ROUTINE_ACQUIRED = 'routine.acquired'
 export const ROUTINE_RELEASE = 'routine.release'

@@ -84,7 +84,7 @@ def _inject_passive_kwargs(classes: List[Type[Routine]], kw: Dict[str, Any]) -> 
     """yaml 条目 kwargs 覆盖式注入 passive 类的 ``is_passive``(PassiveConfig).
 
     覆盖不叠加: yaml kwargs 是部署配置的完整声明. 类代码里的 PassiveConfig
-    默认仅在条目没写 kwargs 时保留. 非 passive 类忽略(手动 submit 传参, 与
+    默认仅在条目没写 kwargs 时保留. 非 passive 类忽略(手动 create 传参, 与
     yaml 无关). 注入保持 ``PassiveConfig(kwargs={...})`` 形态.
     """
     if not kw:

@@ -291,7 +291,7 @@ impl GrpcClient {
                 }
             }
             _ => {
-                // 业务事件(message.*/pubsub.*/routine.submitted/req 回执等)统一
+                // 业务事件(message.*/pubsub.*/routine.created/req 回执等)统一
                 // 转 BusinessEventRouter——与 listener 模式(grpc/mod.rs)同一条
                 // 路径。否则 dial-in 下 on_message/req/subscribe 全部静默丢失。
                 self.business.safe_route_stream(PEER_ID, msg).await;

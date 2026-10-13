@@ -26,7 +26,7 @@ class Echo(Routine):
 
 ### `name: ClassVar[str]` —— routine 命令名
 
-- **作用**:routine 在 `Routines` 注册表里的 key,也是 wire 事件 `routine.submit{name}` 用的名字。
+- **作用**:routine 在 `Routines` 注册表里的 key,也是 wire 事件 `routine.create{name}` 用的名字。
 - **不显式赋值时**:`__init_subclass__` 从类名蛇形转换自动填充,如 `EditRoutine` → `'edit_routine'`。
 - **显式赋值时**:覆盖自动生成。
 - **约定**:全小写 + 下划线(蛇形)。per-agent 动态注册的可用 `/` 分层(如 `agent_a/list_skills`)。
@@ -66,8 +66,8 @@ class Edit(Routine):
 
 ### `is_passive: ClassVar[bool | PassiveConfig] = False` —— 是否被动启动
 
-- `False`(默认):由父 routine 显式 `submit + start` 拉起。
-- `True`:kernel 在 catalog.push 注册后 **自动 start**(无需父 routine 触发);手动 submit 被拦截。
+- `False`(默认):由父 routine 显式 `create + start` 拉起。
+- `True`:kernel 在 catalog.push 注册后 **自动 start**(无需父 routine 触发);手动 create 被拦截。
 - `PassiveConfig(kwargs=..., priority=...)`:passive 带参形态——`kwargs` 是
   auto-start 默认入参(如 WebServer 的 host/port);`priority` 是拉起时的
   start 优先级(**缺省 10 常规默认档**)。passive 没有 call-site(kernel 是
@@ -88,17 +88,18 @@ class WebServer(Routine):
 
 ## 生命周期钩子
 
-routine 有完整的生命周期:create → start → [run] → stop。每个阶段都有钩子可 override。
+routine 有完整的生命周期:create → start → [run] → stop;created 态(未 start)被销毁走 destroy。每个阶段都有钩子可 override。
 
 ```
 lifecycle.create  →  on_created()  →  lifecycle.created 回报
 lifecycle.start   →  on_started()  →  run() 开始         →  lifecycle.started 回报
 lifecycle.stop    →  stop()        →  on_stopped()       →  lifecycle.stopped 回报
+lifecycle.destroy →  destroy()     →  on_stopped()       →  lifecycle.stopped 回报(DESTROYED)
 ```
 
 ### `async def run(self, kwargs: Dict[str, Any]) -> Any` 【必须 override】
 
-routine 主体。`kwargs` 来自 `submit(name, kwargs)` 的入参(单一真理源)。
+routine 主体。`kwargs` 来自 `create(name, kwargs)` 的入参(单一真理源)。
 
 - **可以是普通 coroutine**:return 值作为结果回报给父。
 - **可以是 async generator**:每 `yield` 一项作为流式结果发给父,父侧 `async for item in handle` 拿到。
@@ -138,6 +139,15 @@ class Echo(Routine):
 - `stop` 抛异常会被框架吞掉(只 log),不影响 `lifecycle.stopped` 发出。
 - 框架有 `STOP_TIMEOUT = 3.0`:`stop()` 超过 3 秒后强制 cancel。
 
+### `async def destroy(self) -> None`
+
+destroy hook:created 态(已 create 未 start)被销毁时的资源撤销,与 `stop` 分野。
+
+- 仅在 create 之后、未 start 的实例被 destroy 时调用(started 实例的终止走 `stop`)。
+- start 前实例可能已收 body 持有资源(如 speak 已入 actor 队列的 TTS 命令)——在此撤销。
+- 用于:destroy / start 失败清理 / 父终止级联清 created 子。
+- 不实现(基类空 pass)且无可撤销资源时不影响销毁流程。
+
 ### `classmethod modules(cls, kwargs=None) -> Modules` —— 声明占用模块
 
 类方法,**无实例可调**——modules 是"类型 + 入参"的纯函数,与实例状态无关。静态 routine 忽略 `kwargs` 返回常量;动态 routine 按 `kwargs` 算(`kwargs=None` 问静态默认,注册期/清单用)。默认不占。
@@ -153,14 +163,14 @@ class PlayMusic(Routine):
         return Modules(['audio'])
 ```
 
-单一真理源:created 回报经本方法取值回带 kernel(`node.declared`,Start 的 TryAcquire 用)+ 经 submitted 回执带给父(`handle.modules`,编排器静态冲突预测用)。
+单一真理源:created 回报经本方法取值回带 kernel(`node.declared`,Start 的 TryAcquire 用)+ 经 created 回执带给父(`handle.modules`,编排器静态冲突预测用)。
 
 ### `async def on_created(self, rid: str, kwargs: Dict[str, Any]) -> None`
 
 routine 创建时调一次(早于 start),**纯轻量初始化**。模块声明走 `modules()` 类方法;本钩子返回非 `None` 是协议违规,立即报错。
 
 - `rid`:kernel 分配的 command id(string),跟 `self.id` 一致。
-- `kwargs`:submit 入参。`on_created` 可读 kwargs 但**不应做重活**(会阻塞 created 回执)。
+- `kwargs`:create 入参。`on_created` 可读 kwargs 但**不应做重活**(会阻塞 created 回执)。
 - 详细模块语义见 [module-operations.md](./module-operations.md)。
 
 ### `async def on_started(self) -> None`
@@ -175,6 +185,7 @@ routine 创建时调一次(早于 start),**纯轻量初始化**。模块声明�
 |---|---|
 | `'auto'` | `run` 自然 return / 异常退出 |
 | `'stop'` | 收到 `lifecycle.stop` 请求(`stop()` 被调) |
+| `'destroyed'` | created 态被销毁(`destroy()` 被调;wire 回报 `DESTROYED`) |
 | `'error'` | `run` 抛异常 |
 | `'cancel'` | task 被 cancel |
 | `'force'` | 被别的 routine 更高档位的 `start(priority)` / passive 拉起 / `acquire` 驱逐 |
@@ -246,7 +257,7 @@ class Listener(Routine):
 
 ## 常用方法(委托 ctx)
 
-`Routine` 把 `ctx` 上的常用 API 都委托出来了,在 `run()` 体里直接 `self.submit(...)`/`self.call(...)`/`self.req(...)` 等即可调用,无需写 `self.ctx.xxx`。
+`Routine` 把 `ctx` 上的常用 API 都委托出来了,在 `run()` 体里直接 `self.create(...)`/`self.call(...)`/`self.req(...)` 等即可调用,无需写 `self.ctx.xxx`。
 
 完整 API 列表见 [04-context.md](./04-context.md)。
 

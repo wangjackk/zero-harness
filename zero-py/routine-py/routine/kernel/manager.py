@@ -46,8 +46,8 @@ from ..protocol import (
     ROUTINE_ACQUIRE, ROUTINE_ACQUIRED,
     ROUTINE_LOAD_MODULE,
     ROUTINE_MODULE_LOADED, ROUTINE_RELEASE, ROUTINE_RELEASED,
-    ROUTINE_START, ROUTINE_STOP, ROUTINE_SUBMIT, ROUTINE_SUBMITTED,
-    ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_UNSUBMIT,
+    ROUTINE_START, ROUTINE_STOP, ROUTINE_CREATE, ROUTINE_CREATED,
+    ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_DESTROY,
     ROUTINE_REJECTED, ROUTINE_YIELD, ROUTINE_YIELDED,
 )
 
@@ -340,16 +340,16 @@ class Kernel:
         n.cmd.attach_body(self._run_remote(n))
         n.cmd.start()
 
-    def _on_submit(self, parent_id: int, name: str,
+    def _on_create(self, parent_id: int, name: str,
                    kwargs: Dict[str, Any]) -> int:
-        """处理 routine.submit:建 created 态命令返回 child_id.passive 拒手动."""
+        """处理 routine.create:建 created 态命令返回 child_id.passive 拒手动."""
         route = self.routes.get(name)
         if route is not None and route.is_passive:
             raise PermissionError(
                 f'routine {name} is passive (auto-started by kernel); '
-                f'manual submit is not allowed')
+                f'manual create is not allowed')
         n = self._create_node(parent_id, name, kwargs)
-        log.info('➡️ submit %s', n.cmd)
+        log.info('➡️ create %s', n.cmd)
         return n.cmd.id
 
     def _require_node(self, rid: int) -> Node:
@@ -399,7 +399,7 @@ class Kernel:
     async def _run_remote(self, n: Node) -> None:
         """驱动 hub 跑这条 routine:created → start → started → stopped.
 
-        submit 路径(created_sent=True)跳过 created 阶段(已发过并 resolve 过).
+        create 路径(created_sent=True)跳过 created 阶段(已发过并 resolve 过).
         body 退出(自然/被打断)时全量 Release 该 routine 占的所有模块.
         """
         cmd = n.cmd
@@ -465,7 +465,7 @@ class Kernel:
             await self._stop_node(c, cascade=True, force_by=force_by)
 
         if n.cmd.state == State.CREATED:
-            # created 态(已 submit 未 start):发 destroy 让 hub 销毁 instance
+            # created 态(已 create 未 start):发 destroy 让 hub 销毁 instance
             # (先发再删: 发给 node owner, 删后 owner 仍可查----但保持先发
             # 再删的顺序与 Go sendDestroy 一致)
             log.info('🗑️ %s destroyed (created, cascade=%s)', n.cmd, cascade)
@@ -473,7 +473,7 @@ class Kernel:
             self._unsubscribe_rid(str(n.cmd.id))
             self._send_to(n.owner, {'event': LIFECYCLE_DESTROY,
                                     'id': str(n.cmd.id)})
-            # 主动 relay stopped 给父(对齐 unsubmit): node 即将删除, owner
+            # 主动 relay stopped 给父(对齐 destroy): node 即将删除, owner
             # hub 的 destroy 回报(stopped)到达时 node 已不存在, 无法中转
             # ---- 父侧 handle(entry await)会永久挂起. relay 须在 remove
             # 之前(node 带 parent).
@@ -707,19 +707,19 @@ class Kernel:
         if rid:
             self._relay_to_parent(rid, dict(msg, event=ROUTINE_YIELDED))
 
-    async def _on_routine_submit(self, msg: Dict[str, Any],
+    async def _on_routine_create(self, msg: Dict[str, Any],
                                  source: str) -> None:
-        """routine.submit:建 created 态 → 发 lifecycle.created → 等 created 回报
-        → 回 routine.submitted{child_id, modules} 给 submit 发起方
-        (source, 对齐 Go OnSubmitSubmitted(sourceClientID, ...))."""
+        """routine.create:建 created 态 → 发 lifecycle.created → 等 created 回报
+        → 回 routine.created{child_id, modules} 给 create 发起方
+        (source, 对齐 ts kernel onRoutineCreate)."""
         req_id = str(msg.get('req_id', ''))
         name = str(msg.get('name', ''))
         kwargs = msg.get('kwargs') or {}
         parent_id = _to_int(msg.get('parent_id')) or 0
         try:
-            child_id = self._on_submit(parent_id, name, kwargs)
+            child_id = self._on_create(parent_id, name, kwargs)
         except Exception as exc:
-            self._send_to(source, {'event': ROUTINE_SUBMITTED,
+            self._send_to(source, {'event': ROUTINE_CREATED,
                                    'req_id': req_id, 'error': str(exc)})
             return
         n = self.nodes.get(child_id)
@@ -732,16 +732,16 @@ class Kernel:
                 r: CreatedResult = await asyncio.wait_for(
                     n.created_fut, timeout=self.CREATED_TIMEOUT)
             except asyncio.TimeoutError:
-                self._send_to(source, {'event': ROUTINE_SUBMITTED,
+                self._send_to(source, {'event': ROUTINE_CREATED,
                                        'req_id': req_id,
                                        'error': f'routine {name} created timeout'})
                 return
             if r.error:
-                self._send_to(source, {'event': ROUTINE_SUBMITTED,
+                self._send_to(source, {'event': ROUTINE_CREATED,
                                        'req_id': req_id, 'error': r.error})
             else:
                 n.declared = r.modules
-                self._send_to(source, {'event': ROUTINE_SUBMITTED,
+                self._send_to(source, {'event': ROUTINE_CREATED,
                                        'req_id': req_id,
                                        'child_id': str(child_id),
                                        'modules': r.modules})
@@ -834,14 +834,14 @@ class Kernel:
                                    'child_id': str(child_id),
                                    'error': str(exc)})
 
-    async def _on_routine_unsubmit(self, msg: Dict[str, Any],
+    async def _on_routine_destroy(self, msg: Dict[str, Any],
                                    source: str) -> None:
         child_id = _to_int(msg.get('child_id')) or 0
         try:
             n = self._require_node(child_id)
             if n.cmd.state != State.CREATED:
                 raise RuntimeError(
-                    f'cannot unsubmit routine {n.cmd}: already started '
+                    f'cannot destroy routine {n.cmd}: already started '
                     f'(state={n.cmd.state.value}), use stop instead')
             # 先发再删: destroy 发给 node owner(对齐 Go sendDestroy)
             self._unsubscribe_rid(str(child_id))
@@ -849,15 +849,15 @@ class Kernel:
                                     'id': str(child_id)})
             # 主动 relay stopped 给父: node 即将删除, owner hub 的 destroy
             # 回报(stopped)到达时 node 已不存在, 无法中转 ---- 父 handle 的
-            # unsubmit ack 会永久挂起. relay 须在 remove 之前(node 带 parent).
+            # destroy ack 会永久挂起. relay 须在 remove 之前(node 带 parent).
             self._relay_to_parent(child_id, {
                 'event': LIFECYCLE_STOPPED, 'id': str(child_id),
-                'reason': ControlDoneReason.UNSUBMITTED.value,
+                'reason': ControlDoneReason.DESTROYED.value,
             })
             self._remove_node(child_id)
-            log.info('↩️ unsubmit %s', n.cmd)
+            log.info('↩️ destroy %s', n.cmd)
         except Exception as exc:
-            self._send_to(source, {'event': ROUTINE_REJECTED, 'op': 'unsubmit',
+            self._send_to(source, {'event': ROUTINE_REJECTED, 'op': 'destroy',
                                    'child_id': str(child_id),
                                    'error': str(exc)})
 
@@ -1418,10 +1418,10 @@ Kernel._DISPATCH = {
     PUBSUB_UNSUBSCRIBE: Kernel._on_pubsub_unsubscribe,
     PUBSUB_PUBLISH: Kernel._on_pubsub_publish,
     ROUTINE_YIELD: Kernel._on_yield,
-    ROUTINE_SUBMIT: Kernel._on_routine_submit,
+    ROUTINE_CREATE: Kernel._on_routine_create,
     ROUTINE_START: Kernel._on_routine_start,
     ROUTINE_STOP: Kernel._on_routine_stop,
-    ROUTINE_UNSUBMIT: Kernel._on_routine_unsubmit,
+    ROUTINE_DESTROY: Kernel._on_routine_destroy,
     ROUTINE_ACQUIRE: Kernel._on_routine_acquire,
     ROUTINE_RELEASE: Kernel._on_routine_release,
     ROUTINE_LOAD_MODULE: Kernel._on_routine_load_module,

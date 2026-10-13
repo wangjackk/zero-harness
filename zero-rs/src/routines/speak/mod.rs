@@ -8,7 +8,7 @@
 //!   串行到达, 无需业务 reorder);{_eof} 调 finish 让音频流自然结束.
 //!   run 等待合成+播放结束(wait_done), stop 打断立即停.
 //!
-//! 情绪指令是 agent 的活状态: submit 只透传 `from_agent_id`, run 起点经
+//! 情绪指令是 agent 的活状态: create 只透传 `from_agent_id`, run 起点经
 //! `agent/state` bridge 现取 `tts_instruction` 写入活单元; TTS session 惰性
 //! 建立于首个 Feed 的消化(受 started 门, 晚于 run), 建立时读活单元现值 ——
 //! 排队段(mouth 被占)与立即段两种时序读到的都是"临出声前"的最新情绪.
@@ -56,7 +56,7 @@ pub struct SpeakParams {
 
 /// 每个 speak 实例一个（factory per-rid create），持实例私有 TtsHandle:
 /// token 是 actor 侧的实例身份，多实例命令互不串扰。
-/// `from_agent_id` 在 on_created 从 submit kwargs 灌入; run 起点据此取
+/// `from_agent_id` 在 on_created 从 create kwargs 灌入; run 起点据此取
 /// 情绪指令写入 `instruction` 活单元, actor 建 session 时读现值.
 #[derive(Default)]
 pub struct SpeakRoutine {
@@ -128,7 +128,7 @@ impl Routine for SpeakRoutine {
         // TTS actor 懒启动(进程单例, 重复调用忽略): config 缺失时 created 即失败,
         // 不影响其它 routine.
         TtsService::start(SeedConfig::load()?)?;
-        // 调用方 agent 身份: act submit speak 时透传(created 投递, 早于任何
+        // 调用方 agent 身份: act create speak 时透传(created 投递, 早于任何
         // body 消息); run 起点据此反查情绪. 指令活单元初始为空(中性).
         let params: SpeakParams =
             serde_json::from_value(JsonValue::Object(kwargs.clone())).unwrap_or_default();
@@ -146,6 +146,14 @@ impl Routine for SpeakRoutine {
             "stopped": true,
             "interrupted": true,
         })))
+    }
+
+    async fn destroy(&self) -> Result<Option<JsonValue>, RoutineError> {
+        // created 态销毁: start 前可能已收 body(feed 入 actor 队列)----
+        // 撤回该实例的排队命令, 不让孤儿占住串行队列.
+        tracing::info!("speak destroying");
+        self.tts.cancel();
+        Ok(None)
     }
 
     /// 收 body chunk 直接喂 tts(mailbox 串行, 按发送序到达).
@@ -184,7 +192,7 @@ async fn fetch_instruction(
 ) -> Result<Option<String>, String> {
     let mut kwargs = JsonObject::new();
     kwargs.insert("agent_id".to_string(), json!(agent_id));
-    let (child, _) = ctx.submit("agent/state", Some(kwargs)).await?;
+    let (child, _) = ctx.create("agent/state", Some(kwargs)).await?;
     ctx.start_child(&child, 10).await?;   // 10 = 常规默认档
     let state = ctx.wait_child(&child, 2).await?;
     Ok(state

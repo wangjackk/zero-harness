@@ -233,16 +233,45 @@ impl LifecycleManager {
         Ok(())
     }
 
-    /// dial-in:收到 kernel 发来的 lifecycle.destroy → 清理 created 态(未 start)的 routine。
+    /// dial-in:收到 kernel 发来的 lifecycle.destroy. 销毁 created 态
+    /// routine(已 create 未 start).
     ///
-    /// destroy 也是终止: 走与 stop/断连同一条收尾链(stop hook → on_stopped →
-    /// cleanup, 即 stop_instance 全套), 只是不回报 stopped(kernel 已删 node,
-    /// 无接收方) ---- created 态实例可能在 start 前已收 body 持有资源(如
-    /// speak 已入 actor 队列的 TTS 命令), 资源撤销靠 stop hook 统一契约。
+    /// created 态销毁走独立 destroy hook(与 stop 分野: stop 一个从未
+    /// start 的实例语义荒谬) ---- start 前实例可能已收 body 持有资源,
+    /// destroy hook 负责撤销. 用于:destroy / start 失败清理 / 父终止
+    /// 级联清 created 子. 收尾对齐 py/ts hub:on_stopped("destroyed") +
+    /// stopped 回报(DESTROYED; kernel 收到时 node 已删, 迟到帧静默).
     pub async fn handle_destroy(&self, peer_id: &str, msg: JsonObject) -> Result<(), String> {
         let rid = coerce_string(&msg, "id").unwrap_or_default();
         let prid = format!("{peer_id}:{rid}");
-        self.stop_instance(&prid, false, "destroy").await?;
+        let (instance, run_task) = {
+            let mut running_instances = self.runtime.running_instances.lock().await;
+            let Some(state) = running_instances.get_mut(&prid) else {
+                return Ok(());
+            };
+            if state.finalized {
+                return Ok(());
+            }
+            state.status = InvocationStatus::Stopping;
+            state.cancellation.cancel();
+            (state.instance.clone(), state.run_task.take())
+        };
+        let Some(instance) = instance else {
+            return Ok(());
+        };
+        // start 与 destroy 竞态: take 出的 run_task(可能刚 spawn)一并 abort.
+        Self::abort_run_task(run_task).await;
+        let result = Self::destroy_with_timeout(instance.clone()).await;
+        self.finalize_invocation(
+            &prid,
+            ControlDoneReason::Destroyed,
+            result,
+            None,
+            "destroyed",
+            Some(instance),
+            true,
+        )
+        .await?;
         tracing::info!("[lifecycle] destroyed: {prid}");
         Ok(())
     }
@@ -270,11 +299,12 @@ impl LifecycleManager {
             .await
     }
 
-    /// 单实例销毁. notify_kernel=false 供 transport 断连本地销毁(kernel
-    /// 世界已死, stopped 回报无意义)与 destroy(对端已删 node); heartbeat
+    /// 单实例终止(running 态 graceful stop). notify_kernel=false 供 transport
+    /// 断连本地销毁(kernel 世界已死, stopped 回报无意义); heartbeat
     /// watchdog 超时路径传 true. instance 传 Some → stop hook 照走(对齐
     /// py/ts graceful stop). done_reason 喂 on_stopped hook: 断连/心跳超时
-    /// "disconnect", destroy "destroy".
+    /// "disconnect", stop "stop". created 态销毁不在此 ---- 走
+    /// handle_destroy 的独立 destroy hook.
     pub async fn stop_instance(
         &self,
         prid: &str,
@@ -488,6 +518,17 @@ impl LifecycleManager {
         .flatten()
     }
 
+    async fn destroy_with_timeout(instance: SharedRoutine) -> Option<JsonValue> {
+        tokio::time::timeout(
+            Duration::from_secs(Self::STOP_TIMEOUT_SECONDS),
+            async move { instance.destroy().await },
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+    }
+
     async fn resolve_lifecycle_invocation(
         &self,
         peer_id: &str,
@@ -693,6 +734,11 @@ mod tests {
             self.events.lock().unwrap().push("stop".to_string());
             Ok(None)
         }
+
+        async fn destroy(&self) -> Result<Option<JsonValue>, crate::core::routine::RoutineError> {
+            self.events.lock().unwrap().push("destroy".to_string());
+            Ok(None)
+        }
     }
 
     #[derive(Clone)]
@@ -835,10 +881,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn destroy_calls_stop_hook_for_created_instance() {
-        // destroy 也是终止: created 态实例被 destroy 必须走 stop hook ----
-        // created 态可能已在 start 前收 body 持有资源(如 speak 已入 actor
-        // 队列的 TTS 命令), stop hook 是资源撤销的统一契约. run 不得启动.
+    async fn destroy_calls_destroy_hook_for_created_instance() {
+        // created 态实例被 destroy 必须走 destroy hook(与 stop 分野)----
+        // created 态可能已在 start 前收 body 持有资源, destroy hook 负责
+        // 撤销. run 不得启动, stop hook 也不得混入.
         let events = StdArc::new(StdMutex::new(Vec::new()));
         let registry = RoutineRegistry::from_factories([StdArc::new(BlockingFactory {
             events: events.clone(),
@@ -875,8 +921,8 @@ mod tests {
         let recorded = events.lock().unwrap().clone();
         assert_eq!(
             recorded,
-            vec!["stop"],
-            "destroy must invoke the stop hook without starting run"
+            vec!["destroy"],
+            "destroy must invoke the destroy hook without starting run or mixing in stop"
         );
     }
 }

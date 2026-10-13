@@ -96,24 +96,24 @@ pub const ROUTINE_UNLOAD_MODULE: &str = "routine.unload_module";
 pub const ROUTINE_MODULE_UNLOADED: &str = "routine.module_unloaded";
 
 // ---------------------------------------------------------------------------
-// routine 调 routine(submit/start/stop,py→kernel→py)
+// routine 调 routine(create/start/stop,py→kernel→py)
 //
-// 父 routine 调子 routine 的 wire 协议:submit 创建子命令 → submitted 回执带
+// 父 routine 调子 routine 的 wire 协议:create 创建子命令 → created 回执带
 // child_id+modules → start 启动子 → lifecycle.stopped 中转回父拿 result.
 // kernel 是中央调度器,跨 hub 路由靠 kernel 完成.
 // ---------------------------------------------------------------------------
 
-/// py→kernel: 提交子 routine(带 req_id+parent_id+name+kwargs,kernel 回 submitted)
-pub const ROUTINE_SUBMIT: &str = "routine.submit";
-/// kernel→py: submit 回执(带 req_id+child_id+modules 或 error)
-pub const ROUTINE_SUBMITTED: &str = "routine.submitted";
-/// py→kernel: 启动已 submit 的子 routine(带 child_id + 可选 priority:
+/// py→kernel: 提交子 routine(带 req_id+parent_id+name+kwargs,kernel 回 created)
+pub const ROUTINE_CREATE: &str = "routine.create";
+/// kernel→py: create 回执(带 req_id+child_id+modules 或 error)
+pub const ROUTINE_CREATED: &str = "routine.created";
+/// py→kernel: 启动已 create 的子 routine(带 child_id + 可选 priority:
 /// 模块冲突时 incoming.priority > 全部 holder 才驱逐他们后 start, 平级不抢)
 pub const ROUTINE_START: &str = "routine.start";
 /// py→kernel: 停止子 routine(带 child_id)
 pub const ROUTINE_STOP: &str = "routine.stop";
-/// py→kernel: 撤销 submit(清 created 态子命令,带 child_id)
-pub const ROUTINE_UNSUBMIT: &str = "routine.unsubmit";
+/// py→kernel: 撤销 create(清 created 态子命令,带 child_id)
+pub const ROUTINE_DESTROY: &str = "routine.destroy";
 
 // ---------------------------------------------------------------------------
 // kernel→server 推模块树拓扑(静态 config,运行期不变)

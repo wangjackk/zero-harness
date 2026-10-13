@@ -6,7 +6,7 @@ use crate::{
             LIFECYCLE_STARTED, LIFECYCLE_STOPPED, MESSAGE_REQ, MESSAGE_SEND,
             PUBSUB_PUBLISH, PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE,
             REQ_EVENT_GET_MODULE_TREE, REQ_EVENT_GET_ROUTINES, REQ_EVENT_GET_RUNNING_ROUTINES,
-            ROUTINE_START, ROUTINE_SUBMIT, ROUTINE_YIELD,
+            ROUTINE_START, ROUTINE_CREATE, ROUTINE_YIELD,
         },
         ControlDoneReason, JsonObject, ParentRef, RawWireEvent, RoutineCatalogEntry,
         RunningRoutineInfo,
@@ -20,8 +20,8 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-/// submit 回执等待者: (child_id, modules) 或 error.
-pub type SubmitReply = Result<(String, Option<Vec<String>>), String>;
+/// create 回执等待者: (child_id, modules) 或 error.
+pub type CreateReply = Result<(String, Option<Vec<String>>), String>;
 /// 子 routine 完成等待者: result value 或 error.
 pub type HandleReply = Result<Value, String>;
 /// p2p req 回执等待者: result value 或 error.
@@ -50,19 +50,19 @@ pub trait RoutineIo: Send + Sync {
 
     async fn request_stop(&self, id: &str, peer_id: Option<&str>) -> Result<(), String>;
 
-    // --- routine→routine submit/wait future 表 ---
+    // --- routine→routine create/wait future 表 ---
     // io 实现转发到 ServerRuntime 的 future 表; RunContext 通过 io 访问,
     // 避免 core→server 循环依赖.
 
-    async fn register_submit_future(
+    async fn register_create_future(
         &self,
         req_id: String,
-        sender: oneshot::Sender<SubmitReply>,
+        sender: oneshot::Sender<CreateReply>,
     );
-    async fn pop_submit_future(
+    async fn pop_create_future(
         &self,
         req_id: &str,
-    ) -> Option<oneshot::Sender<SubmitReply>>;
+    ) -> Option<oneshot::Sender<CreateReply>>;
     async fn register_handle_waiter(
         &self,
         child_id: String,
@@ -323,22 +323,22 @@ impl RunContext {
         Err("typed module lookup is not available in the minimal Rust runtime yet".to_string())
     }
 
-    // --- routine 调 routine (submit → start → wait) ---
-    // 对齐 Python RunContext.call/submit: 父 routine 通过 kernel 调度子 routine,
+    // --- routine 调 routine (create → start → wait) ---
+    // 对齐 Python RunContext.call/create: 父 routine 通过 kernel 调度子 routine,
     // kernel 跨 hub 路由 (Rust hub 调 Python hub 注册的 routine 也走此路径).
 
-    /// 提交子 routine: 发 routine.submit 给 kernel, 等 routine.submitted 回执.
+    /// 提交子 routine: 发 routine.create 给 kernel, 等 routine.created 回执.
     /// 返回 (child_id, modules). 拿到 child_id 后调 start_child + wait_child.
-    pub async fn submit(
+    pub async fn create(
         &self,
         name: &str,
         kwargs: Option<JsonObject>,
     ) -> Result<(String, Option<Vec<String>>), String> {
         let req_id = new_req_id();
-        let (sender, receiver) = oneshot::channel::<SubmitReply>();
-        self.io.register_submit_future(req_id.clone(), sender).await;
+        let (sender, receiver) = oneshot::channel::<CreateReply>();
+        self.io.register_create_future(req_id.clone(), sender).await;
 
-        let mut payload = RawWireEvent::new(ROUTINE_SUBMIT)
+        let mut payload = RawWireEvent::new(ROUTINE_CREATE)
             .with_field("req_id", Value::String(req_id.clone()))
             .with_field("parent_id", self.id_value())
             .with_field("name", Value::String(name.to_string()));
@@ -351,14 +351,14 @@ impl RunContext {
 
         let result = tokio::time::timeout(Duration::from_secs(30), receiver)
             .await
-            .map_err(|_| format!("submit {name} timed out"))?
-            .map_err(|_| format!("submit {name} waiter closed"))?;
+            .map_err(|_| format!("create {name} timed out"))?
+            .map_err(|_| format!("create {name} waiter closed"))?;
         // 清 future (若超时或正常完成都清,幂等)
-        self.io.pop_submit_future(&req_id).await;
+        self.io.pop_create_future(&req_id).await;
         result
     }
 
-    /// 启动已 submit 的子 routine: 发 routine.start{child_id, priority} 给 kernel.
+    /// 启动已 create 的子 routine: 发 routine.start{child_id, priority} 给 kernel.
     /// 不等 lifecycle.started (简化:直接进 wait,stopped 会带 error 若 start 失败).
     /// priority: 模块冲突时 > 全部 holder 才驱逐后 start(平级不抢);
     /// 10(常规默认档)省字段 ---- wire 缺省即默认档.
@@ -385,7 +385,7 @@ impl RunContext {
         result
     }
 
-    /// 同步拿子 routine 结果: submit → start → wait 一步到位.
+    /// 同步拿子 routine 结果: create → start → wait 一步到位.
     /// 对齐 Python `self.call(name, kwargs, priority)`.
     pub async fn call(
         &self,
@@ -393,7 +393,7 @@ impl RunContext {
         kwargs: Option<JsonObject>,
         priority: i64,
     ) -> Result<Value, String> {
-        let (child_id, _modules) = self.submit(name, kwargs).await?;
+        let (child_id, _modules) = self.create(name, kwargs).await?;
         self.start_child(&child_id, priority).await?;
         // 600s 超时对齐 HTTP /run 接口 (fetch_agent_state 等可能涉及外部调用)
         self.wait_child(&child_id, 600).await

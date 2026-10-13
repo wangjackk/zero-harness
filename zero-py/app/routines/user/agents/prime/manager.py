@@ -246,7 +246,7 @@ class PrimeAgentManager(Routine):
             'condense_config': condense_config,
         }
         try:
-            handle = await self.submit(agent_routine, child_kwargs)
+            handle = await self.create(agent_routine, child_kwargs)
             await handle.start()
         except Exception as exc:
             _log.error('spawn agent %s failed: %r', agent_id, exc)

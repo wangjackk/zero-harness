@@ -20,7 +20,7 @@
 from .errors import (
     AcquireError, DeregisterError, LoadModuleError, RegisterError, ReloadError,
     ReleaseError, ReqError, ReqTimeout, StartError, StreamCancelled,
-    StreamError, StreamTimeout, SubmitError, UnloadModuleError,
+    StreamError, StreamTimeout, CreateError, UnloadModuleError,
 )
 from .grpc_client import GrpcClientTransport
 from .handle import RoutineHandle
@@ -39,7 +39,7 @@ from .routine import (
 __all__ = [
     'AcquireError', 'DeregisterError', 'LoadModuleError', 'RegisterError',
     'ReloadError', 'ReleaseError', 'ReqError', 'ReqTimeout', 'StartError',
-    'StreamCancelled', 'StreamError', 'StreamTimeout', 'SubmitError',
+    'StreamCancelled', 'StreamError', 'StreamTimeout', 'CreateError',
     'UnloadModuleError',
     'GrpcClientTransport',
     'RoutineHub',

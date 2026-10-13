@@ -10,9 +10,9 @@
    runtime / lifecycle / hub       hub 侧运行时、生命周期、通信编排
  */
 export {
-  AcquireError, DeregisterError, LoadModuleError, RegisterError, ReloadError,
-  ReleaseError, ReqError, ReqTimeout, StartError, StreamCancelled,
-  StreamError, StreamTimeout, SubmitError, TimeoutErr, UnloadModuleError,
+  AcquireError, CreateError, DeregisterError, LoadModuleError, RegisterError,
+  ReloadError, ReleaseError, ReqError, ReqTimeout, StartError,
+  StreamCancelled, StreamError, StreamTimeout, TimeoutErr, UnloadModuleError,
 } from './errors'
 export type { Msg, Payload } from './protocol'
 export { ControlDoneReason } from './protocol'
