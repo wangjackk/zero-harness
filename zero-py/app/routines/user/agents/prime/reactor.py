@@ -16,7 +16,7 @@ from routine import Routine, request
 from app.routines.user.agents._core.paths import AGENT_ID_KEY
 from routine.logger import setup_logger
 
-from app.routines.user.skills.registry import build_registry
+from app.routines.user.skill.registry import build_registry
 
 from .._core.llm import LLMClient
 from .._core.memory import build_context_provider

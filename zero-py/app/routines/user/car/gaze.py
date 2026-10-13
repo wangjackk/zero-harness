@@ -26,7 +26,7 @@ from typing import Any, ClassVar, Dict
 from routine import PassiveConfig, Routine, StartError, subscribe
 from routine.logger import setup_logger
 
-from . import car_ctrl
+from . import ctrl
 
 _log = setup_logger('car.gaze')
 
@@ -100,7 +100,7 @@ class CarGaze(Routine):
         elif self._active:
             # 同步 bump 代际: 打断在跑的 track(下一拍自退, finally 零速),
             # run 循环经 _evt 亦即时感知, 不等本轮 max_run_s 耗完.
-            car_ctrl.bump_generation()
+            ctrl.bump_generation()
             self._active = False
             self._evt.set()
 
@@ -118,7 +118,7 @@ class CarGaze(Routine):
                 if loop.time() >= self._deadline:
                     # 兜底: idle 丢失(广播方硬杀等), 强制收会话
                     _log.warning('gaze session deadline hit, idle lost?')
-                    car_ctrl.bump_generation()
+                    ctrl.bump_generation()
                     break
                 try:
                     # 后台注视档位 5 垫底: 显式动作(默认 10)占 wheels 时

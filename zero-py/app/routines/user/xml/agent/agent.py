@@ -285,7 +285,7 @@ class XmlAgent(Routine):
         )
         self._workspace.mkdir(parents=True, exist_ok=True)
         try:
-            from app.routines.user.skills.registry import build_registry
+            from app.routines.user.skill.registry import build_registry
             # 一级 skill 摘要: 只注入 level1_skills 里指定的 name+desc,
             # LLM 看到匹配的 skill 后自己调 skill/load 加载完整内容 (两级渐进).
             if level1_skills:
@@ -1099,7 +1099,7 @@ class XmlAgent(Routine):
         images = m.get('images')
         if role == 'user' and images and self._llm is not None \
                 and self._llm.supports_images:
-            from .._core.uploads import resolve_data_url
+            from ...agents._core.uploads import resolve_data_url
             blocks: list[dict] = [{'type': 'input_text', 'text': content}]
             for p in images:
                 data_url = resolve_data_url(str(p))
@@ -1311,7 +1311,7 @@ class XmlAgent(Routine):
             req = ChatMessageReq.model_validate(data or {})
         except Exception as exc:
             return {'ok': False, 'error': f'invalid payload: {exc}'}
-        from .._core.messaging import split_content
+        from ...agents._core.messaging import split_content
         try:
             message, images = split_content(req.content)
         except ValueError as exc:

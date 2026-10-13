@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from routine import Routine, subscribe
 from routine.logger import setup_logger
 
-from . import car_ctrl
+from . import ctrl
 
 _log = setup_logger('car.wake_track')
 
@@ -108,7 +108,7 @@ class CarWakeTrack(Routine):
             # 动作无竞态 ---- result 与 idle 微秒级连发, 都先于 agent
             # 的 LLM 推理与动作启动.
             if frame.get('state') == 'idle':
-                car_ctrl.bump_generation()
+                ctrl.bump_generation()
             return
         if kind != 'wake':
             return
@@ -121,7 +121,7 @@ class CarWakeTrack(Routine):
             # run 循环恢复执行, 新 align 的代际必然最新; 若走 car/stop
             # 异步调用, 其 bump 与新 align 的 bump 存在竞态, 晚到一步
             # 会把刚起跑的新 align 一拍打死(实测"唤醒了却不动").
-            car_ctrl.bump_generation()
+            ctrl.bump_generation()
             self._wake_evt.set()
 
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -135,7 +135,7 @@ class CarWakeTrack(Routine):
         # 角度 + 立即置位, 循环首轮即执行(与后续 wake 同一条路径).
         if inp.first_cal_angle is not None:
             self._pending_deg = float(inp.first_cal_angle)
-            car_ctrl.bump_generation()
+            ctrl.bump_generation()
             self._wake_evt.set()
         try:
             loop = asyncio.get_running_loop()

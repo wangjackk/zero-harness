@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from routine import Routine
 
-from ..bridge_req import bridge_req
+from ..hiwonder.bridge_req import bridge_req
 
 _NS = 'ros'   # 感知桥转发 namespace(与 ros_bridge._NS 一致)
 _BATTERY = '/ros_robot_controller/battery'
