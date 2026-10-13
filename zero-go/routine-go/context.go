@@ -18,10 +18,10 @@ type RoutineIO interface {
 	RequestStop(id string, peerID string) error
 
 	// routine 调 routine 反向事件
-	SendRoutineSubmit(reqID, parentID, name string, kwargs map[string]any, peerID string) error
+	SendRoutineCreate(reqID, parentID, name string, kwargs map[string]any, peerID string) error
 	SendRoutineStart(childID string, tryStart bool, priority int, peerID string) error
 	SendRoutineStop(childID string, peerID string) error
-	SendRoutineUnsubmit(childID string, peerID string) error
+	SendRoutineDestroy(childID string, peerID string) error
 	SendRoutineAcquire(reqID, id string, modules []string, peerID string) error
 	SendRoutineRelease(reqID, id string, modules []string, peerID string) error
 	SendRoutineLoadModule(reqID, parentID, childID, name string, peerID string) error
@@ -234,7 +234,7 @@ type RunContext struct {
 	logger   *Logger
 }
 
-// AckTimeout submit/acquire/release 等 kernel ack 默认超时.
+// AckTimeout create/acquire/release 等 kernel ack 默认超时.
 const AckTimeout = 30 * time.Second
 
 // AckStart 发 lifecycle.started 通知调度器进入 Started.
@@ -280,41 +280,41 @@ func (c *RunContext) HandleSubscribe(topic string, handler SubscribeHandler, nam
 	return c.io.SendPubsubSubscribe(c.ID, topic, namespace, c.PeerID)
 }
 
-// --- routine 调 routine(submit) ---
+// --- routine 调 routine(create) ---
 
-// Submit 提交子 routine,经 kernel 回环.返回 handle.
-func (c *RunContext) Submit(name string, kwargs map[string]any) (*RoutineHandle, error) {
+// Create 提交子 routine,经 kernel 回环.返回 handle.
+func (c *RunContext) Create(name string, kwargs map[string]any) (*RoutineHandle, error) {
 	reqID := NewReqID()
-	fut := make(chan submitResult, 1)
-	c.runtime.RegisterSubmitFuture(reqID, fut)
+	fut := make(chan createResult, 1)
+	c.runtime.RegisterCreateFuture(reqID, fut)
 
-	if err := c.io.SendRoutineSubmit(reqID, c.ID, name, kwargs, c.PeerID); err != nil {
-		c.runtime.PopSubmitFuture(reqID)
+	if err := c.io.SendRoutineCreate(reqID, c.ID, name, kwargs, c.PeerID); err != nil {
+		c.runtime.PopCreateFuture(reqID)
 		return nil, err
 	}
 
 	select {
 	case res := <-fut:
 		if res.err != "" {
-			return nil, fmt.Errorf("%w: %s", SubmitError, res.err)
+			return nil, fmt.Errorf("%w: %s", CreateError, res.err)
 		}
 		handle := newRoutineHandle(res.childID, name, c, res.modules)
 		c.io.RegisterHandle(res.childID, handle)
 		return handle, nil
 	case <-time.After(AckTimeout):
-		c.runtime.PopSubmitFuture(reqID)
-		return nil, fmt.Errorf("%w: submit %s timeout", SubmitError, name)
+		c.runtime.PopCreateFuture(reqID)
+		return nil, fmt.Errorf("%w: create %s timeout", CreateError, name)
 	}
 }
 
-// Call 同步拿子 routine 结果:Submit → Start(priority) → Wait 一步到位.
+// Call 同步拿子 routine 结果:Create → Start(priority) → Wait 一步到位.
 // 要求父 started.priority 语义同 RoutineHandle.Start(冲突时 incoming 严格
 // 大于全部第三方 holder 才驱逐后 start;平级/更低原样抛 StartError;0=冲突即拒).
 func (c *RunContext) Call(name string, kwargs map[string]any, priority int) (any, error) {
 	if !c.state.isStarted() {
 		return nil, errors.New(c.Name + ": must AckStart() before Call (parent routine not started)")
 	}
-	handle, err := c.Submit(name, kwargs)
+	handle, err := c.Create(name, kwargs)
 	if err != nil {
 		return nil, err
 	}
@@ -591,7 +591,7 @@ func (c *RunContext) Go(fn func()) {
 
 // --- ack 回执类型 ---
 
-type submitResult struct {
+type createResult struct {
 	childID string
 	modules []string
 	err     string

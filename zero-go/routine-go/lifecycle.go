@@ -72,7 +72,7 @@ func (m *LifecycleManager) instantiate(peerID, rid, name string,
 	state.clearStopFinalized()
 	// message.* 路由表在 created 注册:created 后即可收 req/stream/send.
 	m.runtime.RegisterCreated(rid, state)
-	// ctx 绑到 created:on_created() hook + 所有发送(req/publish/send/submit/...)可用.
+	// ctx 绑到 created:on_created() hook + 所有发送(req/publish/send/create/...)可用.
 	ctx := &RunContext{
 		ID:      rid,
 		Name:    name,
@@ -245,7 +245,9 @@ func (m *LifecycleManager) runRunner(prid, rid, peerID, name string,
 	m.cleanup(prid)
 }
 
-// HandleDestroy lifecycle.destroy:调度器销毁 created 态 routine(已 submit 未 start).
+// HandleDestroy lifecycle.destroy:调度器销毁 created 态 routine(已 create 未 start).
+// created 态销毁走独立 Destroy hook(与 Stop 分野):start 前实例可能已收 body
+// 持有资源,destroy hook 负责撤销.started 实例的终止走 HandleStop.
 func (m *LifecycleManager) HandleDestroy(peerID string, msg map[string]any) {
 	rid, _ := msg["id"].(string)
 	prid := peerID + ":" + rid
@@ -254,9 +256,12 @@ func (m *LifecycleManager) HandleDestroy(peerID string, msg map[string]any) {
 		return
 	}
 	if hooks, ok := state.instance.(LifecycleHooks); ok {
-		_ = hooks.OnStopped("stop", nil, "")
+		if err := hooks.Destroy(); err != nil {
+			m.runtime.logger.Errorf("%s#%s Destroy() failed: %v", state.instance.Name(), rid, err)
+		}
+		_ = hooks.OnStopped("destroyed", nil, "")
 	}
-	_ = m.sendStopped(prid, rid, peerID, "stop", state, nil, "")
+	_ = m.sendStopped(prid, rid, peerID, "destroyed", state, nil, "")
 	m.cleanup(prid)
 }
 

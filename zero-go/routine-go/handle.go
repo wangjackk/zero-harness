@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// ackTimeout 是 start/stop/unsubmit 等 kernel 回执的默认超时(对标 Python
+// ackTimeout 是 start/stop/destroy 等 kernel 回执的默认超时(对标 Python
 // ctx.ACK_TIMEOUT): 回执丢失/路由遗漏时报错返回, 不永久阻塞.
 const ackTimeout = 30 * time.Second
 
-// RoutineHandle 父侧拿到的"指向一次 submit 的子 routine"的本地句柄.
+// RoutineHandle 父侧拿到的"指向一次 create 的子 routine"的本地句柄.
 // 对标 Python RoutineHandle.
 //
 // handle.ID = kernel 分配的子 command id(string).notify 路径统一经 kernel 中转.
@@ -35,7 +35,7 @@ type RoutineHandle struct {
 	doneOnce  sync.Once
 
 	ackMu sync.Mutex
-	ack   chan ackResult // start/stop/unsubmit 回执
+	ack   chan ackResult // start/stop/destroy 回执
 
 	// body 迭代
 	bodyCh    chan any
@@ -177,18 +177,18 @@ func (h *RoutineHandle) Stop(fire bool) error {
 	}
 }
 
-// Unsubmit 撤销提交:清 created 态子命令(未 start 的).
-func (h *RoutineHandle) Unsubmit(fire bool) error {
+// Destroy 撤销提交:清 created 态子命令(未 start 的).
+func (h *RoutineHandle) Destroy(fire bool) error {
 	if h.ctx == nil {
 		return errors.New(h.String() + ": no ctx bound")
 	}
-	if err := h.requireNotDone("unsubmit"); err != nil {
+	if err := h.requireNotDone("destroy"); err != nil {
 		return err
 	}
 	if fire {
-		return h.ctx.io.SendRoutineUnsubmit(h.ID, h.ctx.PeerID)
+		return h.ctx.io.SendRoutineDestroy(h.ID, h.ctx.PeerID)
 	}
-	if err := h.ctx.io.SendRoutineUnsubmit(h.ID, h.ctx.PeerID); err != nil {
+	if err := h.ctx.io.SendRoutineDestroy(h.ID, h.ctx.PeerID); err != nil {
 		return err
 	}
 	ack := h.newAck()
@@ -198,7 +198,7 @@ func (h *RoutineHandle) Unsubmit(fire bool) error {
 	case <-h.doneCh:
 		return nil
 	case <-time.After(ackTimeout):
-		return fmt.Errorf("%s: unsubmit ack timeout after %s", h, ackTimeout)
+		return fmt.Errorf("%s: destroy ack timeout after %s", h, ackTimeout)
 	}
 }
 
@@ -256,7 +256,7 @@ func (h *RoutineHandle) NotifyDone(result any, errMsg string, reason string) {
 	}
 }
 
-// RejectAck 收到 rejected(op=start/stop/unsubmit)时调.
+// RejectAck 收到 rejected(op=start/stop/destroy)时调.
 func (h *RoutineHandle) RejectAck(err string) {
 	h.resolveAck(ackResult{ok: false, err: err})
 }
