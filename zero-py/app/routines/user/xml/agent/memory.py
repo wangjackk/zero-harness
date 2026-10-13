@@ -23,7 +23,7 @@ def _now_iso() -> str:
 from typing import Callable, Optional
 from uuid import uuid4
 
-# memory.py 在 zero-py/app/routines/user/agents/xml_agent/, parents[5] = 项目根
+# memory.py 在 zero-py/app/routines/user/xml/agent/, parents[5] = 项目根
 _DB_PATH = (Path(__file__).resolve().parents[5]
             / 'runtime' / 'xml_agent' / 'memory.db')
 

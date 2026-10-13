@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from routine import Routine
 
-from ..bridge_req import bridge_req
+from ..hiwonder.bridge_req import bridge_req
 from . import zones
 
 _GOAL_TOPIC = '/nav_goal'

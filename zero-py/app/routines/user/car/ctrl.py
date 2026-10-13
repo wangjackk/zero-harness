@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Dict, Tuple
 
-from .. import ros_client
+from ..hiwonder import ros_client
 
 _CMD_VEL = '/controller/cmd_vel'
 _TWIST_TYPE = 'geometry_msgs/Twist'

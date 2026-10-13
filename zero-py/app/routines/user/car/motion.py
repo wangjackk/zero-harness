@@ -5,7 +5,7 @@ car/shake 正弦摆动)共享:
 起停提示音(起步并发不阻塞发车, 结束音在零速帧后) + 10Hz 心跳发布 +
 零速保证(含异常) + 中断上报(car/stop/新动作 bump 代际) + stop() 钩子.
 
-本模块不注册(未在 __init__ re-export); 各 routine 对 car_ctrl 函数一律
+本模块不注册(未在 __init__ re-export); 各 routine 对 ctrl 函数一律
 模块属性访问 ---- 部分热重载时函数级 from-import 会持有旧函数对象.
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from routine import Modules, Routine
 
 from app.modules import MODULE_WHEELS
 
-from . import car_ctrl
+from . import ctrl
 
 
 class MotionOutput(BaseModel):
@@ -57,17 +57,17 @@ class MotionRoutine(Routine):
         """时变速度动作: fn(t) -> (vx, vy, wz) 每拍现算.
 
         生命周期: 起步提示音与运动并发(不阻塞发车), 结束提示音在零速帧
-        之后; 零速保证与中断上报在 car_ctrl.publish_twist_fn 内.
+        之后; 零速保证与中断上报在 ctrl.publish_twist_fn 内.
         """
         self._active = True
-        mine = car_ctrl.current_generation() + 1
+        mine = ctrl.current_generation() + 1
         beep = asyncio.create_task(self._beep('start'))
         try:
-            await car_ctrl.publish_twist_fn(fn, duration)
+            await ctrl.publish_twist_fn(fn, duration)
         finally:
             beep.cancel()
             self._active = False
-        interrupted = car_ctrl.current_generation() != mine
+        interrupted = ctrl.current_generation() != mine
         if not interrupted:
             # 被打断(car/stop/新动作/父级联停)不响结束音: 语义上不是"完成",
             # 且父实例可能已在拆除(_started=False), call() 会被拒.
@@ -90,6 +90,6 @@ class MotionRoutine(Routine):
         if not self._active:
             return
         try:
-            await car_ctrl.stop_robot()
+            await ctrl.stop_robot()
         except Exception:
             pass   # 停止路径吞错: 不掩盖导致停止的原始异常

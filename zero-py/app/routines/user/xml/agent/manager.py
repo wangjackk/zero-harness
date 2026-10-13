@@ -284,7 +284,7 @@ class XmlAgents(Routine):
             except Exception as exc:
                 _log.warning('route wake to main %s failed: %r', agent_id, exc)
             return
-        from .._core.messaging import build_content
+        from ...agents._core.messaging import build_content
         try:
             await self.req(handle.id, 'chat_message', {
                 'content': build_content(str(data.get('text') or '')),

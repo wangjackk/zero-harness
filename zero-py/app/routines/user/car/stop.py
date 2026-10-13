@@ -1,7 +1,7 @@
 """CarStop ---- 小车急停(rosbridge WS, 手册 §1 主链路).
 
 bump 动作代际使所有在跑 car/move 心跳退出, 并立即补发零速.
-对 car_ctrl 走模块属性访问(部分热重载下函数级 from-import 持旧函数).
+对 ctrl 走模块属性访问(部分热重载下函数级 from-import 持旧函数).
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from routine import Routine
 
-from . import car_ctrl
+from . import ctrl
 
 
 class CarStopInput(BaseModel):
@@ -35,5 +35,5 @@ class CarStop(Routine):
     }
 
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        await car_ctrl.stop_robot()
+        await ctrl.stop_robot()
         return CarStopOutput(stopped=True).model_dump()

@@ -14,7 +14,7 @@ from routine import Routine
 from routine.logger import setup_logger
 
 from app.routines.user.agents._core.paths import AGENT_ID_KEY, resolve_optional_tool_path
-from app.routines.user.skills.registry import USER_SKILLS_DIR
+from app.routines.user.skill.registry import USER_SKILLS_DIR
 from app.routines.user.agents.prime.kernel_env import ensure_kernel_env
 from .prompt import DESCRIPTION
 

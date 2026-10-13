@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from routine import Routine
 
-from ..bridge_req import bridge_req
+from ..hiwonder.bridge_req import bridge_req
 from . import zones
 
 _SCALE = 4  # 放大倍数: 5cm/格 → 栅格锐利 & 文字可读

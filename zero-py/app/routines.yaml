@@ -42,10 +42,11 @@ routines:
   - routines/user/user_agent.py
   - routines/user/world_agent.py
   # agent_hub/running_agents、agent/rid、agent/state 已收编进 agent_hub.py (hub + 三个查询 bridge)
-  - routines/user/list_routines.py
-  - routines/user/check_routine_name.py
-  - routines/user/routine_doc.py
-  - routines/user/reload_routines.py
+  # routine/ 命名空间(目录条目): routine 系统自身的运维口 ----
+  #   list 全量清单 / doc 单项文档 / check_name 注册名校验 / reload
+  #   手动热重载; skill 库 (routine_bridge / routine-creator) 教 LLM
+  #   调用的软依赖
+  - routines/user/routine
 
   # prime agent 已下线 (pi agent 已替代): 入口/manager/condenser 注释, 代码
   # 保留在 agents/prime/ 供考古. read_image (xml agent 白名单依赖) 已迁至
@@ -54,12 +55,10 @@ routines:
   # - routines/user/agents/prime/manager.py
   # - routines/user/agents/_core/condenser/routine.py
 
-  # xml_agent 包: XmlAgent + 常驻 manager(被动自启) + entry routines
-  #   (Stop/Resume/List/Delete 与 prime 同构, 前端按 kind 路由)
-  - routines/user/agents/xml_agent
-
-  # xml 包: Act/RunXml/Speak/Wait (xml_agent 的 act 子依赖, 漏注册则 react 报
-  #   "routine 'act' not registered")
+  # xml 包(xml 命名空间总目录): 原语 routine(Act/RunXml/Wait/ReadImage,
+  #   xml_agent 的 act 子依赖, 漏注册则 react 报 "routine 'act' not
+  #   registered") + agent 子包(XmlAgent 本体 + 常驻 manager(被动自启) +
+  #   entry routines Stop/Resume/List/Delete, 前端按 kind 路由)
   - routines/user/xml
 
   # flow agent (zero 独有, 无 TS 孪生): FlowManager 常驻 + FlowPruner
@@ -73,16 +72,20 @@ routines:
   # ipython 持久执行环境 (pi agent 唯一工具; 自 prime 工具包迁出)
   - routines/user/ipython
 
-  # 通用 skill routines (整包: skills_* 家族, 合并视图 + repo CRUD + 市场搜索)
-  - routines/user/skills
+  # 通用 skill routines (整包: skill/* 家族, 合并视图 + repo CRUD + 市场搜索)
+  - routines/user/skill
 
   # dynamic 实验场 (creator agent 实验性 routine; watcher 热重载, 改完即生效)
   - routines/user/dynamic
 
-  # hiwonder 小车包: ros_client 传输单例(常驻 WS 自愈) + ros_bridge 感知桥
-  #   (routine 动态订阅 ROS 话题 → 同名 pubsub / 反向 publish) +
-  #   车控 routines(cmd_vel 直发); 需小车可达, 底盘/rosbridge 由车端
-  #   systemd 自启(zero-chassis/zero-rosbridge), 上电即控制面就绪
+  # car 车身控制包(car/* 命名空间): cmd_vel 直发经 ros_client 单例;
+  #   底盘/rosbridge 由车端 systemd 自启(zero-chassis/zero-rosbridge),
+  #   上电即控制面就绪
+  - routines/user/car
+
+  # hiwonder 车端基建包: ros_client 传输单例(常驻 WS 自愈) + ros_bridge
+  #   感知桥(routine 动态订阅 ROS 话题 → 同名 pubsub / 反向 publish);
+  #   车身控制已上提 user/car, 本包不注册车控
   - routines/user/hiwonder
 
   # music 包已整体迁至 zero-rs(Rust): play_music / list_music / sound_effect;
