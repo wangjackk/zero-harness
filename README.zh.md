@@ -24,6 +24,10 @@ kernel 内嵌于 Python 主进程（`routine-py` 自带 asyncio 实现，无需�
 
 浏览器打开 <http://localhost:5173>。
 
+可选：网络配置（监听地址、设备总线、rosbridge）在 `zero-py/app/config.yaml`，
+复制 `config.example.yaml` 覆盖即可；不建该文件时走默认值（全部 `127.0.0.1`），
+本地跑够用。
+
 ## 示例：Hello Routine
 
 创建 `zero-py/app/routines/user/hello.py`：

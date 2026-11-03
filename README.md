@@ -28,6 +28,10 @@ Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/installation/), bu
 
 Open <http://localhost:5173> in your browser.
 
+Optional: network config (listen addresses, robot device bus, rosbridge) lives in
+`zero-py/app/config.yaml` — copy `config.example.yaml` to override. Without it the
+defaults (all `127.0.0.1`) are used, which is enough for a local run.
+
 ## Example: Hello Routine
 
 Create `zero-py/app/routines/user/hello.py`:
