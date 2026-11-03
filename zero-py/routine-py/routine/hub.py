@@ -23,7 +23,7 @@ from .protocol import (
     ROUTINE_YIELD, ROUTINE_YIELDED, CATALOG_PUSH, CATALOG_PUSHED,
     CATALOG_REGISTER, CATALOG_REGISTERED, CATALOG_RELOAD, CATALOG_RELOADED,
     CATALOG_DEREGISTER, CATALOG_DEREGISTER_CMD, CATALOG_DEREGISTER_CMD_ACK,
-    CATALOG_DEREGISTERED, ControlDoneReason,
+    CATALOG_DEREGISTERED, TerminationReason,
     LIFECYCLE_EVENT, ENVELOPE_CANCEL, ENVELOPE_CHUNK, ENVELOPE_DATA, LIFECYCLE_UNWATCH,
     LIFECYCLE_WATCH, ENVELOPE_EOF, ENVELOPE_ERROR, ENVELOPE_OK,
     ENVELOPE_REQ_ID, LIFECYCLE_SNAPSHOT, ENVELOPE_STREAM_ID,
@@ -97,7 +97,7 @@ class RoutineHub:
     async def connect(self, kernel) -> 'Connection':
         """接入 kernel(KernelRef: kernel.create(modules) 的进程内实体或
         kernel.remote(addr) 的远程引用),完成传输组装 + catalog push,返回
-        Connection(stop 级联关停).
+        Connection(close 关闭连接).
 
         实现在 kernel.launch.connect(hub, kernel)----此处经 duck-typed
         参数转发,避免 hub → kernel 的 import 环.
@@ -143,19 +143,24 @@ class RoutineHub:
             payload['modules'] = modules
         await self._send_event(payload)
 
-    async def send_lifecycle_stopped(self, *, id: str,
-                                     reason: ControlDoneReason = ControlDoneReason.UNKNOWN,
-                                     result: Any = None,
-                                     error: Optional[str] = None) -> None:
+    async def send_lifecycle_stopped(
+            self, *, id: str,
+            reason: TerminationReason = TerminationReason.UNKNOWN,
+            result: Any = None, error: Optional[str] = None,
+            by: Optional[str] = None, detail: str = '') -> None:
         payload: Dict[str, Any] = {
             'event': LIFECYCLE_STOPPED,
             'id': id,
-            'reason': reason.value if hasattr(reason, 'value') else str(reason),
+            'reason': reason.value,
         }
         if result is not None:
             payload['result'] = result
         if error is not None:
             payload['error'] = error
+        if by:
+            payload['by'] = by
+        if detail:
+            payload['detail'] = detail
         await self._send_event(payload)
 
     # --- routine 调 routine 反向事件(hub→kernel) ---
@@ -287,6 +292,7 @@ class RoutineHub:
             'event': CATALOG_REGISTER,
             'name': cls.name,
             'is_passive': passive_wire(cls),
+            'modules': [str(m) for m in cls.modules()],
             'meta': getattr(cls, 'meta', {}),
             'req_id': req_id,
         })
@@ -297,6 +303,7 @@ class RoutineHub:
             'event': CATALOG_RELOAD,
             'name': cls.name,
             'is_passive': passive_wire(cls),
+            'modules': [str(m) for m in cls.modules()],
             'meta': getattr(cls, 'meta', {}),
             'req_id': req_id,
         })
@@ -398,9 +405,12 @@ class RoutineHub:
                           req_id, self.hub_id, len(payload['routines']))
 
     def build_routines(self) -> List[Dict[str, Any]]:
-        """catalog.push 的 routines 载荷:name + is_passive wire + meta."""
+        """catalog.push 的 routines 载荷:name + is_passive wire + meta +
+        modules(静态声明默认,``cls.modules()`` 无参问静态 ---- 运行时
+        acquire 的动态占用不在此,注册期拿不到)."""
         return [
             {'name': cls.name, 'is_passive': passive_wire(cls),
+             'modules': [str(m) for m in cls.modules()],
              'meta': getattr(cls, 'meta', {})}
             for cls in self.runtime.routines.get_routines()
         ]
@@ -482,12 +492,16 @@ class RoutineHub:
         cid = msg.get('id', '')
         handle = self.runtime.get_handle(cid)
         if handle is not None:
-            reason = msg.get('reason', '')
+            reason = TerminationReason.from_wire(msg.get('reason'))
             # error 优先用 stopped 带的;没带则按 reason 退回通用文本
             error = msg.get('error')
-            if not error and reason == ControlDoneReason.ERROR.value:
-                error = f'routine stopped with reason={reason}'
-            handle.notify_done(result=msg.get('result'), error=error, reason=reason)
+            if not error and reason is TerminationReason.FAILED:
+                error = f'routine stopped with reason={reason.value}'
+            handle.notify_done(
+                result=msg.get('result'), error=error, reason=reason,
+                by=str(msg['by']) if msg.get('by') else None,
+                detail=str(msg.get('detail') or ''),
+            )
             # 先 resolve handle._ack(stop/destroy 成功回执)再 pop_handle
             handle._resolve_ack(None)
             self.runtime.pop_handle(cid)
@@ -567,10 +581,10 @@ class RoutineHub:
         error = msg.get('error', '')
         if error:
             # kernel 拒绝连接(hub_id 重复 / 缺失): 重连无意义, 停止 transport.
-            # stop() 会 cancel _run task, 不能在本回调(_run 栈内)直接 await,
+            # close() 会 cancel _run task, 不能在本回调(_run 栈内)直接 await,
             # 独立 task 执行.
             self._logger.error('catalog.push rejected: %s', error)
-            asyncio.create_task(self.transport.stop())
+            asyncio.create_task(self.transport.close())
             return
         registered = msg.get('registered', [])
         skipped = msg.get('skipped', [])

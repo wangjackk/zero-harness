@@ -114,6 +114,8 @@ pub const ROUTINE_START: &str = "routine.start";
 pub const ROUTINE_STOP: &str = "routine.stop";
 /// py→kernel: 撤销 create(清 created 态子命令,带 child_id)
 pub const ROUTINE_DESTROY: &str = "routine.destroy";
+/// kernel→parent: start/stop/destroy 拒绝回执(带 op/child_id/error)
+pub const ROUTINE_REJECTED: &str = "routine.rejected";
 
 // ---------------------------------------------------------------------------
 // kernel→server 推模块树拓扑(静态 config,运行期不变)

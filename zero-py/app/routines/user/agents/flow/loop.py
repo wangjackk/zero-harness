@@ -164,7 +164,7 @@ class FlowLoop:
         if not fc_calls:
             return {'kind': 'completed'}
 
-        # 有工具调用: 写入 function_call 事件, 交给调度器
+        # 有工具调用: 写入 function_call 事件后立即并发执行
         for fc in fc_calls:
             args = _sanitize_args(fc)
             self._ev.append_function_call(fc.name, args, fc.call_id,

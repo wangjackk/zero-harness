@@ -11,7 +11,7 @@ car/shake 正弦摆动)共享:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +47,9 @@ class MotionRoutine(Routine):
     # 是否已有动作在跑(stop() 钩子用于补发零速)
     _active: bool = False
 
+    # 本机有没有 sound_effect(None = 还没查过; 见 _beep)
+    _has_beep: Optional[bool] = None
+
     async def _execute(self, vx: float, vy: float, wz: float,
                        duration: float, command: str) -> Dict[str, Any]:
         """恒速动作包装(详见 _execute_wave)."""
@@ -72,14 +75,26 @@ class MotionRoutine(Routine):
             # 被打断(car/stop/新动作/父级联停)不响结束音: 语义上不是"完成",
             # 且父实例可能已在拆除(_started=False), call() 会被拒.
             await self._beep('stop')
-        return MotionOutput(
-            command=command,
-            stopped=True,
-            interrupted=interrupted,
-        ).model_dump()
+        # 回执: content 是模型读的那一行(人话), details 是结构化结果
+        details = MotionOutput(command=command, stopped=True,
+                               interrupted=interrupted).model_dump()
+        content = (f'{command} 被更晚的动作打断, 已停' if interrupted
+                   else f'{command} 跑完, 已停')
+        return {'content': content, 'details': details}
 
     async def _beep(self, effect: str) -> None:
-        """提示音尽力而为: 失败只记日志, 绝不影响运动链路."""
+        """提示音尽力而为: 失败只记日志, 绝不影响运动链路.
+
+        提示音是**可选外设**: 装配里没有 ``sound_effect`` 这条 routine(如
+        mossv2 那具身体, 说话走自己的 TTS)时静默跳过 —— 每动一下刷一条
+        WARNING 会让人以为车出了问题. 只在**真调用失败**时告警.
+        查一次目录就记住(类级): 词表在进程内不会凭空长出声音来.
+        """
+        if MotionRoutine._has_beep is None:
+            names = {str(r.get('name')) for r in await self.get_routines()}
+            MotionRoutine._has_beep = 'sound_effect' in names
+        if not MotionRoutine._has_beep:
+            return
         try:
             await self.call('sound_effect', {'effect': effect})
         except Exception as e:

@@ -89,6 +89,15 @@
                   size="small"
                 />
                 <NInput
+                  v-else-if="p.type === 'array' || p.type === 'object'"
+                  v-model:value="formValues[p.name]"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
+                  size="small"
+                  class="rr-form-json"
+                  :placeholder="p.type === 'array' ? JSON_HINT.array : JSON_HINT.object"
+                />
+                <NInput
                   v-else
                   v-model:value="formValues[p.name]"
                   size="small"
@@ -140,6 +149,14 @@ interface JsonSchema {
   [key: string]: unknown
 }
 
+/** 框架/调用方注入的字段 (x-hidden: from / message_id 等) 不进表单:
+ *  人和 LLM 都不该填, 由协议注入. 只影响展示, 后端照旧按 schema 校验. */
+function visibleProps(
+  props: Record<string, JsonSchemaProperty>,
+): [string, JsonSchemaProperty][] {
+  return Object.entries(props).filter(([, p]) => p['x-hidden'] !== true)
+}
+
 export interface RoutineMeta {
   description?: string
   input_schema?: JsonSchema
@@ -177,6 +194,11 @@ const emit = defineEmits<{
 
 const filter = ref('')
 const hubFilter = ref<string>('')
+// 数组/对象字段的输入提示: 表单里按 JSON 文本填,提交前才解析成结构.
+const JSON_HINT = {
+  array: 'JSON 数组, 如 [{"type":"text","text":"hi"}]',
+  object: 'JSON 对象, 如 {"key":"value"}',
+}
 // 表单值: 按 schema type 初始化为 number|null / boolean / string,
 // 绑定到 NInputNumber/NSwitch/NInput 各自的 v-model (联合类型, 不细分).
 const formValues = ref<Record<string, any>>({})
@@ -191,18 +213,21 @@ function schemaType(prop: JsonSchemaProperty): string {
 }
 
 // 选中 routine 变化时,用 input_schema 默认值初始化表单(类型安全:number→null,
-// boolean→false,其余→'' ).default 为 JSON null(Option 字段)视为无默认.
+// boolean→false,数组/对象→JSON 文本,其余→'' ).default 为 JSON null(Option
+// 字段)视为无默认.
 // 无 schema 的 routine 表单空着,靠 paramsList 兜底为空.
 watch(selected, (r) => {
   formValues.value = {}
   if (!r?.meta?.input_schema?.properties) return
-  for (const [name, prop] of Object.entries(r.meta.input_schema.properties)) {
+  for (const [name, prop] of visibleProps(r.meta.input_schema.properties)) {
     const t = schemaType(prop)
     const d = prop.default ?? undefined
     if (t === 'number' || t === 'integer') {
       formValues.value[name] = d !== undefined ? Number(d) : null
     } else if (t === 'boolean') {
       formValues.value[name] = d !== undefined ? Boolean(d) : false
+    } else if (t === 'array' || t === 'object') {
+      formValues.value[name] = d !== undefined ? JSON.stringify(d) : ''
     } else {
       formValues.value[name] = d !== undefined ? String(d) : ''
     }
@@ -242,7 +267,7 @@ const paramsList = computed<ParamItem[]>(() => {
   const r = selected.value
   if (!r?.meta?.input_schema?.properties) return []
   const required = new Set(r.meta.input_schema.required ?? [])
-  return Object.entries(r.meta.input_schema.properties).map(([name, prop]) => ({
+  return visibleProps(r.meta.input_schema.properties).map(([name, prop]) => ({
     name,
     type: schemaType(prop),
     description: prop.description ?? '',
@@ -272,20 +297,47 @@ function formatResult(val: unknown): string {
   return String(val ?? '')
 }
 
+// array/object 字段在表单里是 JSON 文本,提交前解析回结构并核对形状;
+// 类型不符或解析失败都拦在本地,不把字符串当数组发给后端(后端严格校验).
+function toKwarg(name: string, value: unknown): unknown {
+  const prop = selected.value?.meta?.input_schema?.properties?.[name]
+  const t = prop ? schemaType(prop) : ''
+  if (t !== 'array' && t !== 'object') return value
+  if (typeof value !== 'string') return value
+  const want = t === 'array' ? '数组' : '对象'
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error(`${name} 需要合法 JSON ${want},当前不是: ${value}`)
+  }
+  const isArray = Array.isArray(parsed)
+  const isObject = !isArray && parsed !== null && typeof parsed === 'object'
+  if (t === 'array' ? !isArray : !isObject) {
+    throw new Error(`${name} 需要 JSON ${want},当前是 ${isArray ? '数组' : typeof parsed}: ${value}`)
+  }
+  return parsed
+}
+
 async function run(): Promise<void> {
   if (running.value || !canRun.value) return
   const r = selected.value
   if (!r) return
-  running.value = true
   error.value = ''
   results.value = []
   // 空值 (null / '') 不进 kwargs ---- 表单留空的语义是"用后端默认",
   // 发空串反而会把 rs 的 Option<String> 变成 Some("").
   const kwargs: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(formValues.value)) {
-    if (v === null || v === undefined || v === '') continue
-    kwargs[k] = v
+  try {
+    for (const [k, v] of Object.entries(formValues.value)) {
+      if (v === null || v === undefined || v === '') continue
+      kwargs[k] = toKwarg(k, v)
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    return
   }
+  running.value = true
   emit('run', { name: r.name, kwargs }, onResult, onError, onDone)
 }
 
@@ -433,6 +485,11 @@ defineExpose({ onResult, onError, onDone })
 .rr-form-flag.is-required { color: #fca5a5; background: rgba(252,165,165,0.08); }
 .rr-form-flag.is-optional { color: #6b7280; background: rgba(107,114,128,0.1); }
 .rr-form-hint { font-size: 11px; color: #6b7280; line-height: 1.5; }
+.rr-form-json :deep(textarea) {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
 
 .rr-error {
   flex-shrink: 0;

@@ -138,6 +138,12 @@ class Echo(Routine):
 - 不实现 `stop`(基类空 pass):`run` 自己跑到完成或异常。
 - `stop` 抛异常会被框架吞掉(只 log),不影响 `lifecycle.stopped` 发出。
 - 框架有 `STOP_TIMEOUT = 3.0`:`stop()` 超过 3 秒后强制 cancel。
+- **`stop` 要快进快出**:kernel 侧等 `lifecycle.stopped` 的耐心是
+  `STOP_TIMEOUT = 10s`,进程关停(`kernel.stop()`)时降到 `SHUTDOWN_TIMEOUT = 2s`
+  —— 退出语境下人的耐心更短,让 ta 等满只会换来再一次 Ctrl+C,而那一下会把
+  关停级联劈断:剩下的节点没人停,活到事件循环关闭,退出时冒
+  `Task was destroyed but it is pending! task: <Task pending name='cmd:<name>-<id>'>`。
+  收麦、断服务、停播放器这类事都该在这里做完再返回。
 
 ### `async def destroy(self) -> None`
 
@@ -177,19 +183,22 @@ routine 创建时调一次(早于 start),**纯轻量初始化**。模块声明�
 
 `lifecycle.started` 回报后、`run()` 之前调一次。适合做"父 started 才能做"的一次性初始化。基类空实现。
 
-### `async def on_stopped(self, reason: str = 'auto', result: Any = None, detail: str = '') -> None`
+### `async def on_stopped(self, reason: TerminationReason = TerminationReason.COMPLETED, result: Any = None, by: Optional[str] = None, detail: str = '') -> None`
 
-`run` 完成或退出后、`lifecycle.stopped` 发出前调一次。`reason` 取值:
+`run` 完成或退出后、`lifecycle.stopped` 发出前调一次。`reason` 与父侧 `handle.reason` 使用同一个 `TerminationReason` 枚举，不再区分大小写两套字符串：
 
 | reason | 含义 |
 |---|---|
-| `'auto'` | `run` 自然 return / 异常退出 |
-| `'stop'` | 收到 `lifecycle.stop` 请求(`stop()` 被调) |
-| `'destroyed'` | created 态被销毁(`destroy()` 被调;wire 回报 `DESTROYED`) |
-| `'error'` | `run` 抛异常 |
-| `'cancel'` | task 被 cancel |
-| `'force'` | 被别的 routine 更高档位的 `start(priority)` / passive 拉起 / `acquire` 驱逐 |
-| `'disconnect'` | 父连接断开,级联清理 |
+| `COMPLETED` | `run` 自然 return |
+| `STOPPED` | 收到正常 stop 请求并结束 |
+| `PREEMPTED` | 被更高优先级的 `start` / passive 拉起 / `acquire` 抢占模块 |
+| `FAILED` | `run` 或创建阶段失败，查看 `handle.error` |
+| `CANCELLED` | 主 task 被直接取消的兜底路径 |
+| `DESTROYED` | created 后、start 前被撤销 |
+| `DISCONNECTED` | 与宿主或 kernel 失联；不等于确认对端已经停止 |
+| `UNKNOWN` | 未识别 wire 值的协议兜底，正常业务不应产生 |
+
+`by` 是可选的结构化发起者：抢占时为驱逐者 rid，宿主失联时为 host；`detail` 只用于日志展示，业务不要解析它。`wait()` 是否抛错仍只看 `error`，不会因 `reason` 改变。
 
 ## 通信装饰器
 
@@ -241,7 +250,7 @@ class Listener(Routine):
 ```
 
 - `source` 是 `RoutineSource(id, name)`,发送方信息。
-- **可能并发 fire + 乱序到达**——业务侧自带 id reorder。
+- 经实例 mailbox 逐条投递,同一实例严格串行保序——顺序语义由框架保证,业务不建 reorder。
 - created 后即可收(不必 start)。动态订阅用 `ctx.subscribe(topic, handler)`。
 
 ## instance 字段(运行时)

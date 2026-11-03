@@ -28,7 +28,7 @@ import {
   ROUTINE_YIELD, ROUTINE_YIELDED, CATALOG_PUSH, CATALOG_PUSHED,
   CATALOG_REGISTER, CATALOG_REGISTERED, CATALOG_RELOAD, CATALOG_RELOADED,
   CATALOG_DEREGISTER, CATALOG_DEREGISTER_CMD, CATALOG_DEREGISTER_CMD_ACK,
-  CATALOG_DEREGISTERED, ControlDoneReason,
+  CATALOG_DEREGISTERED, TerminationReason, terminationReasonFromWire,
   LIFECYCLE_EVENT, ENVELOPE_CANCEL, ENVELOPE_CHUNK, ENVELOPE_DATA, LIFECYCLE_UNWATCH,
   LIFECYCLE_WATCH, ENVELOPE_EOF, ENVELOPE_ERROR, ENVELOPE_OK, ENVELOPE_REQ_ID,
   LIFECYCLE_SNAPSHOT, ENVELOPE_STREAM_ID,
@@ -152,11 +152,14 @@ export class RoutineHub {
     await this.sendEvent(payload)
   }
 
-  async sendLifecycleStopped(id: string, reason: string = ControlDoneReason.UNKNOWN,
-                             result: any = undefined, error: string | null = null): Promise<void> {
+  async sendLifecycleStopped(id: string, reason: TerminationReason = TerminationReason.UNKNOWN,
+                             result: any = undefined, error: string | null = null,
+                             by = '', detail = ''): Promise<void> {
     const payload: Msg = { event: LIFECYCLE_STOPPED, id, reason }
     if (result !== undefined) payload.result = result
     if (error !== null) payload.error = error
+    if (by) payload.by = by
+    if (detail) payload.detail = detail
     await this.sendEvent(payload)
   }
 
@@ -361,11 +364,14 @@ export class RoutineHub {
     })
   }
 
-  /** catalog.push 的 routines 载荷:name + is_passive wire + meta. */
+  /** catalog.push 的 routines 载荷:name + is_passive wire + modules(静态声明
+   * 默认,modules(null) 无参问静态 ---- 运行时 acquire 的动态占用不在此,
+   * 注册期拿不到) + meta. */
   buildRoutines(): Msg[] {
     return this.runtime.routines.getRoutines().map(cls => ({
       name: routineNameOf(cls),
       is_passive: passiveWire(cls),
+      modules: ((cls as any).modules?.(null) ?? []) as string[],
       meta: (cls as any).meta ?? {},
     }))
   }
@@ -448,13 +454,15 @@ export class RoutineHub {
     const cid = String(msg.id ?? '')
     const handle = this.runtime.getHandle(cid)
     if (handle) {
-      const reason = String(msg.reason ?? '')
+      const reason = terminationReasonFromWire(msg.reason)
       // error 优先用 stopped 带的;没带则按 reason 退回通用文本
       let error = msg.error ?? null
-      if (!error && reason === ControlDoneReason.ERROR) {
+      if (!error && reason === TerminationReason.FAILED) {
         error = `routine stopped with reason=${reason}`
       }
-      handle.notifyDone(msg.result, error, reason)
+      const by = msg.by ? String(msg.by) : null
+      const detail = String(msg.detail ?? '')
+      handle.notifyDone(msg.result, error, reason, by, detail)
       // 先 resolve handle.ack(stop/destroy 成功回执)再 popHandle
       handle._resolveAck(undefined)
       this.runtime.popHandle(cid)
@@ -561,7 +569,7 @@ export class RoutineHub {
       // kernel 拒绝连接(hub_id 重复 / 缺失): 重连无意义, 停止 transport.
       // stop() 会 await _runTask, 不能在本回调(_run 栈内)await, 独立执行.
       this._logger.error(`catalog.push rejected: ${error}`)
-      void this.transport?.stop()
+      void this.transport?.close()
       return
     }
     const registered = msg.registered ?? []
@@ -709,7 +717,7 @@ export class System {
               private _conn: Connection) {}
 
   async stop(): Promise<void> {
-    await this._conn.stop()
+    await this._conn.close()
   }
 }
 

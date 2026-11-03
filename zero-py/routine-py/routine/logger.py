@@ -41,11 +41,21 @@ class ColoredFormatter(logging.Formatter):
         msecs = int(record.msecs)
         caller = f'{record.filename}:{record.lineno}'
         # 格式:<color><time>.<msec> <LEVEL> <name> - <msg><reset> <gray><caller><reset>
-        return (
+        message = (
             f'{color}{time_str}.{msecs:03d} {record.levelname} '
             f'{record.name} - {record.getMessage()}{_RESET} '
             f'{_GRAY}{caller}{_RESET}'
         )
+        # 与 logging.Formatter 一样保留异常和显式栈。自定义 format 不能直接
+        # return 标题行,否则 asyncio 的 "Exception in callback" 只剩 handle,
+        # 真正的 WinError 与 traceback 全被吞掉。
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
+        if record.exc_text:
+            message = f'{message}\n{record.exc_text}'
+        if record.stack_info:
+            message = f'{message}\n{self.formatStack(record.stack_info)}'
+        return message
 
 
 def _reconfigure_stdio_utf8() -> None:

@@ -7,6 +7,7 @@ import time
 from typing import Any, Dict, List, Optional, Type
 
 from .module_tree import ModuleTree
+from .protocol import TerminationReason
 from .routine import Routine, Routines
 
 # mailbox 慢回调阈值(ms):超过打 warning,定位积压源头
@@ -170,7 +171,9 @@ class ServerRuntime:
         self._handles.clear()
         for h in handles:
             try:
-                h.notify_done(None, reason, 'ERROR')
+                h.notify_done(
+                    error=reason, reason=TerminationReason.DISCONNECTED,
+                    detail=reason)
             except Exception:
                 pass  # hook 异常不阻断其余清理
 

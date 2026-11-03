@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mossv2 交互流程动画</title>
+<style>
+  :root{
+    --ink:#2C2C2A; --ink2:#5F5E5A; --ink3:#888780;
+    --bg:#FAFAF7; --card:#FFFFFF; --line:#D3D1C7;
+    --purple:#534AB7; --purple-bg:#EEEDFE; --purple-ink:#3C3489;
+    --teal:#0F6E56; --teal-bg:#E1F5EE; --teal-ink:#085041;
+    --amber:#BA7517; --amber-bg:#FAEEDA; --amber-ink:#633806;
+    --blue:#185FA5; --blue-bg:#E6F1FB; --blue-ink:#0C447C;
+    --coral:#993C1D; --coral-bg:#FAECE7; --coral-ink:#712B13;
+    --pink:#D4537E; --pink-bg:#FBEAF0; --pink-ink:#993556;
+    --green:#639922; --green-bg:#EAF3DE; --green-ink:#27500A;
+    --gray:#5F5E5A; --gray-bg:#F1EFE8; --gray-ink:#444441;
+    --red:#A32D2D; --red-bg:#FCEBEB;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);font:13px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:16px;}
+  .wrap{max-width:1040px;margin:0 auto;}
+
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;}
+  h1{font-size:16px;font-weight:600;letter-spacing:.5px;}
+  h1 small{color:var(--ink3);font-weight:400;font-size:12px;margin-left:8px;}
+  .tabs{display:flex;gap:6px;}
+  .tab{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--ink2);}
+  .tab.on{border-color:var(--purple);color:var(--purple-ink);background:var(--purple-bg);font-weight:600;}
+  .ctrl{margin-left:auto;display:flex;gap:6px;align-items:center;}
+  button.b{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--ink);}
+  button.b:hover{border-color:var(--ink3);}
+  button.b.pri{border-color:var(--purple);color:var(--purple-ink);font-weight:600;}
+  .stepinfo{font-size:12px;color:var(--ink3);min-width:110px;text-align:right;}
+
+  .legend{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:var(--ink2);}
+  .legend span{display:inline-flex;align-items:center;gap:4px;}
+  .dot{width:9px;height:9px;border-radius:3px;display:inline-block;}
+
+  .stage{position:relative;width:100%;height:560px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+
+  .mod{position:absolute;border-radius:10px;border:1px solid;padding:8px 10px;transition:box-shadow .3s, transform .3s;}
+  .mod h3{font-size:13px;font-weight:600;}
+  .mod p{font-size:11px;line-height:1.45;margin-top:2px;}
+  .mod.hot{box-shadow:0 0 0 3px rgba(83,74,183,.25);transform:scale(1.03);z-index:5;}
+
+  #interact{left:14px;top:170px;width:138px;background:var(--gray-bg);border-color:var(--gray);}
+  #interact h3{color:var(--gray-ink);}
+  #mindflow{left:198px;top:52px;width:190px;height:132px;background:var(--purple-bg);border-color:var(--purple);}
+  #mindflow h3{color:var(--purple-ink);}
+  #ghost{left:446px;top:28px;width:216px;background:var(--teal-bg);border-color:var(--teal);}
+  #ghost h3{color:var(--teal-ink);}
+  #brain{left:456px;top:308px;width:196px;background:var(--amber-bg);border-color:var(--amber);border-style:dashed;}
+  #brain h3{color:var(--amber-ink);}
+  #shell{left:712px;top:36px;width:158px;background:var(--blue-bg);border-color:var(--blue);}
+  #shell h3{color:var(--blue-ink);}
+  #channel{left:712px;top:214px;width:158px;height:118px;background:var(--coral-bg);border-color:var(--coral);}
+  #channel h3{color:var(--coral-ink);}
+  #say{left:910px;top:214px;width:104px;background:var(--pink-bg);border-color:var(--pink);}
+  #say h3{color:var(--pink-ink);}
+  #wave{left:910px;top:300px;width:104px;background:var(--green-bg);border-color:var(--green);}
+  #wave h3{color:var(--green-ink);}
+
+  #mindflow .badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;min-height:20px;}
+  .badge{font-size:10px;padding:1px 7px;border-radius:8px;background:var(--card);border:1px solid var(--purple);color:var(--purple-ink);}
+  .badge.dead{border-color:var(--red);color:var(--red);text-decoration:line-through;}
+  .badge.echo{border-color:var(--teal);color:var(--teal-ink);}
+
+  .membox{margin-top:6px;border-top:1px dashed var(--teal);padding-top:5px;min-height:64px;}
+  .membox .cap{font-size:10px;color:var(--teal-ink);margin-bottom:3px;}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;}
+  .chip{font-size:10px;padding:1px 6px;border-radius:6px;background:var(--card);max-width:196px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip.user{border:1px solid #85B7EB;color:#0C447C;}
+  .chip.assistant{border:1px solid #5DCAA5;color:#085041;}
+  .chip.obs{border:1px solid #FAC775;color:#633806;}
+  .chip.interrupted{border:1px solid #F09595;color:#791F1F;}
+  .chip.gone{opacity:.45;}
+
+  .lanes{margin-top:5px;font-size:11px;line-height:1.7;}
+  .lane b{display:inline-block;width:44px;font-weight:600;color:var(--coral-ink);}
+  .lane span{color:var(--ink2);}
+
+  .tok{position:absolute;z-index:9;font-size:11px;padding:2px 8px;border-radius:10px;color:#fff;white-space:nowrap;transform:translate(-50%,-50%);transition:left 1s cubic-bezier(.4,.1,.3,1), top 1s cubic-bezier(.4,.1,.3,1), opacity .5s;box-shadow:0 1px 3px rgba(0,0,0,.25);pointer-events:none;}
+  .tok.fade{opacity:0;}
+
+  .logpanel{margin-top:10px;border:1px solid var(--line);border-radius:12px;background:var(--card);height:180px;overflow-y:auto;padding:8px 12px;font-family:Consolas,Menlo,monospace;font-size:12px;}
+  .logpanel .ln{display:flex;gap:8px;padding:1px 0;}
+  .logpanel .tm{color:var(--ink3);flex:0 0 44px;}
+  .logpanel .md{flex:0 0 74px;font-weight:600;}
+  .logpanel .tx{color:var(--ink2);}
+  .logpanel .hr{color:var(--ink3);margin:3px 0;}
+  .c-purple{color:var(--purple-ink);} .c-teal{color:var(--teal-ink);} .c-amber{color:var(--amber-ink);}
+  .c-blue{color:var(--blue-ink);} .c-coral{color:var(--coral-ink);} .c-gray{color:var(--gray-ink);}
+  .c-pink{color:var(--pink-ink);} .c-green{color:var(--green-ink);}
+
+  .hint{margin-top:8px;font-size:11px;color:var(--ink3);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>mossv2 交互流程<small>Mindflow · Ghost · Shell · Channel 各管哪一跳</small></h1>
+    <div class="tabs">
+      <button class="tab on" data-sc="A">场景A · 一轮完整闭环</button>
+      <button class="tab" data-sc="B">场景B · 插话抢占</button>
+    </div>
+    <div class="ctrl">
+      <button class="b pri" id="btnPlay">▶ 播放</button>
+      <button class="b" id="btnStep">单步</button>
+      <button class="b" id="btnReset">重置</button>
+      <button class="b" id="btnSpeed">速度 1×</button>
+      <span class="stepinfo" id="stepInfo">待播放</span>
+    </div>
+  </header>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--gray)"></i>UI 外挂·订阅渲染</span>
+    <span><i class="dot" style="background:var(--purple)"></i>Mindflow 桥梁·仲裁/拍链</span>
+    <span><i class="dot" style="background:var(--teal)"></i>Ghost 灵魂·记忆+思考</span>
+    <span><i class="dot" style="background:var(--amber)"></i>Brain 脑子·LLM外设</span>
+    <span><i class="dot" style="background:var(--blue)"></i>Shell 身体·CTML解析</span>
+    <span><i class="dot" style="background:var(--coral)"></i>Channel 串行轨</span>
+    <span><i class="dot" style="background:var(--pink)"></i>say 出声</span>
+    <span><i class="dot" style="background:var(--green)"></i>wave 动作</span>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="mod" id="interact"><h3>UI 外挂</h3><p>PySide6 进程外挂 · 订阅 pubsub 渲染字流/观测 · 一行输入 = 一次 declare（即回，不锁输入）</p></div>
+    <div class="mod" id="mindflow"><h3>Mindflow 桥梁</h3><p>事件泵 + 多源仲裁 + 拍链：何时想 / 想几拍 / 谁说话算数</p><div class="badges" id="badges"></div></div>
+    <div class="mod" id="ghost"><h3>Ghost 灵魂</h3><p>记忆(有界滑窗) + 思考 · 一拍 = 一段字流</p>
+      <div class="membox"><div class="cap">记忆窗口（脑子每拍吃的同一份）</div><div class="chips" id="mem"></div></div></div>
+    <div class="mod" id="brain"><h3>Brain 脑子</h3><p>LLM 流式（外设，brain_factory 可换）</p></div>
+    <div class="mod" id="shell"><h3>Shell 身体</h3><p>CTML 解析 + 词表闸门 + 轨表：开标签即入轨</p></div>
+    <div class="mod" id="channel"><h3>Channel 串行轨</h3><p>同轨 FIFO 串行 · 跨轨并行</p>
+      <div class="lanes"><div class="lane"><b>main</b><span id="laneMain">·</span></div><div class="lane"><b>hand</b><span id="laneHand">·</span></div></div></div>
+    <div class="mod" id="say"><h3>say</h3><p>TTS 出声</p></div>
+    <div class="mod" id="wave"><h3>wave</h3><p>挥手 0.15s</p></div>
+  </div>
+
+  <div class="logpanel" id="log"></div>
+  <div class="hint">提示：播放中可随时暂停后单步细看；切换场景自动重置。数据流走向 = 真实代码路径（mindflow.py / ghost.py / shell.py / channel.py）。</div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const stage = $('stage');
+  let speed = 1, paused = true, runId = 0, nextResolve = null, stepClicks = 0;
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms / speed));
+
+  function centerOf(id){
+    const el = $(id);
+    return { x: el.offsetLeft + el.offsetWidth/2, y: el.offsetTop + el.offsetHeight/2 };
+  }
+  function hl(id, on){ $(id).classList.toggle('hot', on !== false); }
+  function unAll(){ document.querySelectorAll('.mod').forEach(m => m.classList.remove('hot')); }
+
+  const MOD_COLOR = { interact:'var(--gray)', mindflow:'var(--purple)', ghost:'var(--teal)',
+    brain:'var(--amber)', shell:'var(--blue)', channel:'var(--coral)',
+    say:'var(--pink)', wave:'var(--green)' };
+  const MOD_CLS = { interact:'c-gray', mindflow:'c-purple', ghost:'c-teal', brain:'c-amber',
+    shell:'c-blue', channel:'c-coral', say:'c-pink', wave:'c-green' };
+  const MOD_NAME = { interact:'UI', mindflow:'Mindflow', ghost:'Ghost', brain:'Brain',
+    shell:'Shell', channel:'Channel', say:'say', wave:'wave' };
+
+  let t0 = 0;
+  function log(mod, text){
+    const now = ((performance.now() - t0) / 1000).toFixed(1).padStart(5,'0');
+    const ln = document.createElement('div');
+    ln.className = 'ln';
+    ln.innerHTML = '<span class="tm">' + now + 's</span><span class="md ' + MOD_CLS[mod] + '">' + MOD_NAME[mod] + '</span><span class="tx">' + text + '</span>';
+    const p = $('log');
+    p.appendChild(ln);
+    p.scrollTop = p.scrollHeight;
+  }
+  function logHr(text){
+    const ln = document.createElement('div');
+    ln.className = 'hr';
+    ln.textContent = '──── ' + text + ' ────';
+    const p = $('log');
+    p.appendChild(ln);
+    p.scrollTop = p.scrollHeight;
+  }
+
+  function tok(from, to, label, colorVar, dur){
+    const ms = (dur || 1000) / speed;
+    return new Promise(res => {
+      const a = centerOf(from), b = centerOf(to);
+      const el = document.createElement('div');
+      el.className = 'tok';
+      el.textContent = label;
+      el.style.background = 'var(--' + colorVar + ')';
+      el.style.transitionDuration = ms + 'ms, ' + ms + 'ms, .5s';
+      el.style.left = a.x + 'px'; el.style.top = a.y + 'px';
+      stage.appendChild(el);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.style.left = b.x + 'px'; el.style.top = b.y + 'px';
+      }));
+      setTimeout(() => { el.classList.add('fade'); setTimeout(() => el.remove(), 600); res(); }, ms);
+    });
+  }
+
+  const MEM_MAX = 7;
+  function mem(role, text){
+    const chip = document.createElement('div');
+    chip.className = 'chip ' + role;
+    chip.textContent = role + ' · ' + text;
+    chip.title = role + ': ' + text;
+    const box = $('mem');
+    box.appendChild(chip);
+    while (box.children.length > MEM_MAX){ box.removeChild(box.firstChild); }
+    if (box.children.length === MEM_MAX) box.firstChild.classList.add('gone');   // 最旧变淡 ≈ 出窗即忘
+  }
+  function badge(text, cls){
+    const b = document.createElement('span');
+    b.className = 'badge' + (cls ? ' ' + cls : '');
+    b.textContent = text;
+    $('badges').appendChild(b);
+  }
+  function badgeDead(txt){ // 链收链: 划掉最后一条活徽
+    const bs = $('badges').querySelectorAll('.badge:not(.dead)');
+    if (bs.length) bs[bs.length-1].classList.add('dead');
+    badge(txt, 'dead');
+  }
+  function lane(name, text){ $('lane' + (name === 'main' ? 'Main' : 'Hand')).textContent = text; }
+
+  function reset(){
+    unAll();
+    unAll();
+    stage.querySelectorAll('.tok').forEach(t => t.remove());
+    $('badges').innerHTML = '';
+    $('mem').innerHTML = '';
+    $('log').innerHTML = '';
+    lane('main', '·'); lane('hand', '·');
+    $('stepInfo').textContent = '待播放';
+    t0 = performance.now();
+  }
+
+  async function gate(){
+    if (!paused) return;
+    if (stepClicks > 0){ stepClicks--; return; }   // 动画中点的步: 记账补走
+    await new Promise(r => { nextResolve = r; });
+    nextResolve = null;
+  }
+
+  // ---------- 场景 A: 一轮完整闭环 ----------
+  const SCENE_A = [
+    { n:'输入', d:1100, f:async()=>{ hl('interact'); log('interact','UI 输入「你好呀」 → mindflow.declare'); }},
+    { n:'declare 即回', d:1300, f:async()=>{ await tok('interact','mindflow','declare · 即回','purple',900);
+      log('mindflow','登记 Impulse(NOTICE) 入检录缓冲 + 点亮信号线 → verdict=accepted —— 受理即回, 仲裁在裁判循环拉取时打(原版 fire-and-forget 同构)'); }},
+    { n:'开链', d:1100, f:async()=>{ hl('mindflow'); badge('链#1 开'); log('mindflow','信号唤醒裁判循环 → rank 群比(同源聚合一拍) → 无现任 → 赢家登基开链'); }},
+    { n:'think', d:1300, f:async()=>{ await tok('mindflow','ghost','think(text)','teal',900); hl('ghost');
+      mem('user','你好呀'); log('ghost','user 入记忆 → 叫脑子'); }},
+    { n:'喂脑', d:1100, f:async()=>{ await tok('ghost','brain','stream(窗口, system)','amber',900);
+      log('brain','LLM 流式起跑(system 前缀缓存, 记忆=滑窗视图)'); }},
+    { n:'字流①', d:1200, f:async()=>{ await tok('brain','ghost','字流 <main:say>你好…','amber',900);
+      log('ghost','逐块转身体 + pubsub(text) → 终端同步打印'); }},
+    { n:'入轨', d:1300, f:async()=>{ await tok('ghost','shell','chunk','blue',900); hl('shell');
+      log('shell','解析开标签 <main:say> → 即入 main 轨(create 实例, 增量直投)'); }},
+    { n:'say start', d:1200, f:async()=>{ hl('channel'); lane('main','say ▶ 边合成边播');
+      log('channel','start 由轨调度 · 同轨 FIFO · 实例永远在轨手里'); }},
+    { n:'字流②', d:1100, f:async()=>{ await tok('brain','ghost','<hand:wave/>','amber',900);
+      log('brain','自闭合原子标签 → 一个动作'); }},
+    { n:'并行', d:1300, f:async()=>{ await tok('shell','channel','wave','coral',900); hl('wave');
+      lane('hand','wave ▶'); log('channel','跨轨并行: hand 不等 main(同串异并是全部语义)'); }},
+    { n:'eof', d:1000, f:async()=>{ await tok('ghost','shell','</say> eof','blue',800);
+      log('shell','闭标签 → eof 收流'); }},
+    { n:'收拍', d:1500, f:async()=>{ hl('say'); hl('wave'); await sleep(400);
+      await tok('channel','shell','trace ×2','coral',1100);
+      lane('main','·'); lane('hand','·');
+      log('shell','完成即报账入总账(Tracer); close 不等在途 —— 拍收, 动作漂着跑完'); }},
+    { n:'obs 入记', d:1100, f:async()=>{ await tok('shell','ghost','obs(pending)','blue',900);
+      mem('obs','say ✓ wave ✓'); hl('ghost');
+      log('ghost','迟到回执经 pending 入史 —— 只记账, 不驱动回声'); }},
+    { n:'等下一句', d:1300, f:async()=>{ badgeDead('链#1 收');
+      log('mindflow','指令结果不触发: obs 非空也不自续 —— 无 next 插队即收链'); }},
+    { n:'下一轮', d:1300, f:async()=>{ await tok('brain','ghost','裸文本「搞定」','amber',900);
+      log('ghost','下一届首帧缝合缝读到 obs —— 下一轮的底'); }},
+    { n:'idle', d:1200, f:async()=>{ unAll(); hl('interact');
+      log('mindflow','idle: 无链 · 检录缓冲空 · 无挂账 —— 裁判静默, 等下一句'); }},
+  ];
+
+  // ---------- 场景 B: 插话抢占(中断可达) ----------
+  const SCENE_B = [
+    { n:'链#1 在途', d:1300, f:async()=>{ hl('interact'); log('interact','输入「慢慢说」 → 链#1 think 在途'); }},
+    { n:'字流中', d:1200, f:async()=>{ badge('链#1 在途'); hl('ghost');
+      await tok('mindflow','ghost','think…','teal',800);
+      log('ghost','在途拍: 字流块边界 = 中止检查点'); }},
+    { n:'插话', d:1300, f:async()=>{ hl('interact');
+      log('interact','插话「急停」 priority=FATAL → declare 即回(输入框没锁, 随时能插)'); }},
+    { n:'仲裁', d:1400, f:async()=>{ hl('mindflow');
+      await tok('interact','mindflow','FATAL','purple',900);
+      log('mindflow','rank 胜出 → 决赛 FATAL 必赢(保护期也挡不住) —— 判死现任; 仲裁结果调用方不可见'); }},
+    { n:'abort', d:1300, f:async()=>{ await tok('mindflow','ghost','abort(interrupted)','purple',900);
+      log('mindflow','置 _preempted + ghost.abort(事件置位, 立即生效)'); }},
+    { n:'检查点退出', d:1200, f:async()=>{ hl('ghost');
+      log('ghost','在途 think 在字流块边界抛错退出 —— 协作中止(不能 task.cancel)'); }},
+    { n:'留痕收链', d:1400, f:async()=>{ mem('interrupted','interrupted'); badgeDead('链#1 收');
+      await tok('ghost','mindflow','拍断','teal',800);
+      log('mindflow','interrupt 留痕入记忆 —— 下一拍的底, 脑子看得见上一拍怎么断的'); }},
+    { n:'新链', d:1300, f:async()=>{ badge('链#2 开'); await tok('mindflow','ghost','think(急停)','teal',900);
+      log('mindflow','挑战者开新链'); }},
+    { n:'快答', d:1300, f:async()=>{ await tok('brain','ghost','「已停」','amber',900);
+      log('ghost','快答(裸文本)→ 终端打印'); }},
+    { n:'收链', d:1200, f:async()=>{ badgeDead('链#2 收'); unAll(); hl('interact');
+      log('mindflow','空拍收链 · idle —— 中断全程泵不崩, 消息不丢'); }},
+  ];
+
+  const SCENES = { A: SCENE_A, B: SCENE_B };
+  let cur = 'A', running = false;
+
+  async function play(scene){
+    const my = ++runId;
+    reset();
+    running = true;
+    stepClicks = 0;
+    logHr(cur === 'A' ? '场景A · 一轮完整闭环(回执只记账, 下一轮读到)' : '场景B · 插话抢占(FATAL 中断可达)');
+    const steps = SCENES[scene];
+    for (let i = 0; i < steps.length; i++){
+      if (my !== runId) return;
+      $('stepInfo').textContent = (i+1) + '/' + steps.length + ' · ' + steps[i].n;
+      await steps[i].f();
+      if (my !== runId) return;
+      await sleep(steps[i].d);
+      unAll();
+      await gate();
+    }
+    if (my === runId){ $('stepInfo').textContent = '完成 ✓'; running = false; paused = true; $('btnPlay').textContent = '▶ 播放'; }
+  }
+
+  // ---------- 控件 ----------
+  $('btnPlay').onclick = () => {
+    if (running){ paused = !paused; $('btnPlay').textContent = paused ? '▶ 继续' : '⏸ 暂停';
+      if (!paused){ stepClicks = 0; if (nextResolve){ const r = nextResolve; nextResolve = null; r(); } } }
+    else { paused = false; $('btnPlay').textContent = '⏸ 暂停'; play(cur); }
+  };
+  $('btnStep').onclick = () => {
+    if (!running){ paused = true; $('btnPlay').textContent = '▶ 继续'; play(cur); return; }
+    paused = true; $('btnPlay').textContent = '▶ 继续';
+    if (nextResolve){ const r = nextResolve; nextResolve = null; r(); }   // 停在步间: 放行一步
+    else stepClicks++;   // 动画进行中: 记账, 本步完成后补走一步(点击不丢)
+  };
+  $('btnReset').onclick = () => { runId++; running = false; paused = true; stepClicks = 0; $('btnPlay').textContent = '▶ 播放'; reset(); };
+  $('btnSpeed').onclick = () => {
+    speed = speed === 1 ? 2 : speed === 2 ? 4 : 1;
+    $('btnSpeed').textContent = '速度 ' + speed + '×';
+  };
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
+    t.classList.add('on');
+    cur = t.dataset.sc;
+    running = false; paused = false; $('btnPlay').textContent = '⏸ 暂停';
+    play(cur);
+  });
+
+  reset();
+})();
+</script>
+</body>
+</html>

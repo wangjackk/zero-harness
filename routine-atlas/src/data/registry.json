@@ -1,0 +1,1232 @@
+[
+ {
+  "name": "__scope__",
+  "cls": "Flow",
+  "file": "app/routines/user/mossv2/container.py",
+  "desc": "时序容器: 只等**同轨**的 body 里的 routine(分轨的不等); 一个都没有则等全部",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "act",
+  "cls": "Act",
+  "file": "app/routines/user/xml/act.py",
+  "desc": "agent 动作执行管线(XML body -> 工具子 -> 流式 yield 结果)",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent/history",
+  "cls": "AgentHubHistory",
+  "file": "app/routines/user/agent_hub.py",
+  "desc": "按 agent_id 获取会话历史 (messages, 直接读取数据库当前值). 内部通过 agent/rid 查询 rid, 再向目标 agent 请求 get_history.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent/rid",
+  "cls": "AgentHubRid",
+  "file": "app/routines/user/agent_hub.py",
+  "desc": "按 agent_id 反查运行中的 agent 的 routine_id (agent_hub 查询 bridge).",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent/state",
+  "cls": "AgentHubState",
+  "file": "app/routines/user/agent_hub.py",
+  "desc": "按 agent_id 获取 agent 运行时状态 (skill_dir / project_root / session_id 等). 内部通过 agent/rid 查询 rid, 再向目标 agent 发起请求.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent_hub",
+  "cls": "AgentHub",
+  "file": "app/routines/user/agent_hub.py",
+  "desc": "agent 类型注册中心 (passive 常驻, 纯被动): 各类型 manager 启动时 主动 register 提交 manifest, 停止时 unregister 注销. req events: register {manifest} (upsert, 键 = manifest.kind) / unregister {kind} / list (全部已注册 manifest) / live_agents (聚合各 manag",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent_hub/preset/delete",
+  "cls": "AgentHubPresetDelete",
+  "file": "app/routines/user/presets.py",
+  "desc": "Neutral agent presets: delete by id",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent_hub/preset/list",
+  "cls": "AgentHubPresetList",
+  "file": "app/routines/user/presets.py",
+  "desc": "Neutral agent presets (prefilled create params): list all",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent_hub/preset/save",
+  "cls": "AgentHubPresetSave",
+  "file": "app/routines/user/presets.py",
+  "desc": "Neutral agent presets: save (upsert)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent_hub/running_agents",
+  "cls": "AgentHubRunningAgents",
+  "file": "app/routines/user/agent_hub.py",
+  "desc": "列出所有运行中的 agent (各类型 + user/world). 返回 agent_id + routine_id + agent_type.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "agent_hub/types",
+  "cls": "AgentHubTypes",
+  "file": "app/routines/user/agent_hub.py",
+  "desc": "列出全部已注册 agent 类型 manifest. 返回 {types: [{kind, label, routines, create_fields, uses_model, ...}]}, 前端据此动态渲染创建表单.",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "all",
+  "cls": "All",
+  "file": "app/routines/user/mossv2/container.py",
+  "desc": "时序容器: body 里的 routine **全部**完成后才继续本轨",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "any",
+  "cls": "AnyOf",
+  "file": "app/routines/user/mossv2/container.py",
+  "desc": "时序容器: body 里的 routine **任一**完成就继续, 其余取消(竞速)",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "approval_gate",
+  "cls": "ApprovalGate",
+  "file": "app/routines/user/dynamic/approval_gate.py",
+  "desc": "危险操作人工审批: 等待人工审批, 批准后才调用 target routine; 拒绝或超时按 fail-closed 处理; 全程记录台账",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ask",
+  "cls": "Ask",
+  "file": "app/routines/user/ask.py",
+  "desc": "给用户发单选题(selector)或日期选择器(date)并等结果; selector 支持 allow_other 自由输入.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "asr",
+  "cls": "Asr",
+  "file": "app/routines/user/mossv2/asr/routine.py",
+  "desc": "语音识别: 被动常驻, 采集麦克风音频并流式识别, 按 onset/stop/deliver 三轴策略交付给 mindflow: 开始发声时发送占位包, 语音结束后按判停结果交付, observer 类仅留存供拉取; 中间状态不参与思考",
+  "passive": true,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "asr_mode",
+  "cls": "AsrMode",
+  "file": "app/routines/user/mossv2/commands/asr_mode.py",
+  "desc": "切换语音识别模式: mode=\"ptt\" + button(默认 f9) = 按住时采集、松开后交付(装配默认此模式); mode=\"always\" = 麦克风持续开启; 无参数时仅查询当前模式. 模式由 asr 保存, 切换后持续有效(重启后不保留)",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_arrow",
+  "cls": "BbArrow",
+  "file": "app/routines/user/mossv2/commands/board/arrow.py",
+  "desc": "绘制箭头: from → to; 不写入对象表, 无法被引用",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_circle",
+  "cls": "BbCircle",
+  "file": "app/routines/user/mossv2/commands/board/circle.py",
+  "desc": "绘制标准圆(几何图形): at = 圆心, r = 半径(以画布短边为单位). 需要圈选文字以强调时使用 bb_ring",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_ellipse",
+  "cls": "BbEllipse",
+  "file": "app/routines/user/mossv2/commands/board/ellipse.py",
+  "desc": "绘制标准椭圆: at = 圆心, rx / ry = 两轴半径(以画布短边为单位); 未指定 ry 时为正圆",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_erase",
+  "cls": "BbErase",
+  "file": "app/routines/user/mossv2/commands/board/erase.py",
+  "desc": "删除一个对象(around = 对象 id), 或通过 around=\"all\" 清空整个画板",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_line",
+  "cls": "BbLine",
+  "file": "app/routines/user/mossv2/commands/board/line.py",
+  "desc": "绘制直线: from / to 为两个锚点; 写入对象表, 可被引用",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_objects",
+  "cls": "BbObjects",
+  "file": "app/routines/user/mossv2/commands/board/objects.py",
+  "desc": "查询画板对象清单(id / kind / 文字开头). 默认不返回坐标, 需要 bbox 时设置 box=\"true\". write / line / rect / poly / circle / ellipse 写入对象表; arrow / ring / underline / point / pixel 不写入",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_pixel",
+  "cls": "BbPixel",
+  "file": "app/routines/user/mossv2/commands/board/pixel.py",
+  "desc": "直接修改像素(唯一底层接口): body = ops 的 JSON 数组, 每个 op 为 clearRect / fillRect / pixel / image 之一. 无动画且不写入对象表; 清除**区域**使用本 routine, 删除或圈选**对象**使用 bb_erase / bb_ring",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_point",
+  "cls": "BbPoint",
+  "file": "app/routines/user/mossv2/commands/board/point.py",
+  "desc": "在指定位置绘制小圈用于指示(at = 锚点)",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_poly",
+  "cls": "BbPoly",
+  "file": "app/routines/user/mossv2/commands/board/poly.py",
+  "desc": "绘制折线或多边形: points = 空白分隔的锚点(至少两个), close=\"true\" 时首尾相连. 作为单条笔迹处理, 拐角自动圆角; 组合形状不要使用多条 bb_line",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_rect",
+  "cls": "BbRect",
+  "file": "app/routines/user/mossv2/commands/board/rect.py",
+  "desc": "绘制矩形: at = 中心, w / h = 宽高(以画布短边为单位), round = 圆角(画布像素, 默认 7); w=h 时为正方形",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_ring",
+  "cls": "BbRing",
+  "file": "app/routines/user/mossv2/commands/board/ring.py",
+  "desc": "圈选画板对象以强调: around = 对象 id, pad = 与对象的间距(画布像素). 绘制手绘风格的圈而非标准圆; 需要标准圆时使用 bb_circle",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_underline",
+  "cls": "BbUnderline",
+  "file": "app/routines/user/mossv2/commands/board/underline.py",
+  "desc": "在指定对象下方绘制下划线: around = 对象 id",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bb_write",
+  "cls": "BbWrite",
+  "file": "app/routines/user/mossv2/commands/board/write.py",
+  "desc": "在画板写入一行文字: body = 行原文, at = 起始位置(坐标 \"x,y\" 或 \"below:a1\"), size = 字号 s/m/l; 等待该行绘制完成后才返回回执",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "board",
+  "cls": "Board",
+  "file": "app/routines/user/mossv2/board/routine.py",
+  "desc": "画板连接(被动常驻): 处理 bb_* 提交的绘制操作, 保留对象表快照. 不属于词表动作, 模型无法看到此名称",
+  "passive": true,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "bus_listener",
+  "cls": "BusListener",
+  "file": "app/routines/user/device_bus/listener.py",
+  "desc": "设备事件总线监听器: voice/vision 域事件按域 publish 到 pubsub 'voice'/'vision' 并记录日志; req pose_enable/pose_disable/pose_status 控制推理按需启停, req snap 使用车头相机拍照(将 rgb 流最新帧保存为 JPG 并返回路径)",
+  "passive": true,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/gaze",
+  "cls": "CarGaze",
+  "file": "app/routines/user/car/gaze.py",
+  "desc": "agent react 阶段持续朝向用户(订阅 agent_status 自动启停)",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/map",
+  "cls": "CarMap",
+  "file": "app/routines/user/car/map.py",
+  "desc": "获取小车地图(与前端导航页相同渲染): 障碍橙 / 空闲亮白 / 膨胀禁行带暗黄 / 未知深灰, 叠加区域矩形+名称+停泊点(青)与当前位置箭头(绿, 需导航栈运行中, 定位不可用时不绘制). 保存到本地固定 PNG 路径并返回, 供 AI 直接读取图像理解布局 (栅格 5cm/格)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/move",
+  "cls": "CarMove",
+  "file": "app/routines/user/car/move.py",
+  "desc": "控制小车平移: forward/back 控制前后移动, left/right 控制横移(麦轮)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/navigate",
+  "cls": "CarNavigate",
+  "file": "app/routines/user/car/navigate.py",
+  "desc": "导航至命名区域(如 客厅/主卧): 查询车上区域表获取停泊坐标 (由前端导航页\"设点\"维护, 未设点时使用区域中心), 发送一帧 /nav_goal, 由导航栈接管(含充电位脱困). 导航栈未运行时直接报错, 需先通过 car/navigate/manage 启动(车需在充电位). 未知区域名报错并列出可用区域",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/navigate/manage",
+  "cls": "CarNavigateManage",
+  "file": "app/routines/user/car/navigate_manage.py",
+  "desc": "管理车辆导航栈(启动/停止/重启, 与前端导航页的实际车辆开关使用同一通道). 仅当导航栈运行时 car/navigate 有效; 启动或重启后 AMCL 初始位姿为墙角充电位, 车辆须位于充电位",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/shake",
+  "cls": "CarShake",
+  "file": "app/routines/user/car/shake.py",
+  "desc": "控制小车正弦摆动(摇头/点头/扭腰)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/snap",
+  "cls": "CarSnap",
+  "file": "app/routines/user/car/snap.py",
+  "desc": "车头相机拍照: 获取当前照片(图像随结果返回, 无需再调用 read_image). 车端 bus_listener 未运行时直接报错",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/status",
+  "cls": "CarStatus",
+  "file": "app/routines/user/car/status.py",
+  "desc": "查询小车状态: 电池电压/估算电量 + 里程计 x/y/θ (感知桥最新帧; 车不在线时字段为 null. USB 供电时电压为背馈造成的异常读数(~3.7V))",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/steer",
+  "cls": "CarSteer",
+  "file": "app/routines/user/car/steer.py",
+  "desc": "小车车辆式弧线行驶",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/stop",
+  "cls": "CarStop",
+  "file": "app/routines/user/car/stop.py",
+  "desc": "小车急停(中止正在执行的动作并立即发送零速指令). 底盘异常或失控时应首先调用",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/track",
+  "cls": "CarTrack",
+  "file": "app/routines/user/car/track.py",
+  "desc": "小车水平跟踪人(人脸优先, 无脸用身体), 防抖容忍环带",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/turn",
+  "cls": "CarTurn",
+  "file": "app/routines/user/car/turn.py",
+  "desc": "小车原地旋转",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/wake_track",
+  "cls": "CarWakeTrack",
+  "file": "app/routines/user/car/wake_track.py",
+  "desc": "武装窗口内检测到唤醒词后: 先转向声源方位, 再视觉跟踪人员",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "car/where",
+  "cls": "CarWhere",
+  "file": "app/routines/user/car/where.py",
+  "desc": "查询小车当前所在区域(区域名): 根据 AMCL 位姿最新帧在车上区域表(前端导航页标定)中反查. 车不在线/导航栈未运行/不在任何区域时返回 null",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "chan_clear",
+  "cls": "ChanClear",
+  "file": "app/routines/user/mossv2/commands/chan/clear.py",
+  "desc": "清空一条轨道: 移除该轨排队中的 routine 并停止正在执行的 routine(保留轨道, 之后仍可正常提交); 停止所有轨道使用 interrupt",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "chan_create",
+  "cls": "ChanCreate",
+  "file": "app/routines/user/mossv2/commands/chan/create.py",
+  "desc": "创建新轨道(默认仅 main 串行; 创建回执确认后, 新轨上的 routine 可与 main 并行)",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "chan_delete",
+  "cls": "ChanDelete",
+  "file": "app/routines/user/mossv2/commands/chan/delete.py",
+  "desc": "删除空轨道(chan_create 的逆操作): 仅当该轨没有排队或运行中的 routine 时允许删除; 否则先执行 chan_clear 再删除. main 不可删除",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "chan_status",
+  "cls": "ChanStatus",
+  "file": "app/routines/user/mossv2/commands/chan/status.py",
+  "desc": "查询轨道状态: 各轨排队 routine 数量(queued)、正在执行的 routine(running)、是否有正在提前执行的任务(soon)、是否有容器仍在接收 body(deferred); 指定 name 时仅查询一条轨道",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "channel",
+  "cls": "Channel",
+  "file": "app/routines/user/mossv2/channel.py",
+  "desc": "动作串行轨道",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "code",
+  "cls": "Code",
+  "file": "app/routines/user/mossv2/commands/code/code.py",
+  "desc": "执行 Python 代码: body = Python 源码(接收完整后执行), 可用 call/create/spawn/publish/asyncio; 变量跨代码单元保留; 末尾表达式的值作为结果.",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "code_kernel",
+  "cls": "CodeKernel",
+  "file": "app/routines/user/mossv2/code_kernel.py",
+  "desc": "",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "evolve",
+  "cls": "Evolve",
+  "file": "app/routines/user/dynamic/evolve.py",
+  "desc": "自修改闭环: 备份、预检、等待热重载实际生效并执行断言, 失败时自动回滚并记录台账",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ghost",
+  "cls": "Ghost",
+  "file": "app/routines/user/mossv2/ghost.py",
+  "desc": "协调单元: 记忆(感知关键帧 Moments: 缝合缝+percepts 按源+瞬态不入史+logos, 滑窗按帧) + 思考 + 外接推理单元(brain_factory 注入, 可替换). think {percepts, transients, logos?, record_only?} = 一次处理(三种: 正常由推理单元生成流 / 反射将 logos 直接投递到 Shell 且不调用推理单元 / 空拍 record_only 仅缝合记录, 不思考 —— 原版 effort=no",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "interrupt",
+  "cls": "Interrupt",
+  "file": "app/routines/user/mossv2/commands/control.py",
+  "desc": "立即停止所有轨道上正在执行和排队中的 routine(用于取消当前计划或中断), 不等待其结束; 仅清空一条轨道使用 chan_clear",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "interrupt_agent",
+  "cls": "InterruptAgent",
+  "file": "app/routines/user/interrupt_agent.py",
+  "desc": "中断指定 agent 的当前轮次: 立即中止进行中的 LLM 流和工具调用, agent 补发空 final 帧使前端退出流式状态. to 指定目标 agent_id (如 prime_N).",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ipython",
+  "cls": "IPython",
+  "file": "app/routines/user/ipython/IPython.py",
+  "desc": "Execute Python code in a persistent per-session IPython kernel (real ipykernel via ZMQ). Use it for data parsing, JSON/CSV/log analysis, quick calculations, regex experiments, and validating small algorithms. Variables a",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "key_listen",
+  "cls": "KeyListen",
+  "file": "app/routines/user/mossv2/key_listen.py",
+  "desc": "键盘 PTT 输入源: 被动常驻, 监听 asr 当前 button 指定的按键, 按下发送 asr.press、松开发送 asr.release(模式和键名均从 asr 获取; 使用 pynput 事件监听, 启动失败时报错并结束, 无回退机制)",
+  "passive": true,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "loop",
+  "cls": "Loop",
+  "file": "app/routines/user/mossv2/container.py",
+  "desc": "循环: 把 body 里的 routine 重复执行 times 轮(负数 = 最多 100 轮; 省略 = 1 轮), 全部轮次完成才继续本轨后续",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "mindflow",
+  "cls": "Mindflow",
+  "file": "app/routines/user/mossv2/mindflow.py",
+  "desc": "调度单元: 思考与行动之间的闭环调度 + 多源仲裁(拉取时序, 与原版 rank+challenge 两场结构同构). declare {text} = 申报登记(fire-and-forget: 仲裁在裁判循环拉取时执行, verdict 仅有注册级回执 accepted/dropped/noop/ignored); 可选申报参数: priority(默认 NOTICE, FATAL 抢占/BACKGROUND 让路), strength(默",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "mini_agent",
+  "cls": "MiniAgent",
+  "file": "app/routines/user/dynamic/mini_agent.py",
+  "desc": "轻量子 agent: 接收 task+role, 自主驱动 LLM 循环, 必要时调用白名单中的 routine, 同步返回答案",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "models",
+  "cls": "ModelHub",
+  "file": "app/routines/user/models.py",
+  "desc": "中立模型管理 hub (passive 常驻). req events: list (展平清单, 不含 api_key) / get {provider?} (完整配置含 api_key) / save {provider_id, provider} (upsert) / delete {provider_id, model_id?} / set_default {model}. 事实源 models.yaml, 写入即时生效.",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "models/delete",
+  "cls": "ModelsDelete",
+  "file": "app/routines/user/models.py",
+  "desc": "删除 models.yaml 中整个 provider, 或 provider 下单个 model (给定 model_id). 写入即时生效.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "models/get",
+  "cls": "ModelsGet",
+  "file": "app/routines/user/models.py",
+  "desc": "取模型 provider 完整配置 (含 api_key, base_url, api, models). 给定 provider 时只返回该 provider; 缺省全部.",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "models/list",
+  "cls": "ModelsList",
+  "file": "app/routines/user/models.py",
+  "desc": "列出 models.yaml 全部可用模型 (不含 api_key). 返回 {default, models: [{key, provider, name, max_context, max_tokens, reasoning_effort, has_tools}]}.",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "models/save",
+  "cls": "ModelsSave",
+  "file": "app/routines/user/models.py",
+  "desc": "Upsert 一个 provider 定义到 models.yaml (整体替换该 provider 条目, 含其 models). 写入即时生效.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "models/set_default",
+  "cls": "ModelsDefault",
+  "file": "app/routines/user/models.py",
+  "desc": "设默认模型 (provider/model). 写入即时生效.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "moss",
+  "cls": "Moss",
+  "file": "app/routines/user/mossv2/moss.py",
+  "desc": "整体容器: passive 常驻, 组装并启动 Ghost + Shell, 完成连接后交由各组件运行. 入参 verbs = 初始动作词表, prompts = prompt 片段列表(Moss 拼装后一次性注入 Ghost 系统前缀).",
+  "passive": true,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "noop",
+  "cls": "Noop",
+  "file": "app/routines/user/mossv2/commands/noop.py",
+  "desc": "显式无操作: 立即结束当前处理轮次(监听期间无需响应时使用), 可在记录中与\"没有输出\"区分",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "notify",
+  "cls": "Notify",
+  "file": "app/routines/user/mossv2/commands/notify.py",
+  "desc": "将外部事件提交到下一处理轮次: 默认不中断当前语音输出, 输出结束后响应(空闲时立即开始一轮处理). mode=\"next\" 强制排入下一轮, mode=\"interrupt\" 才停止当前轮次. 用于 code 或外部回调收到结果后触发后续处理",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "prompt/capability",
+  "cls": "Capability",
+  "file": "app/routines/user/mossv2/prompt/capability.py",
+  "desc": "prompt 片段: 能力面(词表快照按身体分组, 装配时渲染)",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "prompt/persona",
+  "cls": "Persona",
+  "file": "app/routines/user/mossv2/prompt/persona.py",
+  "desc": "prompt 片段: 人格与交互礼仪",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "prompt/protocol",
+  "cls": "Protocol",
+  "file": "app/routines/user/mossv2/prompt/protocol.py",
+  "desc": "prompt 片段: CTML 协议(语法/轨道/边界/观测)",
+  "passive": false,
+  "input": false,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "query_weather",
+  "cls": "QueryWeather",
+  "file": "app/routines/user/mossv2/commands/query_weather.py",
+  "desc": "查询指定城市当前天气(约 2 秒; 结果自动返回, 无需再启动一轮处理)",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "read_image",
+  "cls": "ReadImage",
+  "file": "app/routines/user/xml/read_image.py",
+  "desc": "Reads an image file from the local filesystem and attaches it to the result, so you can visually inspect it. The file_path parameter must be an absolute path, not a relative path. Supported formats: png, jpeg, gif, webp ",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "ros_bridge",
+  "cls": "RosBridge",
+  "file": "app/routines/user/hiwonder/ros_bridge.py",
+  "desc": "ROS 感知桥(被动常驻): subscribe req 注册 ROS 话题转发到 pubsub namespace 'ros'(topic = ROS 原名零改写, 载荷原样, hz 可节流, 引用计数, 返回 {topic, namespace}), publish req 往 ROS 话题发帧; 零业务纯中转, 解释逻辑在消费方",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "routine/check_name",
+  "cls": "CheckRoutineName",
+  "file": "app/routines/user/routine/check_name.py",
+  "desc": "检查 routine 名称是否可用. 热重载时同名覆盖会接管路由, 新建 routine 命名前应先检查.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "routine/doc",
+  "cls": "RoutineDoc",
+  "file": "app/routines/user/routine/doc.py",
+  "desc": "获取一个 routine 的完整用法(签名/参数说明/示例): 对于清单中仅列出名称的 routine, 使用前先查询",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "routine/list",
+  "cls": "ListRoutines",
+  "file": "app/routines/user/routine/list.py",
+  "desc": "列出 routine(已注册 / 运行中).kind=registered(默认)|running",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "routine/reload",
+  "cls": "ReloadRoutines",
+  "file": "app/routines/user/routine/reload.py",
+  "desc": "强制重载并重新注册 routine/包(watcher 热重载的手动备用入口)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "routines_watcher",
+  "cls": "RoutinesWatcher",
+  "file": "app/routines/watcher.py",
+  "desc": "监控 routines.yaml 与 routine 源码变更, 自动热重载 (HMR).",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": true
+ },
+ {
+  "name": "run_xml",
+  "cls": "RunXml",
+  "file": "app/routines/user/xml/run_xml.py",
+  "desc": "动态执行 XML 字符串(调试用, 采用与 act 相同的 body_shell 流水线)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "say",
+  "cls": "Say",
+  "file": "app/routines/user/mossv2/commands/say.py",
+  "desc": "语音输出: body = 输出文本(发送后立即开始接收流, 实际发声等待轨道调度).",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "screenshot",
+  "cls": "Screenshot",
+  "file": "app/routines/user/dynamic/screenshot.py",
+  "desc": "屏幕截图(零依赖, Windows .NET CopyFromScreen): 支持全屏、指定屏幕和可选取景框, 可缩放到指定比例, 保存为 PNG/JPG, 返回路径、宽高和字节数. 不返回像素数据; 查看图像时由调用方选择渲染方式.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "send_message",
+  "cls": "SendMessage",
+  "file": "app/routines/user/send_message.py",
+  "desc": "单向异步给指定 agent 发一条消息, 立即返回, 不等回复. 接收方 agent 处理完后会主动调本 routine 回复. to 指定目标 agent_id (如 prime_N).",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "shell",
+  "cls": "Shell",
+  "file": "app/routines/user/mossv2/shell.py",
+  "desc": "执行单元: 按 mailbox 顺序接收 Ghost 的字(send), 按\"一个标签 = 一个实例\"逐层解析 —— create 创建实例, body 字节按边界直接投递, 闭合时发送 eof, 实例解析自身 body(容器继续向下扫描一层); 裸文本 = 纯文本旁白(final answer, 不进入轨道、不生成帧); 投递服务 route 仅一份(词表/轨表校验 + 编排参数), root 与容器共用; Tracer 汇总记录: 回执入账, owed = 错误帧自带 ",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "show_image",
+  "cls": "ShowImage",
+  "file": "app/routines/user/show_image.py",
+  "desc": "把本地图片发到前端对话栏展示 (WS 实时推送). 路径须是本机可读的图片文件.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/fetch",
+  "cls": "SkillsFetch",
+  "file": "app/routines/user/skill/fetch.py",
+  "desc": "Fetch (download) a skill from a URL into the shared library (~/.zero/skills). For local directories use skill/repo/pull. Immediately visible to all agents via skill/list / skill/load.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/list",
+  "cls": "SkillsList",
+  "file": "app/routines/user/skill/list.py",
+  "desc": "List this agent's installed skills (name + short description). The shared library is NOT included here: use skill/repo/list to browse it and skill/repo/pull to install from it. Use skill/load to load a skill's full instr",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/load",
+  "cls": "SkillsLoad",
+  "file": "app/routines/user/skill/load.py",
+  "desc": "Load a skill's full instructions into the conversation. After loading, follow the skill's instructions carefully.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/repo/delete",
+  "cls": "SkillsRepoDelete",
+  "file": "app/routines/user/skill/repo_delete.py",
+  "desc": "Delete a skill from the shared library (~/.zero/skills). Workspace draft copies are not affected.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/repo/get",
+  "cls": "SkillsRepoGet",
+  "file": "app/routines/user/skill/repo_get.py",
+  "desc": "Read one skill from the shared library (~/.zero/skills): full SKILL.md content plus its directory file list. Read-only; use skill/repo/pull to copy it into an agent workspace.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/repo/list",
+  "cls": "SkillsRepoList",
+  "file": "app/routines/user/skill/repo_list.py",
+  "desc": "List all skills in the shared library (~/.zero/skills), with version and audience (agents) metadata.",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/repo/publish",
+  "cls": "SkillsRepoPublish",
+  "file": "app/routines/user/skill/repo_publish.py",
+  "desc": "Publish a skill from the current agent workspace to the shared user skill library (~/.zero/skills). Requires an explicit version strictly greater than the version currently in the library. Published skills are immediatel",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/repo/pull",
+  "cls": "SkillsRepoPull",
+  "file": "app/routines/user/skill/repo_pull.py",
+  "desc": "Pull (download) a skill from the shared library (~/.zero/skills) into this agent's workspace. Use skill/repo/list to see what the library has. After pulling, the skill is visible to skill/list / skill/load.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "skill/search",
+  "cls": "SkillsSearch",
+  "file": "app/routines/user/skill/search.py",
+  "desc": "Search public skill marketplaces (hermes-index aggregator, ~90k skills; falls back to skills.sh /api/search). Returns name + description + install_url. Pass install_url to skill/fetch to install. Use skill/load to load a",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "sleep",
+  "cls": "Sleep",
+  "file": "app/routines/user/mossv2/commands/sleep.py",
+  "desc": "延时: 阻塞本轨后续的 routine duration 秒(其他轨道并行不受影响)",
+  "passive": false,
+  "input": true,
+  "inZero": false,
+  "inMoss": true
+ },
+ {
+  "name": "ssh/connect",
+  "cls": "SshConnect",
+  "file": "app/routines/user/agents/tools/remote/SshTool/SshTool.py",
+  "desc": "Open a persistent SSH connection. Pass an alias (e.g. robot/server) and target (e.g. root@1.2.3.4). The alias identifies this connection in later ssh/exec, ssh/transfer and ssh/disconnect calls.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ssh/disconnect",
+  "cls": "SshDisconnect",
+  "file": "app/routines/user/agents/tools/remote/SshTool/SshTool.py",
+  "desc": "Close a persistent SSH connection by alias. Omit alias to close the active one.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ssh/exec",
+  "cls": "SshExec",
+  "file": "app/routines/user/agents/tools/remote/SshTool/SshTool.py",
+  "desc": "Run a command on a remote host via an existing SSH connection. Pass alias to pick a specific connection; omit to use the active one. Shell state (cd, export) persists across calls.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ssh/list",
+  "cls": "SshList",
+  "file": "app/routines/user/agents/tools/remote/SshTool/SshTool.py",
+  "desc": "List all active SSH connections in the current agent session with their aliases and targets.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "ssh/transfer",
+  "cls": "SshTransfer",
+  "file": "app/routines/user/agents/tools/remote/SshTool/SshTool.py",
+  "desc": "Transfer files or directories via SCP over an existing SSH connection. direction=upload sends local->remote, direction=download fetches remote->local. Auto-detects directory recursion.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "sys_prompt",
+  "cls": "SysPrompt",
+  "file": "app/routines/user/sys_prompt.py",
+  "desc": "获取 agent 的完整 system prompt 快照 (web_server 缓存). 收到 WS sys_prompt 通知后调用本 routine 获取全量内容.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "sysinfo",
+  "cls": "SysInfo",
+  "file": "app/routines/user/dynamic/sysinfo.py",
+  "desc": "本机状态检查 v2 (包含低容量磁盘告警) [evolve-demo-B]",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "tree",
+  "cls": "TreeHub",
+  "file": "app/routines/user/tree.py",
+  "desc": "模块树管理 hub (passive 常驻). req events: get (读 tree.json 静态定义) / apply {op, ...} (编辑事务, 即时生效): add {parent, id, name?} / remove {id} (被占模块拒绝) / move {id, parent} (跨父移动子树) / reorder {parent, id, dir: -1|1} / rename {id, name}",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "tree/apply",
+  "cls": "TreeApply",
+  "file": "app/routines/user/tree.py",
+  "desc": "模块树编辑事务 (即时生效). kwargs: {op, ...}, op ∈ add {parent, id, name?} / remove {id} / move {id, parent} / reorder {parent, id, dir} / rename {id, name}.",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "tree/get",
+  "cls": "TreeGet",
+  "file": "app/routines/user/tree.py",
+  "desc": "读模块树静态定义 (tree.json). 返回 {ok, modules}.",
+  "passive": false,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "user_agent",
+  "cls": "UserAgent",
+  "file": "app/routines/user/user_agent.py",
+  "desc": "user 身份常驻 agent. HTTP 无 agent_id 的调用经此转发, 注入 from_agent_id=user.",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "wait",
+  "cls": "Wait",
+  "file": "app/routines/user/xml/wait.py",
+  "desc": "wait(延时/barrier)",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "web_fetch",
+  "cls": "WebFetch",
+  "file": "app/routines/user/agents/tools/remote/WebFetchTool/WebFetchTool.py",
+  "desc": "Fetch a URL and extract clean page text using trafilatura (strips navigation/ads/sidebar). Returns markdown or plain text. Long pages (> char_limit, default 15000) are head+tail truncated and the full text is saved to ca",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "web_search",
+  "cls": "WebSearch",
+  "file": "app/routines/user/agents/tools/remote/WebSearchTool/WebSearchTool.py",
+  "desc": "Search the web via Volcengine Doubao Search API and return structured results (title/url/summary/content). Supports web pages and images. Use for time-sensitive info, fact-checking, or supplementing knowledge beyond trai",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "web_server",
+  "cls": "WebServer",
+  "file": "app/routines/user/web_server/server.py",
+  "desc": "HTTP + WS 服务入口: 通过 curl 触发 routine, 通过 WS 桥接前端",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "world_agent",
+  "cls": "WorldAgent",
+  "file": "app/routines/user/world_agent.py",
+  "desc": "world 身份常驻 agent. 客观事件 (UI/定时器/webhook) 经此转发, 注入 from_agent_id=world.",
+  "passive": true,
+  "input": false,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent",
+  "cls": "XmlAgent",
+  "file": "app/routines/user/xml/agent/agent.py",
+  "desc": "精简版 reactive agent: sqlite 记忆 + 每轮 push act, 常驻对话.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/create",
+  "cls": "CreateXmlAgent",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Entry routine that spawns a xml agent via the resident XmlAgents manager. Returns the new agent_id. The spawned agent runs concurrently, isolated by agent_id.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/delete",
+  "cls": "DeleteXmlAgent",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Entry routine that deletes a stopped XmlAgent record (store row + messages) via the resident XmlAgents manager. Irreversible; live agents are rejected (stop first).",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/list",
+  "cls": "ListXmlAgents",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Entry routine that lists all XmlAgents (live + stopped) via the resident XmlAgents manager.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/manager",
+  "cls": "XmlAgents",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Resident manager for xml agents. Spawns/lists/stops XmlAgent child instances on request. Agent records persist to sqlite; each child runs concurrently, isolated by agent_id.",
+  "passive": true,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/resume",
+  "cls": "ResumeXmlAgent",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Entry routine that resumes a stopped XmlAgent via the resident XmlAgents manager. Rebuilds state from persisted history.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/set_routine_alias",
+  "cls": "SetRoutineAlias",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Set routine tags (routine name -> alias) on a live xml agent. The agent renders its prompt interface tables with the aliases and maps them back to full names when dispatching.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml/agent/stop",
+  "cls": "StopXmlAgent",
+  "file": "app/routines/user/xml/agent/manager.py",
+  "desc": "Entry routine that stops a live XmlAgent via the resident XmlAgents manager. The agent record persists; resume to restart.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ },
+ {
+  "name": "xml_condenser_agent",
+  "cls": "XmlCondenserAgent",
+  "file": "app/routines/user/xml/agent/condenser.py",
+  "desc": "xml_agent 上下文压缩 routine. 读取 Memory, 应用压缩策略, 将 summary 写入 messages 表 (kind=summary). 与 reactor/prime CondenserAgent 平级, 分别写入各自数据.",
+  "passive": false,
+  "input": true,
+  "inZero": true,
+  "inMoss": false
+ }
+]

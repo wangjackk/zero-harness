@@ -192,7 +192,7 @@ export class ServerRuntime {
   peerDownAll(reason: string): void {
     for (const [id, h] of [...this._handles]) {
       try {
-        h.notifyDone(null, reason, 'ERROR')
+        h.notifyDone(null, reason, 'DISCONNECTED', 'host', reason)
       } catch { /* hook 异常不阻断其余清理 */ }
       this._handles.delete(id)
     }

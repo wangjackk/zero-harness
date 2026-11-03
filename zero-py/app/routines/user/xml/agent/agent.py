@@ -427,11 +427,19 @@ class XmlAgent(Routine):
         return content
 
     async def _on_input(self, source, data) -> None:
+        from ._messaging import IncomingMessage, USER_SOURCE
+        msg = IncomingMessage.from_payload(data)
+        if not msg.text and not msg.images:
+            return
+        # 收到即播报 (与来源无关), 前端只据此渲染. 放在拿锁之前:
+        # 气泡不等 act 收尾 / reflex 判定. 播报用原文, from 由前端做标签.
+        # 播报失败只记日志, 不能连累后面的入库与 react (曾因 images=None
+        # 在生成器里 TypeError, 整个 _on_input 静默死掉).
+        try:
+            await self._emit_incoming(msg.text, msg.from_, msg.images)
+        except Exception:
+            self._logger.warning('emit incoming_message failed', exc_info=True)
         async with self._event_lock:
-            from ._messaging import IncomingMessage, USER_SOURCE
-            msg = IncomingMessage.from_payload(data)
-            if not msg.text and not msg.images:
-                return
             # act 期的用户消息先过 reflex 链(不直接打断); agent 来源消息
             # 语义明确 + idle 消息直通(现状路径)
             if msg.from_ == USER_SOURCE and self._react_in_flight():
@@ -446,8 +454,6 @@ class XmlAgent(Routine):
             await self._interrupt_act_if_needed()
             content = self._store_incoming(msg)
             self._logger.info(f'epoch -> {self._epoch} (user_input): {content!r}')
-            if msg.from_ != USER_SOURCE:
-                await self._emit_incoming(content, msg.from_)
             self._spawn_emotion(content)
             self._start_react(self._epoch)
 
@@ -1281,9 +1287,20 @@ class XmlAgent(Routine):
         await self.publish('assistant_output', data)
         await self.publish('assistant_output', data, namespace=self._agent_id)
 
-    async def _emit_incoming(self, text: str, from_agent: str) -> None:
-        """推一条入站 agent 消息到前端渲染 (用户消息前端已本地 push, 不走这)."""
+    async def _emit_incoming(
+        self, text: str, from_agent: str, images=None,
+    ) -> None:
+        """播报入站消息到前端 (收到即播, 与来源无关).
+
+        images 是磁盘路径, 回显前转 /files/<name> 引用 ---- 前端 img
+        只认 web_server 的 /files 路由. 纯文本消息 images 为 None, 必须
+        按空序列处理 (IncomingMessage.images 是 Optional).
+        """
+        from ...agents._core.messaging import to_files_ref
         data = {'text': text, 'from': from_agent, 'agent_id': self._agent_id}
+        refs = [p for p in (to_files_ref(str(x)) for x in (images or ())) if p]
+        if refs:
+            data['images'] = refs
         await self.publish('incoming_message', data)
         await self.publish('incoming_message', data, namespace=self._agent_id)
 
@@ -1572,6 +1589,9 @@ class XmlAgent(Routine):
         read_image 特判: result 里的 ``images`` (本地路径列表) 提到 item 上,
         随 [feedback] 合并成一条多模态消息 (文本 + 图) 落库. 模型不支持读图时
         组装侧 (_to_input_msg) 剥掉.
+
+        任何工具结果带 ``images`` 都走同一条路, 不限 read_image —— 远端 hub
+        的截图 (``RunRoutine`` 把 b64 落盘后挂 ``images``) 也靠这个进模型.
         """
         name = str(res.get('name') or '').strip()
         result = res.get('result')
@@ -1580,8 +1600,10 @@ class XmlAgent(Routine):
             result = res.get('error')
             is_error = result is not None
         images: list[str] = []
-        if name == 'read_image' and isinstance(result, dict):
-            images = [str(p) for p in result.get('images') or [] if p]
+        if isinstance(result, dict):
+            raw_images = result.get('images') or []
+            if isinstance(raw_images, (list, tuple)):
+                images = [str(p) for p in raw_images if p]
         if isinstance(result, dict) and 'content' in result:
             result = result['content']
         if not name or result is None:

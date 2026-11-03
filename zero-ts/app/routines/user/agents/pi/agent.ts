@@ -27,7 +27,9 @@ import {
 import { AGENT_ID_KEY } from '../_core/paths'
 import { registerWithBridge } from '../_core/bridge'
 import { getSharedModels, resolveModelRef, type ModelLike } from '../_core/modelRuntime'
-import { USER_SOURCE, wrapFrom, PRIORITY_HIGH, splitContent } from '../_core/messaging'
+import {
+  USER_SOURCE, wrapFrom, PRIORITY_HIGH, splitContent, toFilesRef,
+} from '../_core/messaging'
 import { makeIpthonTool, toPiImage } from './tools'
 import { makeFilesApiExtension } from './filesApiExtension'
 import { buildPrimeSystemPrompt } from './prompt'
@@ -481,6 +483,14 @@ export class PiAgent extends Routine {
     await this._ready
     if (!this._session) return
     const fromAgent = String(data?.from || USER_SOURCE)
+    // 收到即播报 (与来源无关), 前端只据此渲染. 放在打断等待之前:
+    // 气泡不该等上一轮 prompt 收敛才出现. 播报失败只记日志, 不能连累
+    // 后面的入库与 prompt.
+    try {
+      await this.emitIncomingMessage(text, fromAgent, images)
+    } catch (exc: any) {
+      log.warning(`emit incoming_message failed: ${exc?.message ?? exc}`)
+    }
     let content = wrapFrom(text, fromAgent)
     if (images.length && !content) content = '[image]'
 
@@ -504,9 +514,6 @@ export class PiAgent extends Routine {
 
     // 阶段2: 锁内注入新 prompt.
     await this._eventLock.run(async () => {
-      if (fromAgent !== USER_SOURCE) {
-        await this.emitIncomingMessage(content, fromAgent)
-      }
       const epoch = this._epoch
       const messageId = crypto.randomUUID()
       this._messageId = messageId
@@ -773,8 +780,17 @@ export class PiAgent extends Routine {
     await this.publish('usage', data, this._agentId)
   }
 
-  async emitIncomingMessage(text: string, fromAgent: string): Promise<void> {
-    const data = { text, from: fromAgent, agent_id: this._agentId }
+  /** 播报 agent 来源的入站消息 (user 消息由发起方自己渲染, 不走这).
+   *  images 是磁盘路径, 回显前转 /files/<name> 引用 ---- 前端 img 只认
+   *  web_server 的 /files 路由. */
+  async emitIncomingMessage(
+    text: string, fromAgent: string, images: string[] = [],
+  ): Promise<void> {
+    const data: Record<string, any> = {
+      text, from: fromAgent, agent_id: this._agentId,
+    }
+    const refs = images.map(p => toFilesRef(String(p))).filter(Boolean)
+    if (refs.length) data.images = refs
     await this.publish('incoming_message', data)
     await this.publish('incoming_message', data, this._agentId)
   }

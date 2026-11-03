@@ -123,12 +123,13 @@ export class GrpcKernelServer {
     this._bound = true
   }
 
-  async stop(): Promise<void> {
+  /** 停 server. graceMs = 等 dial-in peer 自己关流的上限.
+   *  peer 常驻重连, 不会自发结束, 所以几乎总要吃满 graceMs 再强断。进程退出时
+   *  没理由陪它 —— launch 的 Connection.close 传更短的 grace。 */
+  async stop(graceMs = 2000): Promise<void> {
     if (!this._bound) return
-    // tryShutdown 等 peer 主动关流;dial-in client 常驻重连不会自发结束,
-    // 2s 超时后 forceShutdown 强断(对端走重连 loop 是正常生命周期).
     await new Promise<void>(resolve => {
-      const timer = setTimeout(() => { this._server.forceShutdown(); resolve() }, 2000)
+      const timer = setTimeout(() => { this._server.forceShutdown(); resolve() }, graceMs)
       this._server.tryShutdown(() => { clearTimeout(timer); resolve() })
     })
   }
@@ -160,9 +161,13 @@ export class GrpcKernelServer {
     // 逐条 stream.write(grpc-js 的 write 不可并发,单 writer 保序).
     const outQ = new AsyncQueue<Msg | null>()
     let dropped = false
+    let endStreamOnClose = false
+    let notifyDropped!: () => void
+    const droppedPromise = new Promise<void>(resolve => { notifyDropped = resolve })
     const drop = () => {
       if (dropped) return
       dropped = true
+      notifyDropped()  // 同时唤醒正在等 drain 的 writer
       outQ.push(null)  // 哨兵: writer 退出
       this._kernel.dropConn(peerId)
       log.info(`peer ${peerId} disconnected`)
@@ -170,6 +175,10 @@ export class GrpcKernelServer {
 
     // 入站: per-peer FIFO worker 串行 dispatch(对齐 inproc link kernelLoop).
     const inQ = new AsyncQueue<Msg | null>()
+    const close = () => {
+      inQ.push(null)  // cancelled/close 也必须放行入站 worker
+      drop()
+    }
     void (async () => {
       while (true) {
         const msg = await inQ.get()
@@ -189,18 +198,30 @@ export class GrpcKernelServer {
         if (msg === null) break
         try {
           const ok = call.write({ payload: JSON.stringify(msg) })
-          if (!ok) await new Promise<void>(r => call.once('drain', r))
+          if (!ok) {
+            let onDrain!: () => void
+            const drained = new Promise<void>(resolve => {
+              onDrain = resolve
+              call.once('drain', onDrain)
+            })
+            await Promise.race([drained, droppedPromise])
+            call.removeListener('drain', onDrain)
+            if (dropped) break
+          }
         } catch (e: any) {
           log.warning(`peer ${peerId} send failed: ${e?.message ?? e}`)
           drop()
           break
         }
       }
+      // kernel 主动拒绝时先让 writer 把已入队的拒绝回执写完,再关流。
+      if (endStreamOnClose) call.end()
     })()
 
     const conn: KernelConn = {
       id: peerId,
       send: (msg: Msg) => { if (!dropped) outQ.push(msg) },
+      close: () => { endStreamOnClose = true; close() },
     }
     this._kernel.registerConn(conn)
     log.info(`peer ${peerId} connected`)
@@ -213,7 +234,10 @@ export class GrpcKernelServer {
         log.warning(`peer ${peerId} bad frame: ${e?.message ?? e}`)
       }
     })
-    call.on('end', () => { inQ.push(null); drop() })
-    call.on('error', (e: Error) => { inQ.push(null); drop(); log.warning(`peer ${peerId} stream error: ${e.message}`) })
+    call.on('end', close)
+    call.on('error', (e: Error) => { close(); log.warning(`peer ${peerId} stream error: ${e.message}`) })
+    // grpc-js 对端取消只保证发 cancelled,不一定经过 end/error。
+    call.on('cancelled', close)
+    call.on('close', close)
   }
 }

@@ -1,0 +1,45 @@
+# 测试:trigger_rule + 失败聚合(不 fail-fast)
+#
+#   ok_task   ─┐
+#              ├──► gather(all_done)        → 即使 bad_task 失败也照跑
+#   bad_task  ─┘──► strict(all_success)     → 因 bad_task 失败被 skip
+#
+# bad_task(always_fail)失败后不会中断整个 DAG(不 fail-fast),只写
+# 失败状态,交给下游各自的 trigger_rule 裁决:
+#   - gather  trigger_rule=all_done             → 所有 dep 终态即可跑(无视成败)
+#   - strict  trigger_rule=all_success(默认)    → 有 dep 失败 → skip
+#
+# 跑:<run_dag dag="trigger_dag"/>
+# 期望 outputs:gather 有值,strict 为 null(被 skip)
+
+name: trigger_dag
+description: 演示 trigger_rule 与失败聚合
+
+nodes:
+  - id: ok_task
+    routine: summary_weather
+    inputs:
+      data: "我成功了"
+
+  - id: bad_task
+    routine: always_fail
+    inputs:
+      reason: "我注定失败"
+
+  - id: gather
+    routine: echo
+    depends_on: [ok_task, bad_task]
+    trigger_rule: all_done
+    inputs:
+      note: "all_done:无视上游成败都跑"
+
+  - id: strict
+    routine: echo
+    depends_on: [ok_task, bad_task]
+    trigger_rule: all_success
+    inputs:
+      note: "all_success:有上游失败就不该跑到这"
+
+outputs:
+  gather: gather
+  strict: strict

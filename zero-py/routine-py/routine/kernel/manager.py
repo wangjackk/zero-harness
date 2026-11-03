@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
@@ -33,7 +34,7 @@ from ..protocol import (
     CATALOG_DEREGISTER, CATALOG_DEREGISTER_CMD, CATALOG_DEREGISTER_CMD_ACK,
     CATALOG_DEREGISTERED, CATALOG_PUSH, CATALOG_PUSHED, CATALOG_REGISTER,
     CATALOG_REGISTERED, CATALOG_RELOAD, CATALOG_RELOADED,
-    ControlDoneReason,
+    TerminationReason,
     LIFECYCLE_EVENT, LIFECYCLE_UNWATCH, LIFECYCLE_WATCH, LIFECYCLE_SNAPSHOT,
     LIFECYCLE_CREATED, LIFECYCLE_DESTROY, LIFECYCLE_START, LIFECYCLE_STARTED,
     LIFECYCLE_STOP, LIFECYCLE_STOPPED, MESSAGE_REQ, MESSAGE_REQ_DELIVERED,
@@ -70,6 +71,9 @@ class Route:
     passive_kwargs: Dict[str, Any] = field(default_factory=dict)
     passive_priority: int = 10  # passive 拉起优先级(声明处即调用点; 档位同 start)
     meta: Dict[str, Any] = field(default_factory=dict)
+    # 静态声明的占用 modules(catalog 注册时 ``cls.modules()`` 无参默认; 运行时
+    # acquire 的动态占用不在此, 注册期拿不到).get_routines 如实回显.
+    modules: List[str] = field(default_factory=list)
     owner: str = 'local'  # 提供该 routine 的 hub 身份(catalog.push 的 hub_id)
 
 
@@ -85,12 +89,16 @@ class KernelConn:
 
     hub_id: 该 conn 绑定的 hub 身份(catalog.push 登记; hub 侧自报的稳定 id).
     close: 拒绝连接时断开本 conn 的回调(仅 grpc peer 有).
+    local: 同进程 hub(inproc link). 这不是优化标记, 是**关停语义的分界**: 只有
+        它能在关停时"请求 + 等确认"(通道是内存队列, 回报必达, 且全局树只在这
+        一侧)。跨进程 peer 的实例归对方所有, 断链即通告, 对方自清(见 _stop_node)。
     """
 
     id: str
     send: Any  # Callable[[Dict[str, Any]], None]
     hub_id: str = ''
     close: Any = None  # Optional[Callable[[], None]]
+    local: bool = False
 
 
 @dataclass
@@ -134,7 +142,7 @@ class Node:
         self.created_done = False
         self.created_sent = False
         self.stopping = False
-        self.stop_reason = ''
+        self.stop_reason: Optional[TerminationReason] = None
         self.stop_by = 0
         # lifecycle 终止帧(stopped/destroyed)已发----一个 node 恰一帧
         self.stop_sent = False
@@ -145,6 +153,12 @@ class Kernel:
 
     CREATED_TIMEOUT = 30.0   # 等 created 回报超时
     STOP_TIMEOUT = 10.0      # stop 后等 lifecycle.stopped 超时(放弃防挂死)
+    # kernel.stop() 语境下的同一份耐心。**必须大于 hub 侧的单节点预算**
+    # (lifecycle.STOP_TIMEOUT=3s: stop hook 3s + main task 3s 兜底 cancel),
+    # 否则框架自己的兜底动作会被判成"超时", 每次退出都刷一串假 WARNING,
+    # 把真正停不动的那个淹掉。约定内的 routine(stop 里叫醒 run)是毫秒级,
+    # 这个值只是兜底上限。
+    SHUTDOWN_TIMEOUT = 3.5
 
     def __init__(self, tree: Tree):
         self.tree = tree
@@ -170,24 +184,36 @@ class Kernel:
         self._watch_conns: Set[str] = set()
         self._watch_seq: int = 0
         self._root_id = 0
+        # 后台收尾任务(fire-and-forget)的强引用: event loop 只持弱引用,
+        # 不存就会在 await 中途被 GC 掉 —— 收尾半途消失比不开始更糟.
+        self._tasks: Set[asyncio.Task] = set()
 
     # --- 生命周期 ---
+
+    def _spawn(self, coro) -> asyncio.Task:
+        """起一个后台任务并持强引用到它结束."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     def bind(self, link) -> None:
         """绑定 InProcessLink(link.start 前);link 包成 'local' conn."""
         self._link = link
         self._conns['local'] = KernelConn(
-            id='local', send=lambda m: link.kernel_to_hub(m))
+            id='local', send=lambda m: link.kernel_to_hub(m), local=True)
 
     def register_conn(self, conn: KernelConn) -> None:
         """注册出站 conn(grpc peer dial-in 接入时调)."""
         self._conns[conn.id] = conn
 
     def drop_conn(self, conn_id: str) -> None:
-        """conn 断开: fail 该 owner 的节点 + 清路由.
+        """conn 断开: 摘该 owner 的路由, 名下节点交给停路径收尾.
 
-        对齐 Go kernel failPending + UnloadRemote: peer 已死,lifecycle.stop
-        无处可发,body 靠 resolved future 自然退出,finally 里 release 模块.
+        对齐 Go kernel failPending + UnloadRemote: peer 已死, lifecycle.stop
+        无处可发, 由 ``_settle_local`` 按"对端已终止"本地结算(future 解掉,
+        body 自然退出, finally 里还模块)。节点收尾走 ``_stop_node`` 而不是就地
+        摘除, 这样"先子后父"对跨 hub 父子同样成立(见 ``_reap_dead``)。
         """
         conn = self._conns.pop(conn_id, None)
         hub_id = conn.hub_id if conn is not None else ''
@@ -201,33 +227,16 @@ class Kernel:
         for name in [n for n, r in self.routes.items() if r.owner == owner]:
             del self.routes[name]
             self._passive_started.discard(name)
-        for rid in list(self.nodes):
-            n = self.nodes[rid]
-            if n.owner != owner:
-                continue
-            self._unsubscribe_rid(str(rid))
-            err = f"hub '{owner}' disconnected"
-            if not n.created_fut.done():
-                n.created_fut.set_result(CreatedResult(error=err))
-            if not n.stopped_fut.done():
-                n.stopped_fut.set_result(
-                    {'event': 'lifecycle.stopped', 'reason': err})
-            self._remove_node(rid)
-            self.tree.release(rid)
-            # 断线补报(对齐 Go UnloadRemote):父在其它 conn 时,合成
-            # reason=DISCONNECT 的 stopped 帧发给父 conn ---- 唤醒父侧
-            # handle.wait,与正常 stopped 同一种错误报告(否则父挂到超时).
-            # 同 conn 的父不补(父也死了,发了也到不了;祖父会单独收帧).
-            if n.parent is not None and n.parent.owner != owner:
-                self._send_to(n.parent.owner, {
-                    'event': LIFECYCLE_STOPPED, 'id': str(rid),
-                    'reason': ControlDoneReason.DISCONNECT.value,
-                    'error': (f'routine {n.cmd.name} host disconnected: '
-                              f"hub '{owner}' down"),
-                })
+        # 节点不在这里就地摘除:交出给停路径(_stop_node), 才是"先子后父"的唯一
+        # 出处。死 owner 的节点由它本地结算; 它们的子若属于别的活着 hub(跨 hub
+        # 父子), 会在同一趟递归里照常收到 stop —— 直接 _remove_node 会把那类
+        # 子节点变成孤儿(仍在跑, 父链已断, 无人再能找到)。
+        dead = [n for n in self.nodes.values() if n.owner == owner]
+        if dead:
+            self._spawn(self._reap_dead(dead))
         self._push_module_view()
-        log.warning("conn '%s' (hub '%s') dropped: routes failed, nodes cleaned",
-                     conn_id, owner)
+        log.warning("conn '%s' (hub '%s') dropped: routes failed, "
+                    "%d node(s) settling", conn_id, owner, len(dead))
 
     async def start(self) -> None:
         """建 root(本地骨架,占根模块).catalog push 由 hub 启动后 push 进来."""
@@ -252,10 +261,48 @@ class Kernel:
         await asyncio.Event().wait()  # 永久挂起(kernel 关停时被 cancel)
 
     async def stop(self) -> None:
-        """关停内核:级联停 root 子树."""
-        await self._stop_node(self.nodes[self._root_id], cascade=False, force_by=0)
+        """关停内核:级联停 root 子树, 再清残余节点. 幂等(可重入).
+
+        只走 root 级联是不够的: 顶层 create(parent_id=0)的节点、父先走留下
+        的节点都不在 root.children 里, 级联永远停不到它们。它们的 command
+        body task 会活到事件循环关闭, 退出时冒
+        ``Task was destroyed but it is pending!``(名字形如 ``cmd:board-3``)。
+        所以级联之后必须扫一遍 nodes 表, 把残余按同一停路径清掉。
+
+        **等与不等按宿主分**: 同进程 hub(local conn)的节点走完整请求-确认
+        (通道可靠, 且全局树只在这一侧, 先子后父只有这里能编排); 跨进程 hub
+        的节点只结算 kernel 自己的投影, 由对端在断链时自清(见 _stop_node)。
+
+        退出语境的耐心比稳态短(SHUTDOWN_TIMEOUT): 用户已经按下 Ctrl+C,
+        再等满 10s 的 STOP_TIMEOUT 只让他以为卡死、再按一次(把级联劈断,
+        剩下节点活到循环关闭)。不确认的节点照样拆 ---- 拆完即走。
+        """
+        self.STOP_TIMEOUT = min(self.STOP_TIMEOUT, self.SHUTDOWN_TIMEOUT)
+        root = self.nodes.get(self._root_id)
+        if root is not None:
+            await self._stop_node(root, cascade=False, force_by=0,
+                                  during_shutdown=True)
+        left = list(self.nodes.values())
+        if left:
+            log.warning('kernel.stop: %d node(s) not under root, stopping: %s',
+                        len(left), ', '.join(str(n.cmd) for n in left))
+            for n in left:
+                try:
+                    await self._stop_node(n, cascade=True, force_by=0,
+                                          during_shutdown=True)
+                except Exception:
+                    log.exception('kernel.stop: settle %s failed', n.cmd)
 
     # --- 出入站 ---
+
+    def _conn_of_owner(self, owner: str) -> Optional[KernelConn]:
+        """owner(hub 身份或直连 conn id)的活连接; None = 该宿主已失联.
+
+        单点解析(对齐 Go sendOut 的 target 两种取值): hub 身份先经 _hub_conns
+        映射到 conn id, 已是 conn id 的直接取. 断线后 _hub_conns/_conns 均摘除,
+        所以"查不到"就是"没有了"——停命令无处可发, 只能本地结算.
+        """
+        return self._conns.get(self._hub_conns.get(owner, owner))
 
     def _send_to(self, target: str, msg: Dict[str, Any]) -> None:
         """出站显式目标发送(对齐 Go sendOut: publish 到 conn 的出站通道).
@@ -265,7 +312,7 @@ class Kernel:
         丢弃(fire-and-forget 语义). 路由决策在各调用点: 回执类发 source
         (dispatch 传入), lifecycle 命令发 node owner, module.tree 广播.
         """
-        conn = self._conns.get(self._hub_conns.get(target, target))
+        conn = self._conn_of_owner(target)
         if conn is None:
             log.debug('send_to %s: conn gone, drop %r', target,
                       str(msg.get('event', '')))
@@ -298,7 +345,7 @@ class Kernel:
                 {'name': name, 'hub_id': r.owner,
                  'is_passive': {'flag': r.is_passive, 'kwargs': r.passive_kwargs,
                                 'priority': r.passive_priority},
-                 'meta': r.meta}
+                 'modules': list(r.modules), 'meta': r.meta}
                 for name, r in self.routes.items()]}
         return {}
 
@@ -386,6 +433,13 @@ class Kernel:
     def _remove_node(self, rid: int) -> None:
         n = self.nodes.pop(rid, None)
         if n is not None:
+            # 不变量: 节点只能经停路径("先子后父")离开 nodes 表. 有活子还留
+            # 在这儿 = 有人绕过了 _stop_node/_settle_local, 子会成孤儿(仍在
+            # 跑, 但父链已断, 谁都找不到它们). 记一条 error 留线索.
+            if n.children:
+                log.error('node %s removed with %d live child(ren); '
+                          'teardown bypassed the stop path', n.cmd,
+                          len(n.children))
             # 兜底终止帧(conn 断开等 stop 路径未覆盖的删除;幂等)
             self._emit_lifecycle_stop('stopped', n)
             if n.parent is not None:
@@ -441,7 +495,13 @@ class Kernel:
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(n.stopped_fut), timeout=self.STOP_TIMEOUT)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
+                except asyncio.TimeoutError:
+                    # 谁没回就是谁在把关停时间拖长: 退出时用户只看到"转了
+                    # 十秒", 没有名字就只能猜.
+                    log.warning('stop %s: no lifecycle.stopped in %.1fs, '
+                                'giving up (host %r did not confirm)',
+                                cmd, self.STOP_TIMEOUT, n.owner)
+                except asyncio.CancelledError:
                     pass
                 while task.cancelling() < pending_cancels:
                     task.cancel()
@@ -451,25 +511,82 @@ class Kernel:
 
     # --- stop 级联(对齐 Go shell.stop)---
 
-    async def _stop_node(self, n: Node, *, cascade: bool, force_by: int) -> None:
-        """停 n:先递归级联停子,再停自己("父必须等子")."""
+    async def _stop_node(self, n: Node, *, cascade: bool, force_by: int,
+                         during_shutdown: bool = False) -> None:
+        """停 n:先递归级联停子,再停自己("父必须等子").
+
+        兄弟之间没有先后要求 ---- 并行停: 每个子都在等自己的 lifecycle.stopped
+        回报, 串行等于把 N 份等待相加, 退出时用户看到的就是"按了 Ctrl+C 却
+        还在转", 于是一路再按(把关停劈断)。父仍然等全部子停完才动。
+
+        宿主已失联的节点(``_conn_of_owner`` 查不到)不再下发 stop —— 命令
+        无处可发, 只能按"对端已自行终止"本地结算(``_settle_local``)。递归在
+        判定之前: 它的子可能属于别的活着的 hub(跨 hub 父子), 那些要照常
+        下发 stop, 否则就成孤儿。
+
+        ``during_shutdown`` 只属于 ``Kernel.stop()`` 并递归传给子节点。存活
+        远程 hub 只有在该语境才直接结算投影；正常显式 stop、reload、抢占
+        都必须下发 lifecycle.stop 并等待 stopped，否则远端仍在跑而父侧却
+        收到 DISCONNECTED。
+        """
         if cascade:
             if n.stopping:
                 return
             n.stopping = True
             if force_by:
-                n.stop_reason = 'force'
+                n.stop_reason = TerminationReason.PREEMPTED
                 n.stop_by = force_by
 
-        for c in list(n.children):
-            await self._stop_node(c, cascade=True, force_by=force_by)
+        kids = list(n.children)
+        if kids:
+            results = await asyncio.gather(
+                *(self._stop_node(c, cascade=True, force_by=force_by,
+                                  during_shutdown=during_shutdown)
+                  for c in kids),
+                return_exceptions=True)
+            for c, r in zip(kids, results):
+                if isinstance(r, BaseException):
+                    log.error('stop child %s failed: %r', c.cmd, r)
+
+        conn = self._conn_of_owner(n.owner)
+        if conn is None:
+            log.info('🪦 settle %s (hub %r gone)', n.cmd, n.owner)
+            self._settle_local(
+                n, reason=TerminationReason.DISCONNECTED,
+                error=(f"routine {n.cmd.name} host disconnected: "
+                       f"hub '{n.owner}' down"))
+            return
+
+        if during_shutdown and not conn.local:
+            # 仅 kernel 自身关停:跨进程 hub 的实例是它的, 不是 kernel 的:
+            # 它自己有一套完整的自清路径(transport 断 → hub.handle_peer_down
+            # → lifecycle.stop_all_local,
+            # stop hook 与 main task 照跑)。kernel 在这里只结算自己的投影
+            # ——nodes 表、body task、路由、在途调用, 全在 kernel 内存里, 只有
+            # kernel 能收。
+            # 不发 lifecycle.stop、不等确认: 通道一会儿就随 kernel 一起关掉,
+            # 等来的只会是退出日志里的假超时(而真卡住的节点会被它淹没)。
+            log.info('🤝 settle %s (hub %r 是独立进程, 断链后自行收摊)',
+                     n.cmd, n.owner)
+            self._settle_local(
+                n, reason=TerminationReason.DISCONNECTED,
+                error=(f"routine {n.cmd.name} host is a separate process: "
+                       f"hub '{n.owner}' cleans up on peer down"))
+            # 结算只解 future, 真要等 body 退出还得等一次(它收到 stopped 才收尾)。
+            # 这不是"等确认", 等的是 kernel 自己的 task 结束 —— 不等就留着
+            # pending task 到循环关闭, 正是本次要消灭的那行报错。
+            t0 = time.monotonic()
+            await n.cmd.wait()
+            self._log_slow_stop(n, t0)
+            return
 
         if n.cmd.state == State.CREATED:
             # created 态(已 create 未 start):发 destroy 让 hub 销毁 instance
             # (先发再删: 发给 node owner, 删后 owner 仍可查----但保持先发
             # 再删的顺序与 Go sendDestroy 一致)
             log.info('🗑️ %s destroyed (created, cascade=%s)', n.cmd, cascade)
-            self._emit_lifecycle_stop('destroyed', n)
+            self._emit_lifecycle_stop(
+                'destroyed', n, reason=TerminationReason.DESTROYED.value)
             self._unsubscribe_rid(str(n.cmd.id))
             self._send_to(n.owner, {'event': LIFECYCLE_DESTROY,
                                     'id': str(n.cmd.id)})
@@ -479,7 +596,7 @@ class Kernel:
             # 之前(node 带 parent).
             self._relay_to_parent(n.cmd.id, {
                 'event': LIFECYCLE_STOPPED, 'id': str(n.cmd.id),
-                'reason': ControlDoneReason.STOP.value,
+                'reason': TerminationReason.DESTROYED.value,
             })
             self._remove_node(n.cmd.id)
             return
@@ -488,13 +605,66 @@ class Kernel:
             tag = ' (force, cascade)' if force_by else ' (cascade)'
             log.info('🛑 stop %s%s', n.cmd, tag)
         n.stopping = True
+        t0 = time.monotonic()
         if n.stopped_fut.done():
             # 已回报 stopped(自然终止路径):body 在收尾,等它退出即可,
             # 不要 cancel(否则多发一次 lifecycle.stop).
             await n.cmd.wait()
         else:
             await n.cmd.stop()  # cancel body → 发 lifecycle.stop → 等 stopped → release
+        self._log_slow_stop(n, t0)
         self._remove_node(n.cmd.id)
+
+    def _log_slow_stop(self, n: Node, t0: float) -> None:
+        """停得慢的点名(≥0.5s). "关停完成 (4.0s)" 若没有名字, 只能靠猜
+        —— 退出耗时几乎全是某一个 routine 的 stop hook 在等. 阈值取 0.5s:
+        低于它的都是调度噪音, 常驻 routine 关停本该是毫秒级."""
+        spent = time.monotonic() - t0
+        if spent >= 0.5:
+            log.info('⌛ %s 停用了 %.1fs (host %r)', n.cmd, spent, n.owner)
+
+    def _settle_local(self, n: Node, *, reason: TerminationReason,
+                      error: str) -> None:
+        """宿主失联节点的本地结算:按"对端已终止"走完正常停止的状态迁移.
+
+        与 ``_on_lifecycle_stopped`` 同一种收尾(解 created/stopped future、
+        发终止帧、中转父、摘节点、还模块), 区别只有一点:不等对端回报 ——
+        对端已经不在了, 等就是白等 STOP_TIMEOUT, 子节点也跟着全卡住.
+
+        调用前提: ``n.children`` 已全部结算(``_stop_node`` 的先子后父保证),
+        否则这里摘掉父链会把子变成孤儿.
+        """
+        rid = n.cmd.id
+        by = n.owner if reason is TerminationReason.DISCONNECTED else None
+        if not n.created_fut.done():
+            n.created_fut.set_result(CreatedResult(error=error))
+        if not n.stopped_fut.done():
+            n.stopped_fut.set_result({
+                'event': LIFECYCLE_STOPPED, 'reason': reason.value,
+                'error': error, 'by': by})
+        self._emit_lifecycle_stop('stopped', n, reason=reason.value, by=by)
+        self._unsubscribe_rid(str(rid))   # 失败该节点名下全部在途调用
+        if n.parent is not None:
+            # 中转必须在 remove 之前:父侧 handle 据此收尾(父可能在别的 hub)。
+            self._send_to(n.parent.owner, {
+                'event': LIFECYCLE_STOPPED, 'id': str(rid),
+                'reason': reason.value, 'error': error, 'by': by})
+        self._remove_node(rid)
+        self.tree.release(rid)
+
+    async def _reap_dead(self, nodes: List[Node]) -> None:
+        """owner 断线的收尾(``drop_conn`` 的异步尾): 逐个走停路径.
+
+        ``drop_conn`` 是同步回调(grpc stream 收尾), 而停级联要 await 活着的
+        子节点回报, 所以挪到这里。节点可能已被前面的级联带走, 逐个复查。
+        """
+        for n in nodes:
+            if self.nodes.get(n.cmd.id) is None:
+                continue
+            try:
+                await self._stop_node(n, cascade=True, force_by=0)
+            except Exception:
+                log.exception('reap %s failed', n.cmd)
 
     async def _on_terminated(self, rid: int) -> None:
         """自然终止(lifecycle.stopped 且非显式 stop 接管):级联停子 + 清 node."""
@@ -566,8 +736,8 @@ class Kernel:
     def _send_stop(self, n: Node) -> None:
         """发 lifecycle.stop 给 node owner(对齐 Go sendStop)."""
         msg: Dict[str, Any] = {'event': LIFECYCLE_STOP, 'id': str(n.cmd.id)}
-        if n.stop_reason:
-            msg['reason'] = n.stop_reason
+        if n.stop_reason is not None:
+            msg['reason'] = n.stop_reason.value
             if n.stop_by:
                 msg['by'] = str(n.stop_by)
         self._send_to(n.owner, msg)
@@ -684,7 +854,7 @@ class Kernel:
         # spawn 独立 task, 不堵 dispatch 队列: _on_terminated 级联停子要等
         # child 的 stopped 消息, 而那消息正排在本队列里 ---- 内联 await 即
         # 自死锁(STOP_TIMEOUT=10s 兜底解围, 表现为方向二 +10s 尾延迟).
-        asyncio.create_task(self._on_terminated(rid))
+        self._spawn(self._on_terminated(rid))
 
     async def _on_pubsub_subscribe(self, msg: Dict[str, Any],
                                    source: str) -> None:
@@ -816,6 +986,14 @@ class Kernel:
 
     def _cleanup_failed_start(self, child_id: int) -> None:
         rid = str(child_id)
+        n = self.nodes.get(child_id)
+        # created 态失败是**正常**路径(被拒/装配中途报错), 但一个已经
+        # STARTING/RUNNING 的节点被这条清理路径摘掉, 说明有人绕过了停路径 ——
+        # 那是一行日志都没有的消失, 事后只能看着"not found"猜它是谁停的.
+        if n is not None and n.cmd.state not in (State.CREATED,):
+            log.warning('node %s (state=%s) removed via cleanup path, '
+                        'not a stop ---- 有活实例被绕过停路径摘掉了',
+                        n.cmd, n.cmd.state.value)
         self._unsubscribe_rid(rid)
         self._remove_node(child_id)
 
@@ -852,7 +1030,7 @@ class Kernel:
             # destroy ack 会永久挂起. relay 须在 remove 之前(node 带 parent).
             self._relay_to_parent(child_id, {
                 'event': LIFECYCLE_STOPPED, 'id': str(child_id),
-                'reason': ControlDoneReason.DESTROYED.value,
+                'reason': TerminationReason.DESTROYED.value,
             })
             self._remove_node(child_id)
             log.info('↩️ destroy %s', n.cmd)
@@ -935,7 +1113,7 @@ class Kernel:
     async def _evict_lower_holders(self, n: Node, modules: List[str],
                                    priority: int, ce: ConflictError) -> None:
         """优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 routine
-        才逐个 cascade stop(reason='force')后返回;存在 >= 本优先级的 holder
+        才逐个 cascade stop(reason=PREEMPTED)后返回;存在 >= 本优先级的 holder
         时不驱逐任何节点, 直接抛原 ConflictError(平级不抢).
 
         modules 是要清场的模块集(start 裁决传 declared, acquire 传目标 modules).
@@ -1194,6 +1372,7 @@ class Kernel:
                 passive_kwargs=ip.get('kwargs') or {},
                 passive_priority=_passive_priority(ip),
                 meta=item.get('meta') or {},
+                modules=[str(m) for m in (item.get('modules') or [])],
                 owner=hub_id)
             registered.append(name)
         self._send_to(source, {'event': CATALOG_PUSHED, 'req_id': req_id,
@@ -1273,6 +1452,7 @@ class Kernel:
             passive_kwargs=ip.get('kwargs') or {},
             passive_priority=_passive_priority(ip),
             meta=msg.get('meta') or {},
+            modules=[str(m) for m in (msg.get('modules') or [])],
             owner=self._hub_of(source))
         # 回执必须先于 auto-start 的 lifecycle.created 发出(对齐 Go
         # handleCatalogRegister:先 sendConn 再 go AutoStartPassive).
@@ -1300,6 +1480,7 @@ class Kernel:
             passive_kwargs=ip.get('kwargs') or {},
             passive_priority=_passive_priority(ip),
             meta=msg.get('meta') or {},
+            modules=[str(m) for m in (msg.get('modules') or [])],
             owner=self._hub_of(source))
         # 回执先于 auto-start 的 created(同 register 语义).
         self._send_to(source, {'event': CATALOG_RELOADED, 'req_id': req_id,

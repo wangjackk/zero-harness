@@ -23,7 +23,9 @@ import { setupLogger } from 'routine-ts/logger'
 
 import { getSharedModels, resolveModelRef, type ModelLike, type SharedModels } from '../_core/modelRuntime'
 import { registerWithBridge } from '../_core/bridge'
-import { USER_SOURCE, wrapFrom, PRIORITY_HIGH, splitContent } from '../_core/messaging'
+import {
+  USER_SOURCE, wrapFrom, PRIORITY_HIGH, splitContent, toFilesRef,
+} from '../_core/messaging'
 import { AGENT_ID_KEY } from '../_core/paths'
 import { getMemory } from './memory'
 import { parseXmlToolCalls } from './parser'
@@ -226,6 +228,13 @@ export class XmlAgent extends Routine {
     const images: string[] = Array.isArray(data?.images) ? data.images : []
     if (!text && !images.length) return
     const fromAgent = String(data?.from || USER_SOURCE)
+    // 收到即播报 (与来源无关), 前端只据此渲染, 不再本地补气泡.
+    // 播报失败只记日志, 不能连累后面的入库与 react.
+    try {
+      await this.emitIncomingMessage(text, fromAgent, images)
+    } catch (exc: any) {
+      log.warning(`emit incoming_message failed: ${exc?.message ?? exc}`)
+    }
     await this._eventLock.run(async () => {
       this._epoch += 1
       await this._cancelReact('user_input')
@@ -233,9 +242,6 @@ export class XmlAgent extends Routine {
       await this._stopSpeak()
       const content = this._storeIncoming(text, images, fromAgent)
       log.info(`epoch -> ${this._epoch} (user_input): ${content.slice(0, 80)}`)
-      if (fromAgent !== USER_SOURCE) {
-        await this.emitIncomingMessage(content, fromAgent)
-      }
       this._startReact(this._epoch)
     })
   }
@@ -739,8 +745,17 @@ export class XmlAgent extends Routine {
     await this.publish('assistant_output', data, this._agentId)
   }
 
-  async emitIncomingMessage(text: string, fromAgent: string): Promise<void> {
-    const data = { text, from: fromAgent, agent_id: this._agentId }
+  /** 播报 agent 来源的入站消息 (user 消息由发起方自己渲染, 不走这).
+   *  images 是磁盘路径, 回显前转 /files/<name> 引用 ---- 前端 img 只认
+   *  web_server 的 /files 路由. */
+  async emitIncomingMessage(
+    text: string, fromAgent: string, images: string[] = [],
+  ): Promise<void> {
+    const data: Record<string, any> = {
+      text, from: fromAgent, agent_id: this._agentId,
+    }
+    const refs = images.map(p => toFilesRef(String(p))).filter(Boolean)
+    if (refs.length) data.images = refs
     await this.publish('incoming_message', data)
     await this.publish('incoming_message', data, this._agentId)
   }
@@ -898,8 +913,10 @@ function fmtDefault(v: any): string {
 }
 
 /** 工具执行结果 -> [feedback] 条目 (content 约定: 带 content 键的只回它的值).
- * read_image 特判: result 里的 images (本地路径列表) 提到条目上, 随 [feedback]
- * 合并成一条多模态消息 (文本 + 图) 落库; 模型不支持读图时组装侧剥掉. */
+ * result 里的 images (本地路径列表) 提到条目上, 随 [feedback] 合并成一条
+ * 多模态消息 (文本 + 图) 落库; 模型不支持读图时组装侧剥掉.
+ * 不限于 read_image: 远端 hub 的截图由 RunRoutine (py 侧) 把 b64 落盘后挂
+ * images, 也靠这条进模型. */
 function extractFeedbackItems(resultsRaw: Array<{
   name: string; result: any; error: string | null; input: Record<string, any> | null
 }>): FeedbackItem[] {
@@ -913,7 +930,7 @@ function extractFeedbackItems(resultsRaw: Array<{
       isError = result !== null && result !== undefined
     }
     let images: string[] = []
-    if (name === 'read_image' && result !== null && typeof result === 'object') {
+    if (result !== null && typeof result === 'object') {
       const raw = (result as any).images
       if (Array.isArray(raw)) {
         images = raw.map((p: unknown) => String(p)).filter(Boolean)

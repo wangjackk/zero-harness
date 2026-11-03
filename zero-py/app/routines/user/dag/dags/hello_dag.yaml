@@ -1,0 +1,47 @@
+# 示例 DAG:inputs 声明 + 顺序/并行 + 数据流
+#
+# 执行顺序:
+#   fetch_a  ──┐
+#              ├──► merge  ──► summary
+#   fetch_b  ──┘
+#
+# push('run_dag', {'dag': 'hello_dag', 'city_a': '广州', 'city_b': '深圳'})
+
+name: hello_dag
+description: 演示 DAG inputs/顺序/并行/数据流
+
+inputs:
+  - name: city_a
+    type: str
+    desc: 第一个查询城市
+    default: 北京
+  - name: city_b
+    type: str
+    desc: 第二个查询城市
+    default: 上海
+
+nodes:
+  - id: fetch_a
+    routine: query_weather
+    inputs:
+      city: "$WI.city_a"
+
+  - id: fetch_b
+    routine: query_weather
+    inputs:
+      city: "$WI.city_b"
+
+  - id: merge
+    routine: merge_weather
+    depends_on: [fetch_a, fetch_b]
+    inputs:
+      a: "$fetch_a.output"
+      b: "$fetch_b.output"
+
+  - id: summary
+    routine: summary_weather
+    depends_on: [merge]
+    inputs:
+      data: "$merge.output"
+
+outputs: summary

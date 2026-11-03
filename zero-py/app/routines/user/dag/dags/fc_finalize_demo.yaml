@@ -1,0 +1,56 @@
+# 示例 DAG:用 run_llm 作为最后一环,LLM 主动调 submit_result,人工审批可拒绝重来
+#
+# 执行顺序:
+#   fetch_a ──┐
+#             ├──► finalize(LLM 分析 → submit_result → 人工 approve/reject)
+#   fetch_b ──┘
+#
+# require_approval: true  →  弹出 Approve/Reject,拒绝可附带理由,LLM 重做
+
+name: fc_finalize_demo
+description: 演示 run_llm 作为 DAG 最后一环,通过 submit_result 工具显式提交结果
+
+inputs:
+  - name: city_a
+    type: str
+    desc: 第一个城市
+    default: 北京
+  - name: city_b
+    type: str
+    desc: 第二个城市
+    default: 上海
+
+nodes:
+  - id: fetch_a
+    routine: query_weather
+    inputs:
+      city: "$WI.city_a"
+
+  - id: fetch_b
+    routine: query_weather
+    inputs:
+      city: "$WI.city_b"
+
+  - id: finalize
+    routine: run_llm
+    depends_on: [fetch_a, fetch_b]
+    inputs:
+      require_approval: true
+      instructions: |
+        你是一个天气分析助手.
+        完成分析后,调用 submit_result 工具提交结果:
+          content: 详细分析报告
+          summary: 一句话摘要
+      prompt: |
+        已获取两城市天气:
+
+        【$WI.city_a】
+        $fetch_a.output
+
+        【$WI.city_b】
+        $fetch_b.output
+
+        请对比分析,完成后调用 submit_result 提交.
+
+outputs:
+  result: finalize

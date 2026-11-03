@@ -12,21 +12,11 @@
  */
 import { Deferred, isAsyncIterable, withTimeout } from './async'
 import { TimeoutErr } from './errors'
-import { ControlDoneReason, type Msg, type Payload } from './protocol'
+import { TerminationReason, terminationReasonFromWire, type Msg, type Payload } from './protocol'
 import type { Routine, RoutineClass } from './routine'
 import { RunContext } from './ctx'
 import type { RoutineHub } from './hub'
 import type { ServerRuntime } from './runtime'
-
-/** onStopped reason 字符串 → wire enum 映射. */
-const REASON_TO_ENUM: Record<string, string> = {
-  auto: ControlDoneReason.AUTO,
-  stop: ControlDoneReason.STOP,
-  destroyed: ControlDoneReason.DESTROYED,
-  error: ControlDoneReason.ERROR,
-  cancel: ControlDoneReason.CANCEL,
-  force: ControlDoneReason.FORCE,
-}
 
 export class LifecycleManager {
   static STOP_TIMEOUT = 3.0
@@ -34,14 +24,14 @@ export class LifecycleManager {
   constructor(private hub: RoutineHub, private runtime: ServerRuntime) {}
 
   async sendStopped(rid: string, opts: {
-    reason: string; instance?: Routine | null
-    result?: any; error?: string | null
+    reason: TerminationReason; instance?: Routine | null
+    result?: any; error?: string | null; by?: string; detail?: string
   }): Promise<void> {
-    const wireReason = REASON_TO_ENUM[opts.reason] ?? ControlDoneReason.UNKNOWN
     // 幂等守卫:runner 与 stopRunner 并发都调,靠 instance 上的 _stoppedSent
     // 标志保证只发一次.instance=null(routine 未找到,一次性发,无竞态)跳过守卫.
     if (opts.instance && !opts.instance._markStoppedSent()) return
-    await this.hub.sendLifecycleStopped(rid, wireReason, opts.result, opts.error ?? null)
+    await this.hub.sendLifecycleStopped(
+      rid, opts.reason, opts.result, opts.error ?? null, opts.by ?? '', opts.detail ?? '')
   }
 
   cleanup(rid: string): void {
@@ -104,7 +94,7 @@ export class LifecycleManager {
     const cls = this.runtime.routines.getRoutine(name)
     if (!cls) {
       this.runtime.logger.error(`routine not found: ${name}#${rid}`)
-      await this.sendStopped(rid, { reason: 'error' })
+      await this.sendStopped(rid, { reason: TerminationReason.FAILED })
       return
     }
 
@@ -167,15 +157,19 @@ export class LifecycleManager {
           }
         } catch (exc: any) {
           this.runtime.logger.error(`${name}#${rid} failed: ${exc?.stack ?? exc}`)
-          await instance.onStopped('error', undefined, String(exc))
-          await this.sendStopped(rid, { instance, reason: 'error', error: String(exc) })
+          await instance.onStopped(TerminationReason.FAILED, undefined, '', String(exc))
+          await this.sendStopped(rid, {
+            instance, reason: TerminationReason.FAILED, error: String(exc), detail: String(exc),
+          })
           this.cleanup(rid)
           return
         }
-        const reason = instance.isForceStop() ? 'force'
-          : instance.isStopRequested() ? 'stop' : 'auto'
-        await instance.onStopped(reason, result)
-        await this.sendStopped(rid, { instance, reason, result })
+        const reason = instance.isStopRequested()
+          ? instance.stopReason() : TerminationReason.COMPLETED
+        const by = instance.stopByRid()
+        const detail = reason === TerminationReason.PREEMPTED && by ? `evicted by ${by}` : ''
+        await instance.onStopped(reason, result, by, detail)
+        await this.sendStopped(rid, { instance, reason, result, by, detail })
         this.cleanup(rid)
       } finally {
         done.resolve()
@@ -218,8 +212,10 @@ export class LifecycleManager {
         this.runtime.logger.error(`${instance.name}#${rid} destroy: destroy() failed: ${e?.stack ?? e}`)
       }
     }
-    await instance.onStopped('destroyed', destroyResult)
-    await this.sendStopped(rid, { instance, reason: 'destroyed', result: destroyResult })
+    await instance.onStopped(TerminationReason.DESTROYED, destroyResult)
+    await this.sendStopped(rid, {
+      instance, reason: TerminationReason.DESTROYED, result: destroyResult,
+    })
     this.cleanup(rid)
   }
 
@@ -227,9 +223,9 @@ export class LifecycleManager {
    * notifyKernel=false 供 transport 断连本地销毁(kernel 世界已死,
    * stopped 回报无意义). */
   private async gracefulStop(rid: string, instance: Routine,
-    force = false, by = '', notifyKernel = true): Promise<void> {
+    reason: TerminationReason = TerminationReason.STOPPED, by = '', notifyKernel = true): Promise<void> {
     try {
-      if (!instance.isStopRequested()) instance._requestStop(force, by)
+      if (!instance.isStopRequested()) instance._requestStop(reason, by)
       let stopResult: any = undefined
       try {
         stopResult = await withTimeout(instance.stop(), LifecycleManager.STOP_TIMEOUT * 1000, 'stop()')
@@ -258,11 +254,15 @@ export class LifecycleManager {
           }
         }
       }
-      const onReason = instance.isForceStop() ? 'force' : 'stop'
-      const onDetail = instance.isForceStop() ? `evicted by ${instance.stopByRid()}` : ''
-      await instance.onStopped(onReason, stopResult, onDetail)
+      const onReason = instance.stopReason()
+      const onBy = instance.stopByRid()
+      const onDetail = onReason === TerminationReason.PREEMPTED && onBy
+        ? `evicted by ${onBy}` : ''
+      await instance.onStopped(onReason, stopResult, onBy, onDetail)
       if (notifyKernel) {
-        await this.sendStopped(rid, { instance, reason: onReason, result: stopResult })
+        await this.sendStopped(rid, {
+          instance, reason: onReason, result: stopResult, by: onBy, detail: onDetail,
+        })
       }
       this.cleanup(rid)
     } finally {
@@ -271,7 +271,7 @@ export class LifecycleManager {
   }
 
   /** lifecycle.stop(kernel→hub):graceful stop(stop hook → 等/超时 →
-   * stopped 回报).带 reason=force 时是驱逐,透传到 onStopped. */
+   * stopped 回报).PREEMPTED 带 by=驱逐者，透传到 onStopped。 */
   async handleStop(msg: Msg): Promise<void> {
     const rid = String(msg.id ?? '')
     const instance = this.runtime.runningInstances.get(rid)
@@ -285,10 +285,11 @@ export class LifecycleManager {
         `(in_progress=${instance.isStopInProgress()}, finalized=${instance.isStopFinalized()})`)
       return
     }
-    // force 驱逐:kernel 发 lifecycle.stop 带 reason="force" + by(evictor rid).
     const stopBy = String(msg.by ?? '')
-    const force = String(msg.reason ?? '') === 'force'
-    this.runtime.spawn(this.gracefulStop(rid, instance, force, stopBy))
+    const wireReason = terminationReasonFromWire(msg.reason)
+    const stopReason = wireReason === TerminationReason.UNKNOWN
+      ? TerminationReason.STOPPED : wireReason
+    this.runtime.spawn(this.gracefulStop(rid, instance, stopReason, stopBy))
   }
 
   /** transport 断连的本地全量销毁: 不区分 passive 一律停掉 ---- 老实例
@@ -305,7 +306,7 @@ export class LifecycleManager {
       if (!instance.beginStop()) continue
       // spawn 托管 unhandled; join 侧吞错(spawn wrapper 已记日志)
       ps.push(this.runtime.spawn(
-        this.gracefulStop(rid, instance, false, '', false)).catch(() => {}))
+        this.gracefulStop(rid, instance, TerminationReason.DISCONNECTED, 'host', false)).catch(() => {}))
     }
     await Promise.all(ps)
   }

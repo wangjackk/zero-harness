@@ -81,6 +81,9 @@ class CarMap(Routine):
     name = 'car/map'
     meta: ClassVar[Dict[str, Any]] = {
         'readonly': True,
+        # 查询类: 那句 content 里的 PNG 路径就是全部产出(details 进不了
+        # prompt) —— 不 observe 等于让它白画一张图, 见 status.py 同一处说明.
+        'observe': True,
         'description': (
             '获取小车地图(前端导航页同款渲染): 障碍橙 / 空闲亮白 / '
             '膨胀禁行带暗黄 / 未知深灰, 叠加区域矩形+名称+停泊点(青)与 '
@@ -130,10 +133,15 @@ class CarMap(Routine):
 
         path = os.path.join(tempfile.gettempdir(), 'hiwonder_map.png')
         out.save(path, 'PNG')
-        return CarMapOutput(
+        details = CarMapOutput(
             path=path, width=w, height=h,
             pose=None if pose is None else [pose[0], pose[1], pose[2]],
         ).model_dump()
+        # 模型读的那一行: 图在哪 + 有没有画出自己的位置(定位不可用时
+        # 图上没有绿色箭头, 不说清会让它以为车不在图上)
+        content = (f'地图已存 {path} ({w}x{h} 格, 5cm/格)'
+                   + ('' if pose is not None else ', 定位不可用: 图上没画当前位置'))
+        return {'content': content, 'details': details}
 
     async def _pose(self) -> Optional[Tuple[float, float, float]]:
         """AMCL 最新位姿 (x, y, yaw); 桥不在/导航栈未跑返回 None(地图照常渲染)."""

@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zero-harness · 万物皆 routine 拓扑</title>
+<style>
+  :root{
+    --ink:#1E293B; --muted:#64748B; --faint:#94A3B8; --line:#CBD5E1;
+    --bg:#FFFFFF; --panel:#F8FAFC;
+    --amber:#D97706; --violet:#7C3AED; --cyan:#0891B2; --blue:#2563EB;
+    --emerald:#059669; --rose:#DB2777; --slate:#475569; --teal:#0D9488;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:'PingFang SC','Microsoft YaHei','Segoe UI',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1780px;margin:0 auto;padding:26px 28px 44px}
+  header h1{font-size:20px;margin:0 0 7px;letter-spacing:.2px}
+  header h1 small{font-weight:400;font-size:12.5px;color:var(--muted);margin-left:10px}
+  .lede{font-size:13.5px;line-height:1.64;color:#334155;max-width:1120px;margin:0 0 14px}
+  .lede b{color:var(--ink)}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+  .stat{display:flex;align-items:baseline;gap:6px;border:1px solid var(--line);
+    border-radius:999px;padding:4px 12px;font-size:12px;color:var(--muted);background:#fff}
+  .stat b{font-size:14px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .stat .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:22px;align-items:start}
+  @media (max-width:1200px){ main{grid-template-columns:1fr} }
+
+  #stage{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
+  #stage svg{display:block;width:100%;height:auto}
+
+  aside{position:sticky;top:18px;display:flex;flex-direction:column;gap:12px}
+  .card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:13px 14px}
+  .card h3{margin:0 0 9px;font-size:11.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .card p{margin:0;font-size:12.5px;line-height:1.66;color:#334155}
+  #detail .nm{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;font-weight:700;color:var(--ink);
+    word-break:break-all;display:flex;align-items:center;gap:7px}
+  #detail .nm .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  #detail .own{font-size:11px;color:var(--muted);margin:4px 0 9px}
+  #detail .file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:var(--faint);
+    word-break:break-all;margin:0 0 10px;line-height:1.5}
+  #detail .d{font-size:12.5px;line-height:1.7;color:#334155;margin:0 0 10px}
+  #detail .why{font-size:12px;line-height:1.68;color:#1F2937;background:#fff;border:1px solid var(--line);
+    border-left:3px solid var(--amber);border-radius:6px;padding:9px 10px;margin:0}
+  #detail .why em{font-style:normal;color:#B45309;font-weight:700}
+  .legend{display:flex;flex-direction:column;gap:6px}
+  .lg{display:flex;align-items:center;gap:9px;font-size:12px;color:#334155;cursor:pointer;user-select:none;
+    padding:2px 0;transition:opacity .15s}
+  .lg.off{opacity:.32}
+  .lg svg{flex:0 0 34px}
+  .lg .cnt{margin-left:auto;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+  .rules{counter-reset:r;margin:0;padding:0}
+  .rules li{font-size:12.2px;line-height:1.6;color:#334155;margin:0 0 7px;padding-left:20px;position:relative;list-style:none}
+  .rules li:last-child{margin-bottom:0}
+  .rules li::before{counter-increment:r;content:counter(r);position:absolute;left:0;top:1.5px;width:14px;height:14px;
+    border-radius:50%;background:#E2E8F0;color:#475569;font-size:9.5px;font-weight:700;
+    display:grid;place-items:center}
+  .rules b{color:var(--ink)}
+  .rules code,.foot code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;background:#EDF2F7;
+    padding:1px 5px;border-radius:4px;color:#334155}
+  .foot{margin-top:22px;font-size:11.8px;line-height:1.72;color:var(--muted);max-width:1120px}
+  .foot b{color:#475569}
+
+  .chip{cursor:pointer}
+  .chip rect.body{transition:opacity .12s, stroke-width .12s}
+  .chip:hover rect.body{stroke-width:2.1}
+  .chip.dim{opacity:.26}
+  .chip.sel rect.body{stroke-width:2.1}
+  .edge{transition:opacity .15s}
+  .edge.hide{opacity:0 !important;pointer-events:none}
+  .edge.dim{opacity:.07}
+  text{font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>万物皆 routine <small>按两份真实清单画的：名字都能 grep 到，不是示意图</small></h1>
+  <p class="lede">
+    “万物皆 routine”不是“所有东西都写成函数”，而是：<b>agent、工具、技能库、车身、提示词、乃至框架自己的加载器和热重载器，
+    都在同一张注册表里，用同一个名字、同一套生命周期（create / start / stop）、同三种投递语义（call / req / publish）被调用。</b>
+    图里 <b id="chipcount">45</b> 个方块是 <b>123</b> 个注册名里的骨架（同名族折叠，标了 ×N）。点任意方块，看它落在哪个文件、
+    凭什么算 routine；把右边连线点亮/点灭，能单独看一条关系。
+  </p>
+  <div class="stats">
+    <span class="stat"><span class="dot" style="background:var(--blue)"></span>zero 进程 <b>82</b> 注册名</span>
+    <span class="stat"><span class="dot" style="background:var(--teal)"></span>moss 进程 <b>60</b> 注册名</span>
+    <span class="stat"><span class="dot" style="background:var(--violet)"></span>两边都有 <b>19</b></span>
+    <span class="stat">并集 <b>123</b> 个不同注册名</span>
+  </div>
+</header>
+
+<main>
+  <div id="stage"></div>
+
+  <aside>
+    <div class="card" id="detail"></div>
+
+    <div class="card">
+      <h3>连线语义（点一下可关掉）</h3>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="card">
+      <h3>判据：凭什么说它是 routine</h3>
+      <ol class="rules">
+        <li><b>有名字</b>：<code>name</code> 是类字段，注册名就是标签名（<code>car/move</code> → <code>&lt;car/move/&gt;</code>）</li>
+        <li><b>有 schema</b>：入参是 pydantic 模型，能力清单由它渲染，模型照着写标签</li>
+        <li><b>有生命周期</b>：create / start / stop / 驱逐；passive 的注册即拉起</li>
+        <li><b>同一条投递口</b>：别人用 <code>call</code>（父子实例）、<code>req</code>（p2p 事件）、<code>publish</code>（扇出）找它</li>
+        <li><b>同一处可见</b>：<code>routine/list</code> 能列出来，前端 <code>/run_routine</code> 能直接跑</li>
+      </ol>
+      <p style="margin-top:10px;color:var(--muted);font-size:11.6px">
+        五条缺一条就不算。所以 <b>memory 不是 routine</b>（见图中虚框反例），
+        而“把历史压成摘要”是（<code>xml_condenser_agent</code>）——
+        单元是动作，不是数据。
+      </p>
+    </div>
+  </aside>
+</main>
+
+<p class="foot">
+  <b>两条读图提示。</b>① 方块颜色 = 类别，右上小圆点 = 在哪个进程注册：<span style="color:var(--blue)">●</span> zero 独有、
+  <span style="color:var(--teal)">●</span> moss 独有、<span style="color:var(--violet)">●</span> 两边都有（19 个，多数是
+  <code>car/*</code>、<code>read_image</code>、<code>bus_listener</code> 这类“同一具身体的两个入口”）。
+  ② <code>×N</code> 是折叠掉的注册名个数，都是实数：<code>car/*</code> 14、<code>bb/*</code> 13、<code>skill/*</code> 8、
+  <code>ssh/*</code> 5、<code>chan/*</code> 5、控制原语 4、<code>web_*</code> 2。
+  <br>
+  <b>没画进来的条目</b>（不是遗漏，是重复形状）：<code>agent_hub</code> 的三个查询桥（types / running_agents / preset/*）、
+  <code>models</code> / <code>tree</code> / <code>presets</code> 这几个“事实源 hub”、<code>agent/rid</code> / <code>agent/state</code> / <code>agent/history</code>、
+  <code>xml/agent</code> 的六个管理动词（create / list / stop / resume / delete / set_routine_alias）——它们是同一张表里的条目，
+  全画进来这张图就退化成一份清单。
+  <br>
+  <b>没画的一类边：</b><code>publish</code> 扇出不产生 routine→routine 的固定连线（订阅表挂在 kernel 上，按 topic 动态 mount）。
+  画出来就是一团“谁都可能连谁”的噪声——它是投递语义，不是拓扑。同理 kernel 的模块树（<code>tree.json</code>）管“身体有哪些部位”，
+  和“能力有哪些名字”是两张表，别混。
+</p>
+
+</div>
+
+<script>
+/* ==================================================================
+   数据：注册名取自 app/routines.yaml（82）与 app/moss.yaml（60）
+   d = 职责（源码 description / 模块 docstring）
+   w = 为什么它也算 routine（只写最反直觉的那几个）
+   p = 进程归属 z=zero  m=moss  b=both  s=静态注册
+   ================================================================== */
+const BANDS = [
+  { id:'meta', no:'①', title:'元能力 · 系统自身', sub:'routine 管 routine', c:'amber',
+    chips:[
+      {n:'routines_loader', p:'s', f:'app/routines/loader.py',
+       d:'唯一静态注册的 passive routine。被 kernel 拉起后读清单、import、把其余全部注册进来，注册完自己退出。',
+       w:'引导器本身是 routine——整套系统没有“框架启动代码”，只有“第一个 routine”。'},
+      {n:'routines_watcher', p:'b', f:'app/routines/watcher.py',
+       d:'盯 routines.yaml 与源码 mtime，改完自动热重载（HMR），不用重启进程。',
+       w:'热重载不是宿主进程的特权，是一个能被 stop 掉的 routine。'},
+      {n:'routine/list', p:'z', f:'app/routines/user/routine/list.py',
+       d:'列出 routine：kind=registered（注册表）| running（活着的实例）。',
+       w:'“能力清单”这个查询本身也要先注册才能被查。'},
+      {n:'routine/doc', p:'b', f:'app/routines/user/routine/doc.py',
+       d:'读单个 routine 的 name / schema / doc —— 唯一事实源是 Routine 类的声明。'},
+      {n:'routine/reload', p:'z', f:'app/routines/user/routine/reload.py',
+       d:'强制重载并重注册 routine 或整个包；watcher 卡住时的逃生口。'},
+      {n:'routine/check_name', p:'z', f:'app/routines/user/routine/check_name.py',
+       d:'确认注册名是否可用。同名热重载会直接劫持路由，所以名字要先问。'},
+      {n:'evolve', p:'z', f:'app/routines/user/dynamic/evolve.py',
+       d:'自改闭环：备份 → 预检 → 等热重载真生效 → 跑断言，失败自动回滚并记台账。',
+       w:'改自己代码这件事，被做成了一个可调用、可回滚的 routine。'}
+    ]},
+
+  { id:'agent', no:'②', title:'Agent · 灵魂本体', sub:'连“谁在想”都是单元', c:'violet',
+    chips:[
+      {n:'user_agent', p:'z', f:'app/routines/user/user_agent.py',
+       d:'passive 常驻的身份 routine：前端消息按 X-Agent-Id 先解析到它的 rid。'},
+      {n:'world_agent', p:'z', f:'app/routines/user/world_agent.py',
+       d:'另一个常驻身份（世界侧）。与 user_agent 同构，只是身份不同。'},
+      {n:'xml/agent', p:'z', f:'app/routines/user/xml/agent/agent.py',
+       d:'精简 reactive agent：sqlite 记忆 + 每轮 push 一个 act，常驻对话。',
+       w:'agent 和工具是同一种东西，差别只在这一个会自己循环调别人。'},
+      {n:'xml/agent/manager', p:'z', f:'app/routines/user/xml/agent/manager.py',
+       d:'实例管理器（passive 常驻）：create / list / stop / resume / delete / set_routine_alias。'},
+      {n:'mini_agent', p:'z', f:'app/routines/user/dynamic/mini_agent.py',
+       d:'轻量子 agent：给 task+role，它自己驱动 LLM 循环，需要时真调白名单里的 routine。'},
+      {n:'xml_condenser_agent', p:'z', f:'app/routines/user/agents/_core/condenser/routine.py',
+       d:'上下文压缩 agent：把长历史压成摘要。',
+       w:'“忘掉它”这个动作是可调度的；而“存着它”的那块存储不是（见反例）。'},
+      {n:'agent_hub', p:'z', f:'app/routines/user/agent_hub.py',
+       d:'agent 类型注册中心（passive 常驻 hub）：各类型 manager 启动时主动 register 提交 manifest。'},
+      {n:'ghost', p:'m', f:'app/routines/user/mossv2/ghost.py',
+       d:'身体与灵魂之间的 broker：收输入、派拍、发回执。',
+       w:'“躯干”不是内核对象，是一个能 routine/list 到的实例。'},
+      {n:'mindflow', p:'m', f:'app/routines/user/mossv2/mindflow.py',
+       d:'冲动仲裁：每一拍判“答不答、抢不抢、停不停”（强度衰减 + 优先级 + 挂账）。'},
+      {n:'moss', p:'m', f:'app/routines/user/mossv2/moss.py',
+       d:'moss.yaml 的装配根：把 mindflow / ghost / board / say / asr 装成一套灵魂（清单里必须排最后）。',
+       w:'“装配一整个 agent”这件事本身也是一次 routine 调用。'}
+    ]},
+
+  { id:'lang', no:'③', title:'编排与语言', sub:'解析器也是单元', c:'cyan',
+    chips:[
+      {n:'shell', p:'m', f:'app/routines/user/mossv2/shell.py',
+       d:'扫标签、按名字生成调用、容器自己 defer/release。文本到投递只在这里发生。',
+       w:'解析器不是框架内部件——它能被替换、被 reload，因为它是 routine。'},
+      {n:'code', p:'m', f:'app/routines/user/mossv2/commands/code/code.py',
+       d:'容器族第四种：body 是 Python 源码，跑在常驻 CodeKernel 里（容器在代码里不可用）。'},
+      {n:'all', p:'m', f:'app/routines/user/mossv2/container.py', d:'时序容器：body 里全部完成才继续本轨。'},
+      {n:'any', p:'m', f:'app/routines/user/mossv2/container.py', d:'时序容器：任一完成就继续，其余取消（竞速）。'},
+      {n:'loop', p:'m', f:'app/routines/user/mossv2/container.py', d:'循环容器：body 反复执行，直到被停。'},
+      {n:'chan/*', p:'m', x:5, f:'app/routines/user/mossv2/channel.py + commands/chan/',
+       d:'channel（动作串行轨道）+ create / delete / clear / status。默认只有 main 一条串行轨，开轨才有并行。',
+       w:'并行度是可被模型申请的，不是配置项。'},
+      {n:'控制原语', p:'m', x:4, f:'commands/control.py · notify.py · sleep.py · noop.py',
+       d:'interrupt（停身体，不回答）/ notify（申报登记，输了挂账）/ sleep（等）/ noop（占位对齐）。'}
+    ]},
+
+  { id:'tools', no:'④', title:'工具与技能', sub:'和 agent 同一张表', c:'blue',
+    chips:[
+      {n:'web_*', p:'z', x:2, f:'app/routines/user/agents/tools/remote/',
+       d:'web_search / web_fetch：检索与取页，结果为一段 tool result。'},
+      {n:'ssh/*', p:'z', x:5, f:'app/routines/user/agents/tools/remote/SshTool/',
+       d:'connect / exec / transfer / list / disconnect。远端是一等公民，不是本地 exec 的补丁。'},
+      {n:'ipython', p:'z', f:'app/routines/user/ipython/IPython.py',
+       d:'持久执行环境，变量跨轮存活——agent 的万能出口。',
+       w:'“万能出口”和“只能读一张图”的 read_image 平级：权限差别不靠类型，靠闸门。'},
+      {n:'read_image', p:'b', f:'app/routines/user/xml/read_image.py',
+       d:'把本地图片读成多模态载荷（images 随回执回到模型眼前）。'},
+      {n:'skill/*', p:'z', x:8, f:'app/routines/user/skill/',
+       d:'技能库：list 只给名字+简介，load 才把全文注入（Progressive Disclosure）；repo/* 是仓库增删拉。',
+       w:'“技能”不是框架概念，是这组 routine 的产物——加技能不用改框架，加 routine 就行。'},
+      {n:'screenshot', p:'z', f:'app/routines/user/dynamic/screenshot.py',
+       d:'截屏成一个文件，喂给 read_image 就是“看屏幕”。'},
+      {n:'approval_gate', p:'z', f:'app/routines/user/dynamic/approval_gate.py',
+       d:'危险操作的人类审批闸：阻塞问人，拒绝 / 超时一律 fail-closed。',
+       w:'把“提示词里的自觉”换成“必须经过的一次调用”。'}
+    ]},
+
+  { id:'body', no:'⑤', title:'身体与表达', sub:'动作、说话、画板', c:'emerald',
+    chips:[
+      {n:'say', p:'m', f:'app/routines/user/mossv2/commands/say.py', d:'说话（真声 / 静音按 key 选）。'},
+      {n:'ask', p:'z', f:'app/routines/user/ask.py',
+       d:'给用户发单选题 / 日期选择并阻塞等结果。',
+       w:'UI 交互也是 routine——所以“问一句”和“走一米”在调用侧没有区别。'},
+      {n:'show_image', p:'z', f:'app/routines/user/show_image.py', d:'本地图片经 WS 推到前端对话栏。'},
+      {n:'board', p:'m', f:'app/routines/user/mossv2/board/routine.py', d:'黑板器官的 routine 面（器官本身不在词表）。'},
+      {n:'bb/*', p:'m', x:13, f:'app/routines/user/mossv2/commands/board/',
+       d:'十三扇门：write / pixel / line / circle / ring / rect / poly / point / arrow / underline / erase / objects。',
+       w:'只有 write 与 pixel 收 body；黑板对错误全静默，报错全靠 routine。'},
+      {n:'car/*', p:'b', x:14, f:'app/routines/user/car/',
+       d:'move / turn / steer / shake / stop / status / where / map / navigate / navigate-manage / track / gaze / wake_track / snap。',
+       w:'10Hz 控制拍、代际互斥、零速保证都在这一层——身体不是被“驱动”的，是被“调用”的。'}
+    ]},
+
+  { id:'sense', no:'⑥', title:'感知与外部', sub:'进来的东西也是单元', c:'rose',
+    chips:[
+      {n:'asr', p:'m', f:'app/routines/user/mossv2/asr/routine.py',
+       d:'耳朵：音频流 → 文本 → moment，唯一出口是 mindflow.declare。'},
+      {n:'asr_mode', p:'m', f:'app/routines/user/mossv2/commands/asr_mode.py', d:'麦克风开关策略：ptt / always（不跨重启）。'},
+      {n:'key_listen', p:'m', f:'app/routines/user/mossv2/key_listen.py', d:'全局键监听（pynput）——ptt 的物理入口。'},
+      {n:'bus_listener', p:'b', f:'app/routines/user/device_bus/listener.py',
+       d:'设备事件总线：低频 evt 订阅 → pubsub voice/vision；把 pose、snap 这类语义 req 转成 vision cmd。',
+       w:'连“总线”都只是个常驻 routine，所以别的 routine 能 req 它、能 reload 它。'},
+      {n:'ros_bridge', p:'b', f:'app/routines/user/hiwonder/ros_bridge.py',
+       d:'感知桥：动态订阅 ROS 话题 → 同名 pubsub，也能反向 publish。'}
+    ]},
+
+  { id:'prompt', no:'⑦', title:'提示词', sub:'不是常量，是三段', c:'slate',
+    chips:[
+      {n:'prompt/persona', p:'m', f:'app/routines/user/mossv2/prompt/persona.py', d:'人格与交互礼仪片段。'},
+      {n:'prompt/protocol', p:'m', f:'app/routines/user/mossv2/prompt/protocol.py', d:'CTML 协议片段：语法 / 轨道 / 边界 / 观测。'},
+      {n:'prompt/capability', p:'m', f:'app/routines/user/mossv2/prompt/capability.py',
+       d:'能力面：词表快照按身体分组渲染，装配时生成。',
+       w:'模型读到的“我能做什么”是这段 routine 的输出——能力面与执行面同源，不会各说各话。'}
+    ]}
+];
+
+const EDGES = [
+  {f:'@front', t:'@kernel', k:'http',  label:'HTTP /run_routine · WS'},
+  {f:'@kernel', t:'@plane', k:'route', label:'投递：create / start / stop · call / req / publish'},
+  {f:'@bracket', t:'@hw', k:'route', label:'cmd_vel · ROS · 音频流', vx:true},
+  {f:'xml/agent', t:'ipython', k:'call'},
+  {f:'xml/agent', t:'car/*',   k:'call'},
+  {f:'car/*',     t:'bus_listener', k:'req', label:'req snap'},
+  {f:'board',     t:'bb/*',    k:'org'},
+  {f:'@inject',   t:'@inject', k:'inject', label:'三段拼成 system prompt', vx:true},
+  {f:'@boot',     t:'@boot',   k:'boot',   label:'自举环：注册 · 热重载 · 自改', vx:true}
+];
+
+const KIND = {
+  http:  {color:'#475569', dash:'',      label:'HTTP / WS 前门'},
+  route: {color:'#334155', dash:'',      label:'kernel 投递 / 设备回路'},
+  call:  {color:'#64748B', dash:'',      label:'call：父子实例（组合）'},
+  req:   {color:'#0891B2', dash:'5 4',   label:'req：p2p 事件请求'},
+  org:   {color:'#059669', dash:'',      label:'器官 ↔ 它的门'},
+  inject:{color:'#475569', dash:'1.5 4', label:'注入 prompt'},
+  boot:  {color:'#D97706', dash:'6 4',   label:'自举环（注册 / 热重载 / 自改）'}
+};
+
+const BAND_C = {
+  amber:  {stroke:'#D97706', bg:'#FFFCF5', chip:'#FEF3C7'},
+  violet: {stroke:'#7C3AED', bg:'#FCFAFF', chip:'#F3E8FF'},
+  cyan:   {stroke:'#0891B2', bg:'#F8FDFF', chip:'#E0F2FE'},
+  blue:   {stroke:'#2563EB', bg:'#F8FAFF', chip:'#DBEAFE'},
+  emerald:{stroke:'#059669', bg:'#F6FEFB', chip:'#D1FAE5'},
+  rose:   {stroke:'#DB2777', bg:'#FFF8FA', chip:'#FCE7F3'},
+  slate:  {stroke:'#475569', bg:'#FBFCFD', chip:'#E9EEF5'}
+};
+const P_C = {z:'#2563EB', m:'#0D9488', b:'#7C3AED', s:'#94A3B8'};
+const P_T = {z:'zero 进程（app/routines.yaml）', m:'moss 进程（app/moss.yaml）',
+             b:'两个进程里都有（同名注册）', s:'静态注册（kernel 启动时）'};
+
+/* ------------------------------ 布局 ------------------------------ */
+const W = 1380, PAD = 66, LABEL_W = 188;
+const CHIP_W = 132, CHIP_H = 26, GAP_X = 10, GAP_Y = 8;
+const HEAD_H = 28, BAND_PAD_B = 12, BAND_GAP = 9;
+const CHIP_X0 = PAD + LABEL_W;
+const CHIP_AREA = W - PAD - CHIP_X0;
+const PER_ROW = Math.floor((CHIP_AREA + GAP_X) / (CHIP_W + GAP_X));
+const VX_L = 30;            /* 左侧外部通道 x */
+const VX_R = W - 46;        /* 右侧外部通道 x */
+const VX_IN = PAD + LABEL_W - 22;  /* 平面内、标签与方块之间的竖向走廊 */
+
+const NS = 'http://www.w3.org/2000/svg';
+const el = (t, a = {}) => { const e = document.createElementNS(NS, t);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const tx = (x, y, s, a = {}) => { const t = el('text', Object.assign({x, y}, a));
+  t.textContent = s; return t; };
+
+const stage = document.getElementById('stage');
+const svg = el('svg', {viewBox:`0 0 ${W} 10`});
+stage.appendChild(svg);
+const defs = el('defs'); svg.appendChild(defs);
+for (const k in KIND) {
+  const m = el('marker', {id:'ar-'+k, viewBox:'0 0 8 8', refX:'7', refY:'4',
+    markerWidth:'6.5', markerHeight:'6.5', orient:'auto-start-reverse'});
+  m.appendChild(el('path', {d:'M0,1 L7,4 L0,7 z', fill:KIND[k].color}));
+  defs.appendChild(m);
+}
+
+/* 层次：平面外框 → 带底 → 连线 → 方块 → 顶部/底部方框（边要在带底之上、方块之下） */
+const gFrame = el('g'); svg.appendChild(gFrame);
+const gBand  = el('g'); svg.appendChild(gBand);
+const gEdge  = el('g'); svg.appendChild(gEdge);
+const gChip  = el('g'); svg.appendChild(gChip);
+const gBox   = el('g'); svg.appendChild(gBox);
+
+/* --- 顶部：前端 --- */
+const FRONT_Y = 20, FRONT_H = 52;
+const KERN_Y = 96, KERN_H = 64;
+{
+  const bw = 500, fx = (W - bw) / 2;
+  const g = el('g'); gBox.appendChild(g);
+  g.appendChild(el('rect', {x:fx, y:FRONT_Y, width:bw, height:FRONT_H, rx:10,
+    fill:'#F8FAFC', stroke:'#CBD5E1', 'stroke-width':1.4}));
+  g.appendChild(tx(W/2, FRONT_Y+22, '前端 · Web UI（Vue/TS）· 语音入口',
+    {'text-anchor':'middle', 'font-size':12.6, 'font-weight':700, fill:'#1E293B'}));
+  g.appendChild(tx(W/2, FRONT_Y+40, '它只会一个动词：跑一个 routine（POST /run_routine，名字走 body）',
+    {'text-anchor':'middle', 'font-size':10.9, fill:'#64748B'}));
+
+  const kx = 190, kw = W - 380;
+  const kg = el('g'); gBox.appendChild(kg);
+  kg.appendChild(el('rect', {x:kx, y:KERN_Y, width:kw, height:KERN_H, rx:10,
+    fill:'#EEF2F6', stroke:'#334155', 'stroke-width':1.8}));
+  kg.appendChild(tx(kx+18, KERN_Y+26, 'kernel · Go', {'font-size':13, 'font-weight':700, fill:'#0F172A'}));
+  kg.appendChild(tx(kx+18, KERN_Y+45, '做的事很少：实例表 · 模块树（身体部位）· 投递（call / req / publish）· 生命周期',
+    {'font-size':11, fill:'#475569'}));
+  kg.appendChild(tx(kx+kw-18, KERN_Y+26, '它不认识“agent”或“工具”', {'text-anchor':'end','font-size':10.9, fill:'#64748B'}));
+  kg.appendChild(tx(kx+kw-18, KERN_Y+45, '只认识“有名字、有 schema、可被调用”', {'text-anchor':'end','font-size':10.9, fill:'#64748B'}));
+}
+
+/* --- 平面（外框 + 七条带） --- */
+const PLANE_TOP = KERN_Y + KERN_H + 42;
+let y = PLANE_TOP;
+const geo = {}, bandGeo = {};
+const bandStart = [];
+
+for (const b of BANDS) {
+  const rows = Math.ceil(b.chips.length / PER_ROW);
+  const h = HEAD_H + rows * (CHIP_H + GAP_Y) - GAP_Y + BAND_PAD_B;
+  const col = BAND_C[b.c];
+
+  const g = el('g'); gBand.appendChild(g);
+  g.appendChild(el('rect', {x:PAD, y, width:W - PAD*2, height:h, rx:12,
+    fill:col.bg, stroke:col.stroke, 'stroke-width':1, opacity:.95}));
+  g.appendChild(el('rect', {x:PAD, y, width:4, height:h, rx:2, fill:col.stroke}));
+  g.appendChild(tx(PAD+17, y+18, b.no+' '+b.title, {'font-size':12.7, 'font-weight':700, fill:col.stroke}));
+  g.appendChild(tx(PAD+17, y+33, b.sub, {'font-size':10.6, fill:'#7C8798'}));
+
+  b.chips.forEach((c, i) => {
+    const r = Math.floor(i / PER_ROW), q = i % PER_ROW;
+    const cx = CHIP_X0 + q * (CHIP_W + GAP_X);
+    const cy = y + HEAD_H + r * (CHIP_H + GAP_Y);
+    const chip = el('g', {class:'chip', 'data-id':c.n});
+    chip.appendChild(el('rect', {class:'body', x:cx, y:cy, width:CHIP_W, height:CHIP_H, rx:6,
+      fill:col.chip, stroke:col.stroke, 'stroke-width':1, opacity:.95}));
+    const L = c.n.length;
+    const fs = L <= 14 ? 11.4 : L <= 17 ? 10.5 : 9.4;
+    chip.appendChild(tx(cx+9, cy+17.5, c.n, {'font-size':fs, 'font-weight':600, fill:'#1E293B',
+      class: /^[\w\/*]+$/.test(c.n) ? 'mono' : ''}));
+    if (c.x) chip.appendChild(tx(cx+CHIP_W-8, cy+17.5, '×'+c.x,
+      {'text-anchor':'end', 'font-size':9.6, 'font-weight':700, fill:col.stroke, opacity:.8}));
+    chip.appendChild(el('circle', {cx:cx+CHIP_W-7, cy:cy+7, r:2.6, fill:P_C[c.p]}));
+    chip.addEventListener('click', () => select(c));
+    chip.addEventListener('mouseenter', () => focus(c.n));
+    chip.addEventListener('mouseleave', () => focus(null));
+    gChip.appendChild(chip);
+    geo[c.n] = {x:cx, y:cy, w:CHIP_W, h:CHIP_H, cx:cx + CHIP_W/2, cy:cy + CHIP_H/2, chip:c};
+  });
+
+  bandGeo[b.id] = {y, h, band:b};
+  bandStart.push({y, h});
+  y += h + BAND_GAP;
+}
+const PLANE_BOTTOM = y - BAND_GAP;
+
+/* 平面外框 */
+{
+  const g = el('g');
+  g.appendChild(el('rect', {x:PAD-14, y:PLANE_TOP-26, width:W-PAD*2+28, height:PLANE_BOTTOM-PLANE_TOP+40,
+    rx:16, fill:'none', stroke:'#E2E8F0', 'stroke-width':1.4}));
+  gFrame.appendChild(g);
+}
+
+/* --- 底部：硬件（紧贴平面，设备是它的输入输出） --- */
+const HY = PLANE_BOTTOM + 48, HH = 58;
+{
+  const g = el('g'); gBox.appendChild(g);
+  g.appendChild(el('rect', {x:PAD, y:HY, width:W-PAD*2, height:HH, rx:10,
+    fill:'#F1F5F9', stroke:'#94A3B8', 'stroke-width':1.3}));
+  g.appendChild(tx(W/2, HY+25, '身体与外部世界', {'text-anchor':'middle','font-size':12.6,'font-weight':700, fill:'#334155'}));
+  g.appendChild(tx(W/2, HY+43, '底盘（cmd_vel 10Hz）· 车头相机 · 麦克风阵列 · ROS 话题/服务 · zmq 设备总线',
+    {'text-anchor':'middle','font-size':11, fill:'#64748B'}));
+  geo['@hw'] = {x:PAD, y:HY, w:W-PAD*2, h:HH, cx:W/2, cy:HY};
+}
+
+/* --- 反例：memory（脚注，不属于拓扑） --- */
+const MY = HY + HH + 22, MH = 76;
+{
+  const g = el('g'); gBox.appendChild(g);
+  g.appendChild(el('rect', {x:PAD, y:MY, width:W-PAD*2, height:MH, rx:12,
+    fill:'#FFF5F5', stroke:'#DC2626', 'stroke-width':1.1, 'stroke-dasharray':'7 5'}));
+  g.appendChild(tx(PAD+18, MY+23, '反例 · memory —— 这一个“不是 routine”',
+    {'font-size':12.5, 'font-weight':700, fill:'#B91C1C'}));
+  g.appendChild(tx(PAD+18, MY+43,
+    'moss 里记忆是 moment / feed + recall：没有 name、没有 schema、写不出标签，只能被内部读——它是组件，不是单元。zero 里是 xml/agent 内部的 sqlite。',
+    {'font-size':11.2, fill:'#7F1D1D'}));
+  g.appendChild(tx(PAD+18, MY+62,
+    '但“记忆的维护”是单元：压缩是 xml_condenser_agent，回查是 agent/history。单元是动作，不是数据——这条线把“万物皆 routine”和“万物皆对象”分开。',
+    {'font-size':11.2, fill:'#7F1D1D'}));
+  geo['@mem'] = {x:PAD, y:MY, w:W-PAD*2, h:MH, cx:W/2, cy:MY+MH/2};
+}
+
+const H = MY + MH + 26;
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+/* ------------------------------ 画边 ------------------------------ */
+function att(id, which) {   /* which: 'out' | 'in' */
+  if (id === '@front')  return {x:W/2, y:FRONT_Y + FRONT_H};
+  if (id === '@kernel') return {x:W/2, y:which === 'in' ? KERN_Y : KERN_Y + KERN_H};
+  if (id === '@plane')  return {x:W/2, y:PLANE_TOP - 26};
+  if (id === '@hw')     return {x:PAD + 46, y:HY};
+  if (id === '@bracket')return {x:PAD + 46, y:PLANE_BOTTOM + 14};
+  const g = geo[id]; if (!g) return null;
+  return which === 'out'
+    ? {x:g.cx, y:g.y + g.h}      /* 下方出 */
+    : {x:g.cx, y:g.y};           /* 上方入 */
+}
+
+const edgeEls = [];
+function addEdge(e) {
+  const k = KIND[e.k];
+  const g = el('g', {class:'edge', 'data-k':e.k});
+  let d, both = false, lx, ly, rot = 0;
+
+  if (e.k === 'inject') {
+    const a = bandGeo['agent'], b = bandGeo['prompt'];
+    const y1 = b.y + 9, y2 = a.y + 9;
+    d = `M${VX_IN+16},${y1} L${VX_IN},${y1} L${VX_IN},${y2} L${VX_IN+16},${y2}`;
+    lx = VX_IN - 9; ly = (y1 + y2) / 2; rot = -90;
+  } else if (e.k === 'boot') {
+    const a = bandGeo['meta'], b = bandGeo['body'];
+    const y1 = a.y + 19, y2 = b.y + 19;
+    d = `M${W-PAD},${y1} C${VX_R},${y1} ${VX_R},${y2} ${W-PAD},${y2}`;
+    both = true; lx = VX_R + 14; ly = (y1 + y2) / 2; rot = -90;
+  } else if (e.vx) {
+    const y1 = PLANE_BOTTOM + 14, y2 = HY;
+    d = `M${PAD+44},${y1} L${PAD+44},${y2}`;
+    both = true; lx = PAD + 58; ly = (y1 + y2) / 2 + 4;
+  } else if (e.k === 'http' || e.k === 'route') {
+    const a = att(e.f, 'in'), b = att(e.t, 'out');
+    d = `M${a.x},${a.y} L${b.x},${b.y}`;
+    if (e.k === 'http') { lx = a.x + 108; ly = (a.y + b.y) / 2 + 4; }
+    else { lx = (a.x + b.x) / 2; ly = (a.y + b.y) / 2 + 18; }
+  } else if (e.k === 'org') {
+    const a = geo[e.f], b = geo[e.t];
+    d = `M${a.x + a.w},${a.cy} C${a.x + a.w + 18},${a.cy} ${b.x - 18},${b.cy} ${b.x},${b.cy}`;
+    lx = (a.x + a.w + b.x) / 2; ly = a.cy - 6;
+  } else {
+    const a = att(e.f, 'out'), b = att(e.t, 'in');
+    if (Math.abs(b.y - a.y) > 44) {
+      const cp = (a.y + b.y) / 2;
+      d = `M${a.x},${a.y} C${a.x},${cp} ${b.x},${cp} ${b.x},${b.y}`;
+    } else {
+      const mx = (a.x + b.x) / 2;
+      d = `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`;
+    }
+    lx = (a.x + b.x) / 2; ly = (a.y + b.y) / 2 - 5;
+  }
+
+  g.appendChild(el('path', {d, fill:'none', stroke:k.color,
+    'stroke-width': e.k === 'boot' ? 1.5 : 1.3,
+    'stroke-dasharray': k.dash || 'none',
+    'marker-end':`url(#ar-${e.k})`,
+    'marker-start': both ? `url(#ar-${e.k})` : 'none',
+    opacity: e.k === 'call' ? .6 : .92}));
+
+  if (e.label) {
+    const t = tx(lx, ly, e.label, {'text-anchor':'middle', 'font-size':10.2, fill:k.color,
+      stroke:'#fff', 'stroke-width':3.2, 'paint-order':'stroke', 'font-weight':600});
+    if (rot) t.setAttribute('transform', `rotate(${rot} ${lx} ${ly})`);
+    g.appendChild(t);
+  }
+  gEdge.appendChild(g);
+  edgeEls.push({el:g, k:e.k, f:e.f, t:e.t});
+}
+EDGES.forEach(addEdge);
+
+/* ------------------------------ 图例 ------------------------------ */
+const legend = document.getElementById('legend');
+[...new Set(EDGES.map(e => e.k))].forEach(k => {
+  const info = KIND[k];
+  const row = document.createElement('div');
+  row.className = 'lg'; row.dataset.k = k;
+  row.innerHTML = `<svg width="34" height="10" viewBox="0 0 34 10"><line x1="1" y1="5" x2="27" y2="5"
+      stroke="${info.color}" stroke-width="1.8" stroke-dasharray="${info.dash || 'none'}"/>
+      <path d="M27,1.4 L33,5 L27,8.6 z" fill="${info.color}"/></svg>
+    <span>${info.label}</span>
+    <span class="cnt">${EDGES.filter(e=>e.k===k).length}</span>`;
+  row.addEventListener('click', () => {
+    row.classList.toggle('off');
+    const off = row.classList.contains('off');
+    edgeEls.forEach(e => { if (e.k === k) e.el.classList.toggle('hide', off); });
+  });
+  legend.appendChild(row);
+});
+
+/* ------------------------------ 交互 ------------------------------ */
+const detail = document.getElementById('detail');
+const CHIPS = () => [...svg.querySelectorAll('.chip')];
+let selected = null;
+
+function select(c) {
+  selected = c.n;
+  CHIPS().forEach(n => n.classList.toggle('sel', n.dataset.id === c.n));
+  detail.innerHTML = `
+    <h3>routine</h3>
+    <div class="nm"><span class="dot" style="background:${P_C[c.p]}"></span>${c.n}</div>
+    <div class="own">${P_T[c.p]}${c.x ? ' · 折叠了 ' + c.x + ' 个注册名' : ''}</div>
+    <p class="file">${c.f}</p>
+    <p class="d">${c.d}</p>
+    ${c.w ? `<p class="why"><em>为什么它也算 routine：</em>${c.w}</p>` : ''}`;
+}
+
+function focus(id) {
+  CHIPS().forEach(n => n.classList.remove('dim'));
+  edgeEls.forEach(e => e.el.classList.remove('dim'));
+  if (!id) return;
+  const linked = new Set([id]);
+  edgeEls.forEach(e => {
+    const hit = e.f === id || e.t === id;
+    e.el.classList.toggle('dim', !hit);
+    if (hit) { linked.add(e.f); linked.add(e.t); }
+  });
+  CHIPS().forEach(n => n.classList.toggle('dim', !linked.has(n.dataset.id)));
+}
+
+/* 方块总数自检 */
+document.getElementById('chipcount').textContent =
+  BANDS.reduce((n, b) => n + b.chips.length, 0);
+
+/* 默认选中：一个最能回答“万物皆 routine”的单元 */
+select(BANDS[1].chips[2]);
+</script>
+</body>
+</html>

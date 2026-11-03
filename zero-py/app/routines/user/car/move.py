@@ -28,7 +28,8 @@ class CarMove(MotionRoutine):
 
     name = 'car/move'
     meta: ClassVar[Dict[str, Any]] = {
-        'description': '小车平移: forward/back 前后, left/right 横移(麦轮), ',
+        # 取值范围在参数自己的 description 里(会作为子行印进清单)
+        'description': '小车平移: forward/back 前后, left/right 横移(麦轮)',
         'input_schema': CarMoveInput.model_json_schema(),
         'output_schema': MotionOutput.model_json_schema(),
     }

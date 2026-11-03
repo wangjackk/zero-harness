@@ -40,8 +40,8 @@ type LifecycleHooks interface {
 	OnCreated(rid string, kwargs map[string]any) ([]string, error)
 	// OnStarted started 钩子(lifecycle.started 已回报,Run 之前).
 	OnStarted() error
-	// OnStopped run 完成或退出后调用.reason: auto/stop/error/cancel/force/disconnect.
-	OnStopped(reason string, result any, detail string) error
+	// OnStopped run 完成或退出后调用。by 是终止发起者 rid，detail 仅供诊断。
+	OnStopped(reason TerminationReason, result any, by, detail string) error
 }
 
 // MessageHandler 可选:处理 message.* 定向消息.
@@ -81,16 +81,18 @@ type RoutineSource struct {
 //	func (e *Echo) Run(ctx *RunContext, kwargs map[string]any) (any, error) { ... }
 type BaseRoutine struct{}
 
-func (b *BaseRoutine) Meta() map[string]any          { return map[string]any{} }
-func (b *BaseRoutine) IsPassive() bool                { return false }
-func (b *BaseRoutine) Stop() (any, error)             { return nil, nil }
-func (b *BaseRoutine) Destroy() error                 { return nil }
+func (b *BaseRoutine) Meta() map[string]any { return map[string]any{} }
+func (b *BaseRoutine) IsPassive() bool      { return false }
+func (b *BaseRoutine) Stop() (any, error)   { return nil, nil }
+func (b *BaseRoutine) Destroy() error       { return nil }
 func (b *BaseRoutine) OnCreated(rid string, kwargs map[string]any) ([]string, error) {
 	return nil, nil
 }
-func (b *BaseRoutine) OnStarted() error                                  { return nil }
-func (b *BaseRoutine) OnStopped(reason string, result any, detail string) error { return nil }
-func (b *BaseRoutine) OnMessage(source RoutineSource, data any) error    { return nil }
+func (b *BaseRoutine) OnStarted() error { return nil }
+func (b *BaseRoutine) OnStopped(reason TerminationReason, result any, by, detail string) error {
+	return nil
+}
+func (b *BaseRoutine) OnMessage(source RoutineSource, data any) error { return nil }
 
 // RoutineFactory 创建 routine 实例的工厂.对标 Python Routines 存 class.
 // 注册时存 factory(不存实例),lifecycle.created 时 Create() 新建实例.
@@ -125,9 +127,9 @@ func NewFactoryWithMeta(name string, create func() Routine, passive bool, meta m
 }
 
 func (f *SimpleFactory) Name() string         { return f.name }
-func (f *SimpleFactory) Create() Routine       { return f.create() }
-func (f *SimpleFactory) IsPassive() bool       { return f.passive }
-func (f *SimpleFactory) Meta() map[string]any  { return f.meta }
+func (f *SimpleFactory) Create() Routine      { return f.create() }
+func (f *SimpleFactory) IsPassive() bool      { return f.passive }
+func (f *SimpleFactory) Meta() map[string]any { return f.meta }
 
 // Registry routine 注册表:存 factory(不存实例),start 时按需实例化.
 // 对标 Python Routines.

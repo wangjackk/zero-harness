@@ -3,9 +3,10 @@
 身份字段 id / name + lifecycle 出口(ack_start / request_stop)+ create 能力
 (routine 调 routine,经 kernel 回环).
 
-create 流程:发 routine.create{req_id, name, kwargs, parent_id=self.id} 给
+create 流程:发 routine.create{req_id, name, kwargs, parent_id} 给
 kernel → kernel 建子命令(Create,不 Start)→ 回 routine.created{req_id,
 child_id, modules} → 拿到 child_id 建 RoutineHandle 注册到 runtime handle 表.
+parent_id 与句柄类都取自调用方的类声明(见 ``create``).
 
 handle.start()/stop() 发 routine.start/stop 给 kernel → kernel 走编排
 → lifecycle.start/stop 回 hub 跑子 routine → 子发 lifecycle.started/stopped
@@ -90,13 +91,22 @@ class RunContext:
     # --- routine 调 routine(create) ---
 
     async def create(self, name: str,
-                     kwargs: Optional[Dict[str, Any]] = None) -> 'RoutineHandle':
+                     kwargs: Optional[Dict[str, Any]] = None) -> RoutineHandle:
         """提交一个子 routine,经 kernel 回环:建命令(created),created 回报后返回
         handle.
+
+        子的父固定是本实例(父停子停靠这条边),句柄固定是 ``RoutineHandle``.
 
         handle.modules = 子 routine on_created() 返回的占用 modules(经 created
         回报 → kernel → created 回执带回).编排器据此算冲突
         (``ctx.conflict(h1.modules, h2.modules)``).
+
+        Returns:
+            成功创建的子 routine 句柄;只有拿到有效 child_id 才返回.
+
+        Raises:
+            CreateError: routine 名未注册 / kwargs 不合法 / kernel 拒绝创建.
+            TimeoutError: 等待 kernel created 回执超时.
         """
         from .handle import RoutineHandle
 
@@ -129,10 +139,14 @@ class RunContext:
         incoming > 全部 holder 才驱逐他们后 start(严格大于, 平级不抢);
         否则抛 StartError.默认 10 等价旧 call 语义(平级冲突即拒).
 
-        失败语义:
-        - start 失败(模块冲突/父未 started):抛 StartError
-        - 子 routine 异常停止:抛 RuntimeError(子 wait 的 error)
-        - 子正常 return:返回 result
+        Returns:
+            子 routine 正常 return 的结果.
+
+        Raises:
+            CreateError: 子 routine 创建失败;由 create() 原样传播.
+            StartError: 子 routine 启动失败(如模块冲突).
+            RuntimeError: 父未 started / 子 routine 异常停止.
+            TimeoutError: 等待 kernel created 回执超时;由 create() 原样传播.
         """
         if self._routine._phase is not Phase.STARTED:
             raise RuntimeError(
@@ -431,8 +445,8 @@ class RunContext:
     async def send(self, target: str, data: Any = None) -> None:
         """给 target routine 发一条定向消息(message.send).target 需 created.
 
-        派发是 spawn 并发----对端 on_message 可能并发 fire,乱序到达,业务侧
-        自带 id reorder.
+        对端经实例 mailbox 串行投递, 同一实例的 on_message 严格保序
+        (顺序语义由框架保证, 业务不建 reorder).
         """
         await self._send_message(target, MESSAGE_SEND, data or {})
 

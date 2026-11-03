@@ -9,6 +9,9 @@ export default defineConfig({
     // 5173/5174 一带 → 固定用区间外端口; 若某次开机再被圈, 换一个即可.
     port: 5250,
     allowedHosts: true,
+    // 树的绘制原语在 routine-atlas/src/lib 下（同一份，不复制），
+    // dev 要允许读仓库根之下的文件
+    fs: { allow: ['../..'] },
     proxy: {
       '/ws': {
         // zero2 的 web_server 跑在 7781.
@@ -21,7 +24,6 @@ export default defineConfig({
       '/run': 'http://127.0.0.1:7781',
       '/agents': 'http://127.0.0.1:7781',
       '/routines': 'http://127.0.0.1:7781',
-      '/upload': 'http://127.0.0.1:7781',
       '/files': 'http://127.0.0.1:7781',
       '/health': 'http://127.0.0.1:7781',
       '/library_skills': 'http://127.0.0.1:7781',

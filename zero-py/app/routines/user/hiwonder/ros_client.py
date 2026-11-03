@@ -109,8 +109,11 @@ class RosClient:
         backoff = _RECONNECT_MIN
         while True:
             try:
-                ws = await asyncio.wait_for(websockets.connect(url()),
-                                            timeout=_CONNECT_TIMEOUT)
+                # rosbridge 是车内网直连; websockets 默认 proxy=True 会读
+                # HTTP(S)_PROXY,把 LAN 地址交给代理,代理断握手还触发二次异常.
+                ws = await asyncio.wait_for(
+                    websockets.connect(url(), proxy=None),
+                    timeout=_CONNECT_TIMEOUT)
             except Exception as e:
                 # 车不在线是常态(未上电): 首次及重试都低调, 只在"曾连上后又
                 # 失联"时 warning 一次提醒

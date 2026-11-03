@@ -31,6 +31,7 @@ from .kernel import (
 )
 from .logger import configure_root, setup_logger
 from .module_tree import ModuleTree
+from .protocol import TerminationReason
 from .routine import (
     Modules, PassiveConfig, Routine, RoutineSource, Routines, passive_wire,
     request, stream, subscribe,
@@ -44,7 +45,7 @@ __all__ = [
     'GrpcClientTransport',
     'RoutineHub',
     'RoutineHandle',
-    'ModuleTree',
+    'ModuleTree', 'TerminationReason',
     'Connection', 'GrpcKernelServer', 'InprocKernel', 'KernelRef',
     'RemoteKernel', 'connect',
     'Modules', 'PassiveConfig', 'Routine', 'RoutineSource', 'Routines',

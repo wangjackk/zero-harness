@@ -188,7 +188,7 @@ class CarWakeTrack(Routine):
         finally:
             self._armed = False
             self._wake_evt = None
-        return {
+        details = {
             'command': (f'wake_track armed {inp.armed_s:g}s '
                         f'track {inp.track_s:g}s'),
             'armed_s': inp.armed_s,
@@ -196,3 +196,9 @@ class CarWakeTrack(Routine):
             'aligns_deg': aligns,
             'wake_latencies': latencies,
         }
+        content = f'武装 {inp.armed_s:g}s 内被唤醒 {wakes} 次'
+        if aligns:
+            content += f', 对准角 {aligns}'
+        if wakes == 0:
+            content += '(没有唤醒, 没动)'
+        return {'content': content, 'details': details}

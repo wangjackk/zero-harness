@@ -1,0 +1,87 @@
+# 测试菜单:一个 ask 选择节点 + 多条 when 分支,按选择 push 对应的测试工作流.
+#
+#   pick(ask) ──┬──(when==branch_dag )──► run_branch  (run_dag branch_dag)
+#               ├──(when==cancel_dag )──► run_cancel  (run_dag cancel_dag)
+#               ├──(when==retry_dag  )──► run_retry   (run_dag retry_dag)
+#               ├──(when==approval_dag)─► run_approval(run_dag approval_dag)
+#               ├──(when==nested_dag )──► run_nested  (run_dag nested_dag)
+#               └──(when==trigger_dag)──► run_trigger (run_dag trigger_dag)
+#
+# pick 用 ask 弹单选框,返回选中的字符串;只有 when 命中的那条分支会跑,
+# 其余分支被 skip(output 为 null).被选中的子工作流就是一个普通 run_dag 节点,
+# 嵌套执行(递归免费).
+#
+# 说明:
+#   - 选 cancel_dag 时子工作流会主动 cancel → run_cancel 节点失败(这正是 cancel 的预期)
+#   - 选 retry_dag / approval_dag 会真正触发 retry 退避 / 弹审批框
+#
+# 跑:<run_dag dag="test_menu"/>
+
+name: test_menu
+description: 选择并运行某个 feature 测试工作流(ask + when + 嵌套 run_dag)
+
+nodes:
+  - id: pick
+    routine: ask
+    inputs:
+      question: "选择要测试的 feature 工作流"
+      options:
+        - branch_dag
+        - cancel_dag
+        - retry_dag
+        - approval_dag
+        - nested_dag
+        - trigger_dag
+
+  - id: run_branch
+    routine: run_dag
+    depends_on: [pick]
+    when: "$pick.output == 'branch_dag'"
+    inputs:
+      dag: branch_dag
+      inputs: '{"level": "high"}'
+
+  - id: run_cancel
+    routine: run_dag
+    depends_on: [pick]
+    when: "$pick.output == 'cancel_dag'"
+    inputs:
+      dag: cancel_dag
+      inputs: '{"mode": "abort"}'
+
+  - id: run_retry
+    routine: run_dag
+    depends_on: [pick]
+    when: "$pick.output == 'retry_dag'"
+    inputs:
+      dag: retry_dag
+
+  - id: run_approval
+    routine: run_dag
+    depends_on: [pick]
+    when: "$pick.output == 'approval_dag'"
+    inputs:
+      dag: approval_dag
+
+  - id: run_nested
+    routine: run_dag
+    depends_on: [pick]
+    when: "$pick.output == 'nested_dag'"
+    inputs:
+      dag: nested_dag
+
+  - id: run_trigger
+    routine: run_dag
+    depends_on: [pick]
+    when: "$pick.output == 'trigger_dag'"
+    inputs:
+      dag: trigger_dag
+
+outputs:
+  picked: pick
+  branch: run_branch
+  cancel: run_cancel
+  retry: run_retry
+  approval: run_approval
+  nested: run_nested
+  trigger: run_trigger

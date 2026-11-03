@@ -15,7 +15,7 @@ export {
   StreamCancelled, StreamError, StreamTimeout, TimeoutErr, UnloadModuleError,
 } from './errors'
 export type { Msg, Payload } from './protocol'
-export { ControlDoneReason } from './protocol'
+export { TerminationReason, terminationReasonFromWire } from './protocol'
 export { RoutineHandle } from './handle'
 export { RoutineHub, System, launch } from './hub'
 export { Kernel, Node, Route, type CreatedResult } from './kernel'

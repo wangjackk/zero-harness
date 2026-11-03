@@ -8,10 +8,9 @@ ROS 通信分两层:
   {topic, namespace}; req publish 反向发帧. 零业务纯中转).
   bridge_req 是桥寻址 req 小工具(rid 缓存 + 热重载失效重试).
 
-车身控制(car/*)已上提平级 user/car 包; 视觉快照 snap 留本包.
+车身控制(car/* 含车头相机 snap)在平级 user/car 包; 本包只剩传输与感知桥.
 坐标系 REP 103: y 正 = 左移, angular.z 正 = 左转(turn 负值右转).
 """
 from app.routines.user.hiwonder.ros_bridge import RosBridge
-from app.routines.user.hiwonder.snap import CamSnap
 
-__all__ = ['CamSnap', 'RosBridge']
+__all__ = ['RosBridge']

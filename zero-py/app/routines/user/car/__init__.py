@@ -6,6 +6,7 @@
 zones.py 是区域数据工具(区域→坐标 / 坐标→区域, 车上 :8001 区域表),
 car/navigate/car/where 基于它做命名区域导航与区域反查.
 感知在上级 ros_bridge 桥, 不在本包.
+车头相机拍照 car/snap 在本包(薄壳转发 device_bus 的 bus_listener req).
 """
 from app.routines.user.car.gaze import CarGaze
 from app.routines.user.car.map import CarMap
@@ -13,6 +14,7 @@ from app.routines.user.car.move import CarMove
 from app.routines.user.car.navigate import CarNavigate
 from app.routines.user.car.navigate_manage import CarNavigateManage
 from app.routines.user.car.shake import CarShake
+from app.routines.user.car.snap import CarSnap
 from app.routines.user.car.status import CarStatus
 from app.routines.user.car.steer import CarSteer
 from app.routines.user.car.stop import CarStop
@@ -21,5 +23,5 @@ from app.routines.user.car.turn import CarTurn
 from app.routines.user.car.wake_track import CarWakeTrack
 from app.routines.user.car.where import CarWhere
 
-__all__ = ['CarGaze', 'CarMap', 'CarMove', 'CarNavigate', 'CarNavigateManage', 'CarShake', 'CarStatus',
-           'CarSteer', 'CarStop', 'CarTrack', 'CarTurn', 'CarWakeTrack', 'CarWhere']
+__all__ = ['CarGaze', 'CarMap', 'CarMove', 'CarNavigate', 'CarNavigateManage', 'CarShake', 'CarSnap',
+           'CarStatus', 'CarSteer', 'CarStop', 'CarTrack', 'CarTurn', 'CarWakeTrack', 'CarWhere']

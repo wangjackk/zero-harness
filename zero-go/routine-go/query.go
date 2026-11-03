@@ -73,7 +73,10 @@ func (q *QueryService) BuildRoutines() []map[string]any {
 			// priority 协议已就绪(wire {flag, kwargs, priority?},缺省不写字段=10),
 			// 暂仅 py/ts 声明面支持,go 侧 bool 形态无 priority 来源(见 RoutineFactory).
 			"is_passive": f.IsPassive(),
-			"meta":       meta,
+			// 静态声明占用(go factory 无 Modules 入口,恒空占位 ---- wire 形态
+			// 与 py/ts/rs 同构;运行时 acquire 的动态占用注册期拿不到).
+			"modules": []string{},
+			"meta":    meta,
 		})
 	}
 	return out

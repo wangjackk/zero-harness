@@ -9,22 +9,30 @@ export type Msg = Record<string, any>
 /** 业务载荷(routine kwargs / req data----嵌入 envelope 的用户数据). */
 export type Payload = Record<string, any>
 
-export const ControlDoneReason = {
-  UNKNOWN: 'UNKNOWN',
-  AUTO: 'AUTO',
-  STOP: 'STOP',
+/** 一次 routine 等待为何结束；业务钩子、父侧 handle 与 wire 共用。 */
+export const TerminationReason = {
+  COMPLETED: 'COMPLETED',
+  STOPPED: 'STOPPED',
+  PREEMPTED: 'PREEMPTED',
+  FAILED: 'FAILED',
+  CANCELLED: 'CANCELLED',
   DESTROYED: 'DESTROYED',
-  ERROR: 'ERROR',
-  CANCEL: 'CANCEL',
-  FORCE: 'FORCE',
-  DISCONNECT: 'DISCONNECT',
+  DISCONNECTED: 'DISCONNECTED',
+  UNKNOWN: 'UNKNOWN',
 } as const
-export type ControlDoneReason = (typeof ControlDoneReason)[keyof typeof ControlDoneReason]
+export type TerminationReason = (typeof TerminationReason)[keyof typeof TerminationReason]
+
+/** 解码 wire reason；缺失或未识别值统一归 UNKNOWN。 */
+export function terminationReasonFromWire(value: unknown): TerminationReason {
+  return Object.values(TerminationReason).includes(value as TerminationReason)
+    ? value as TerminationReason
+    : TerminationReason.UNKNOWN
+}
 
 // --- lifecycle(kernel ↔ hub)---
 export const LIFECYCLE_CREATED = 'lifecycle.created'      // kernel→hub 实例化;hub→kernel created 回报(带 modules)
 export const LIFECYCLE_START = 'lifecycle.start'          // kernel→hub 启动 routine
-export const LIFECYCLE_STOP = 'lifecycle.stop'            // kernel→hub 打断 routine(带 reason=force/by 时为驱逐)
+export const LIFECYCLE_STOP = 'lifecycle.stop'            // kernel→hub 打断 routine(PREEMPTED 带 by=驱逐者)
 export const LIFECYCLE_DESTROY = 'lifecycle.destroy'      // kernel→hub 销毁 created 态 routine
 export const LIFECYCLE_STARTED = 'lifecycle.started'      // hub→kernel 已启动
 export const LIFECYCLE_STOPPED = 'lifecycle.stopped'      // hub→kernel 已停止(带 reason/result/error)

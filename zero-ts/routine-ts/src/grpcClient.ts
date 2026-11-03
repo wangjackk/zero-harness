@@ -88,7 +88,7 @@ export class GrpcClientTransport extends Transport {
     await withTimeout(this._ready.promise, timeout * 1000)
   }
 
-  async stop(): Promise<void> {
+  async close(): Promise<void> {
     if (this._stopped) return
     this._stopped = true
     this._ready = null

@@ -1,3 +1,4 @@
+use super::handle::RoutineHandle;
 use crate::{
     core::{BaseModule, Namespace, Routine},
     protocol::{
@@ -6,9 +7,9 @@ use crate::{
             LIFECYCLE_STARTED, LIFECYCLE_STOPPED, MESSAGE_REQ, MESSAGE_SEND,
             PUBSUB_PUBLISH, PUBSUB_SUBSCRIBE, PUBSUB_UNSUBSCRIBE,
             REQ_EVENT_GET_MODULE_TREE, REQ_EVENT_GET_ROUTINES, REQ_EVENT_GET_RUNNING_ROUTINES,
-            ROUTINE_START, ROUTINE_CREATE, ROUTINE_YIELD,
+            ROUTINE_CREATE, ROUTINE_YIELD,
         },
-        ControlDoneReason, JsonObject, ParentRef, RawWireEvent, RoutineCatalogEntry,
+        TerminationReason, JsonObject, ParentRef, RawWireEvent, RoutineCatalogEntry,
         RunningRoutineInfo,
     },
 };
@@ -22,8 +23,6 @@ use tokio_util::sync::CancellationToken;
 
 /// create 回执等待者: (child_id, modules) 或 error.
 pub type CreateReply = Result<(String, Option<Vec<String>>), String>;
-/// 子 routine 完成等待者: result value 或 error.
-pub type HandleReply = Result<Value, String>;
 /// p2p req 回执等待者: result value 或 error.
 pub type ReqReply = Result<Value, String>;
 
@@ -63,15 +62,8 @@ pub trait RoutineIo: Send + Sync {
         &self,
         req_id: &str,
     ) -> Option<oneshot::Sender<CreateReply>>;
-    async fn register_handle_waiter(
-        &self,
-        child_id: String,
-        sender: oneshot::Sender<HandleReply>,
-    );
-    async fn pop_handle_waiter(
-        &self,
-        child_id: &str,
-    ) -> Option<oneshot::Sender<HandleReply>>;
+    async fn register_handle(&self, handle: RoutineHandle);
+    async fn pop_handle(&self, child_id: &str) -> Option<RoutineHandle>;
 
     // --- p2p req 回执等待表 ---
     // req() 发 message.req 后注册 waiter, message.req_reply_delivered 到达时唤醒.
@@ -85,7 +77,7 @@ pub struct RunContext {
     id: String,
     name: String,
     peer_id: String,
-    io: Arc<dyn RoutineIo>,
+    pub(crate) io: Arc<dyn RoutineIo>,
     control_type: Option<String>,
     push_parent: Option<ParentRef>,
     token_parent: Option<ParentRef>,
@@ -188,7 +180,7 @@ impl RunContext {
                 .with_field("id", self.id_value())
                 .with_field(
                     "reason",
-                    Value::String(ControlDoneReason::Stop.as_wire().to_string()),
+                    Value::String(TerminationReason::Stopped.as_wire().to_string()),
                 ),
         )
         .await
@@ -327,62 +319,33 @@ impl RunContext {
     // 对齐 Python RunContext.call/create: 父 routine 通过 kernel 调度子 routine,
     // kernel 跨 hub 路由 (Rust hub 调 Python hub 注册的 routine 也走此路径).
 
-    /// 提交子 routine: 发 routine.create 给 kernel, 等 routine.created 回执.
-    /// 返回 (child_id, modules). 拿到 child_id 后调 start_child + wait_child.
+    /// 提交子 routine 并返回父侧共享句柄。
+    /// 成功后才注册 handle；未注册名字、参数非法或 kernel 拒绝时返回 Err。
     pub async fn create(
         &self,
         name: &str,
         kwargs: Option<JsonObject>,
-    ) -> Result<(String, Option<Vec<String>>), String> {
+    ) -> Result<RoutineHandle, String> {
         let req_id = new_req_id();
         let (sender, receiver) = oneshot::channel::<CreateReply>();
         self.io.register_create_future(req_id.clone(), sender).await;
 
-        let mut payload = RawWireEvent::new(ROUTINE_CREATE)
+        let payload = RawWireEvent::new(ROUTINE_CREATE)
             .with_field("req_id", Value::String(req_id.clone()))
             .with_field("parent_id", self.id_value())
-            .with_field("name", Value::String(name.to_string()));
-        if let Some(kwargs) = kwargs {
-            payload = payload.with_field("kwargs", Value::Object(kwargs));
-        } else {
-            payload = payload.with_field("kwargs", Value::Object(JsonObject::new()));
-        }
+            .with_field("name", Value::String(name.to_string()))
+            .with_field("kwargs", Value::Object(kwargs.unwrap_or_default()));
         self.send_raw_event(payload).await?;
 
         let result = tokio::time::timeout(Duration::from_secs(30), receiver)
             .await
             .map_err(|_| format!("create {name} timed out"))?
             .map_err(|_| format!("create {name} waiter closed"))?;
-        // 清 future (若超时或正常完成都清,幂等)
         self.io.pop_create_future(&req_id).await;
-        result
-    }
-
-    /// 启动已 create 的子 routine: 发 routine.start{child_id, priority} 给 kernel.
-    /// 不等 lifecycle.started (简化:直接进 wait,stopped 会带 error 若 start 失败).
-    /// priority: 模块冲突时 > 全部 holder 才驱逐后 start(平级不抢);
-    /// 10(常规默认档)省字段 ---- wire 缺省即默认档.
-    pub async fn start_child(&self, child_id: &str, priority: i64) -> Result<(), String> {
-        let mut event = RawWireEvent::new(ROUTINE_START)
-            .with_field("child_id", Value::String(child_id.to_string()));
-        if priority != 10 {
-            event = event.with_field("priority", Value::Number(priority.into()));
-        }
-        self.send_raw_event(event).await
-    }
-
-    /// 等子 routine 完成: 注册 handle waiter, 等 lifecycle.stopped 中转回.
-    /// 返回子的 result value, 或 error.
-    pub async fn wait_child(&self, child_id: &str, timeout_secs: u64) -> Result<Value, String> {
-        let (sender, receiver) = oneshot::channel::<HandleReply>();
-        self.io.register_handle_waiter(child_id.to_string(), sender).await;
-        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), receiver)
-            .await
-            .map_err(|_| format!("wait_child {child_id} timed out"))?
-            .map_err(|_| format!("wait_child {child_id} waiter closed"))?;
-        // 清 waiter (幂等)
-        self.io.pop_handle_waiter(child_id).await;
-        result
+        let (child_id, modules) = result?;
+        let handle = RoutineHandle::new(child_id, name, modules, self);
+        self.io.register_handle(handle.clone()).await;
+        Ok(handle)
     }
 
     /// 同步拿子 routine 结果: create → start → wait 一步到位.
@@ -393,10 +356,12 @@ impl RunContext {
         kwargs: Option<JsonObject>,
         priority: i64,
     ) -> Result<Value, String> {
-        let (child_id, _modules) = self.create(name, kwargs).await?;
-        self.start_child(&child_id, priority).await?;
+        let handle = self.create(name, kwargs).await?;
+        handle.start(priority).await?;
         // 600s 超时对齐 HTTP /run 接口 (fetch_agent_state 等可能涉及外部调用)
-        self.wait_child(&child_id, 600).await
+        tokio::time::timeout(Duration::from_secs(600), handle.wait())
+            .await
+            .map_err(|_| format!("call {name} timed out"))?
     }
 
     // --- p2p req(HTTP-like 事务: provider 侧立即 spawn 并行处理) ---

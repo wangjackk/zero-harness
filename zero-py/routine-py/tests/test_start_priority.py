@@ -4,7 +4,7 @@
 
 覆盖:
 1. 常规冲突拒(默认档 10 双方) -- 旧 call 语义保持
-2. 高优抢占: 20 驱逐默认档 10 holder, 旧例 reason=FORCE
+2. 高优抢占: 20 驱逐默认档 10 holder, 旧例 reason=PREEMPTED
 3. 低档空间: 默认档 10 驱逐低档 5 holder
 4. 平级不抢: 20 vs 20 -> StartError
 5. 安全级不可被用户级抢: 100 holder vs 20 -> StartError
@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from routine import Routines, StartError, kernel
+from routine import Routines, StartError, TerminationReason, kernel
 from routine.errors import StartError as StartError2  # noqa: F401  (同源校验)
 from routine.hub import RoutineHub
 from routine.routine import Modules, PassiveConfig, Routine
@@ -31,6 +31,7 @@ assert StartError is StartError2
 
 _jobs: asyncio.Queue = asyncio.Queue()
 _results: asyncio.Queue = asyncio.Queue()
+_child_stops: asyncio.Queue = asyncio.Queue()
 _acq_jobs: asyncio.Queue = asyncio.Queue()   # case 9/10: acquire 执行器的任务口
 _hub: list = []   # main() 灌入 RoutineHub 引用(case 8 动态 register 用)
 
@@ -72,7 +73,8 @@ class _Driver(Routine):
         try:
             result = await h
             _results.put_nowait({'tag': tag, 'phase': 'done', 'ok': True,
-                                 'reason': h.reason, 'result': result})
+                                 'reason': h.reason, 'by': h.by,
+                                 'detail': h.detail, 'result': result})
         except Exception as exc:
             _results.put_nowait({'tag': tag, 'phase': 'done', 'ok': False,
                                  'err': type(exc).__name__, 'msg': str(exc)})
@@ -97,6 +99,13 @@ class _Hold(Routine):
     async def stop(self):
         self._stop.set()
         return {'stopped': self.name}
+
+    async def on_stopped(
+            self, reason: TerminationReason = TerminationReason.COMPLETED,
+            result=None, by=None, detail: str = '') -> None:
+        _child_stops.put_nowait({
+            'name': self.name, 'reason': reason, 'by': by, 'detail': detail,
+        })
 
 
 class _HoldA(_Hold):
@@ -147,9 +156,11 @@ async def _res(tag: str, phase: str) -> dict:
 
 
 async def _drain_results() -> None:
-    """清场排空: 上一 case 被停实例的 done 残留不污染下一 case 的断言."""
+    """清场排空: 上一 case 的 done / 子钩子残留不污染下一 case 的断言."""
     while not _results.empty():
         _results.get_nowait()
+    while not _child_stops.empty():
+        _child_stops.get_nowait()
 
 
 async def _case_normal_conflict_rejected() -> None:
@@ -167,11 +178,17 @@ async def _case_higher_priority_evicts() -> None:
     await _jobs.put(('b', 'hold_b', 20))
     # 确定序: 驱逐(A 收尾)完成后 B 才重试 start ---- A 的 done 先到
     evicted = await _res('a', 'done')
-    assert evicted['ok'] and evicted['reason'] == 'FORCE', evicted
+    assert evicted['ok'] and evicted['reason'] is TerminationReason.PREEMPTED, evicted
+    assert evicted['by'], evicted
+    assert evicted['detail'] == f"evicted by {evicted['by']}", evicted
+    child_stop = await asyncio.wait_for(_child_stops.get(), timeout=2)
+    assert child_stop['reason'] is evicted['reason'], child_stop
+    assert child_stop['by'] == evicted['by'], child_stop
+    assert child_stop['detail'] == evicted['detail'], child_stop
     # result 是 run() 的返回(main task 返回值, _graceful_stop 语义)
     assert evicted['result'] == {'held': 'hold_a'}, evicted
     assert (await _res('b', 'start'))['ok']
-    print('case 2 ok: 20 evicts 10 holder (reason=FORCE)')
+    print('case 2 ok: 20 evicts 10 holder (PREEMPTED + by/detail)')
 
 
 async def _case_default_evicts_low_priority() -> None:
@@ -179,7 +196,7 @@ async def _case_default_evicts_low_priority() -> None:
     assert (await _res('a', 'start'))['ok']
     await _jobs.put(('b', 'hold_b', 10))
     evicted = await _res('a', 'done')
-    assert evicted['ok'] and evicted['reason'] == 'FORCE', evicted
+    assert evicted['ok'] and evicted['reason'] is TerminationReason.PREEMPTED, evicted
     assert (await _res('b', 'start'))['ok']
     print('case 3 ok: 10(default) evicts low-priority(5) holder')
 
@@ -224,7 +241,7 @@ async def _case_passive_declared_priority_evicts() -> None:
     # 动态注册声明 priority=20 的 passive: kernel auto-start 驱逐默认档 holder
     await _hub[0].register_routine(_HoldP)
     evicted = await _res('a', 'done')
-    assert evicted['ok'] and evicted['reason'] == 'FORCE', evicted
+    assert evicted['ok'] and evicted['reason'] is TerminationReason.PREEMPTED, evicted
     print('case 8 ok: passive declared priority(20) evicts holder on auto-start')
 
 
@@ -233,7 +250,7 @@ async def _case_acquire_evicts_by_priority() -> None:
     assert (await _res('a', 'start'))['ok']
     await _acq_jobs.put(('q', 'acquire'))
     evicted = await _res('a', 'done')   # stopped 帧先于 acquired ack(dispatch FIFO)
-    assert evicted['ok'] and evicted['reason'] == 'FORCE', evicted
+    assert evicted['ok'] and evicted['reason'] is TerminationReason.PREEMPTED, evicted
     r = await _res('q', 'acquire')
     assert r['ok'], r
     await _acq_jobs.put(('q', 'release'))
@@ -288,7 +305,7 @@ async def main() -> None:
             await _drain_results()
         print('ALL PASS')
     finally:
-        await conn.stop()
+        await conn.close()
 
 
 if __name__ == '__main__':

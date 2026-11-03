@@ -1,5 +1,7 @@
 """
-RoutinesWatcher ---- routines.yaml + routine 源码变更自动热重载.
+RoutinesWatcher ---- routine 清单(启动时指定的那一份) + 源码变更自动热重载.
+清单路径取自 ``loader.yaml_path()``(不是 app/routines.yaml 常量): 换 profile
+启动时盯的必须是同一份, 否则改清单无人接管且不报错.
 检测: mtime 轮询(1s, 零依赖, Windows 稳) + 500ms debounce(编辑器保存常连串写).
 """
 from __future__ import annotations
@@ -18,8 +20,8 @@ from routine import Routine, request
 from routine.errors import ReloadError, RegisterError
 from routine.logger import setup_logger
 
-from .loader import (apply_yaml_kwargs, load_entries, _parse_entries,
-                     _to_dotted, _PACKAGE_ROOT)
+from .loader import (apply_yaml_kwargs, load_entries, yaml_path,
+                     _parse_entries, _to_dotted, _PACKAGE_ROOT)
 
 __all__ = ['RoutinesWatcher']
 
@@ -27,7 +29,6 @@ _log = setup_logger('routines_watcher')
 
 _POLL_INTERVAL = 1.0
 _DEBOUNCE = 0.5
-_YAML_PATH = _PACKAGE_ROOT / 'routines.yaml'
 
 
 class RoutinesWatcher(Routine):
@@ -43,6 +44,9 @@ class RoutinesWatcher(Routine):
     def __init__(self):
         super().__init__()
         self._stop_event: Event | None = None
+        # 盯的清单与 loader 读的是同一份(loader.yaml_path 是唯一基准) ----
+        # 各记一份的后果是"改了清单什么都不会发生, 也没有报错".
+        self._yaml: Path = yaml_path()
         self._mtimes: Dict[Path, float] = {}
         self._yaml_mtime: float = 0.0
         # [(path, kwargs)] ---- yaml 条目快照 (diff 基准)
@@ -60,8 +64,8 @@ class RoutinesWatcher(Routine):
         self._stop_event = Event()
 
     async def on_started(self) -> None:
-        self._entries = _read_entries()
-        self._yaml_mtime = _mtime(_YAML_PATH)
+        self._entries = _read_entries(self._yaml)
+        self._yaml_mtime = _mtime(self._yaml)
         self._mtimes = {p: _mtime(p) for p in self._watched_files()}
         asyncio.create_task(self._watch_loop())
 
@@ -108,7 +112,7 @@ class RoutinesWatcher(Routine):
 
     def _watched_files(self) -> Set[Path]:
         """yaml 条目展开成 .py 集合(目录条目含包内全部 .py 与各层 __init__)."""
-        files: Set[Path] = {_YAML_PATH}
+        files: Set[Path] = {self._yaml}
         for rel, _kw in self._entries:
             target = _PACKAGE_ROOT / rel
             if target.is_dir():
@@ -171,7 +175,7 @@ class RoutinesWatcher(Routine):
                 # 目录监视句柄竞争), 同步跑在 loop 上会阻塞所有 routine
                 # 调用 ---- 这是全局间歇性延迟的根因. 走专属 executor,
                 # 不与 asyncio.to_thread 的默认共享池混用.
-                m = await loop.run_in_executor(self._executor, _mtime, _YAML_PATH)
+                m = await loop.run_in_executor(self._executor, _mtime, self._yaml)
                 if m != self._yaml_mtime:
                     self._yaml_mtime = m
                     await self._apply_yaml_change()
@@ -190,7 +194,7 @@ class RoutinesWatcher(Routine):
 
     async def _apply_yaml_change(self) -> None:
         """yaml 变更: 读一次 → diff 条目 → 新增 register / 移除 deregister / kwargs 变化 reload."""
-        new_entries = _read_entries()
+        new_entries = _read_entries(self._yaml)
         old_map = dict(self._entries)
         new_map = dict(new_entries)
         added = [p for p in new_map if p not in old_map]
@@ -503,9 +507,9 @@ class RoutinesWatcher(Routine):
         return [_to_dotted(rel) for rel in entries]
 
 
-def _read_entries() -> List[tuple[str, Dict[str, Any]]]:
+def _read_entries(path: Path) -> List[tuple[str, Dict[str, Any]]]:
     """yaml → [(path, kwargs)] (dict 复用 loader 解析, 保证两边语义一致)."""
-    data = yaml.safe_load(_YAML_PATH.read_text(encoding='utf-8')) or {}
+    data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     return _parse_entries(data)
 
 
@@ -546,8 +550,8 @@ def _collect_pub(module) -> List[type]:
             continue
         if cls is Routine or cls in seen or name.startswith('_'):
             continue
-        if getattr(cls, '__abstractmethods__', None):
-            continue
+        if getattr(cls, '__abstractmethods__', None) or not cls.name:
+            continue    # 抽象类 / 没有名字的基类: 不是可注册的 routine
         seen.add(cls)
         out.append(cls)
     return out

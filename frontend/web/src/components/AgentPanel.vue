@@ -238,6 +238,7 @@
           <template #icon><Icon :comp="PlayerStop" :size="15" /></template>
         </NButton>
         <div class="input-col">
+          <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
           <div v-if="pendingImages.length" class="pending-images">
             <div
               v-for="img in pendingImages"
@@ -440,15 +441,35 @@ const cacheHitText = computed(() => {
   return `cache ${Math.round((read / total) * 100)}%`
 })
 
-// ── 图片输入: 上传 -> 待发预览 -> 随消息发送 ──
+// ── 图片输入: 上传落盘 -> 待发预览 -> 随消息发送 ──
+//
+// 图片走 /files/upload 落盘, images 里只带 '/files/<name>' 相对路径: 与
+// agent 侧的路径契约一致 (messaging.build_content 解析成绝对路径), 也不会
+// 让几张图把 base64 塞进 WS 帧和消息历史。
 
 interface PendingImage { path: string }
 const pendingImages = ref<PendingImage[]>([])
 const uploading = ref(false)
+const uploadError = ref('')
 
 function imageUrl(path: string): string {
   // '/files/<name>' 相对路径 -> 完整 URL (httpBase 缺省同源)
   return path.startsWith('http') || path.startsWith('data:') ? path : `${props.httpBase ?? ''}${path}`
+}
+
+/** File -> '/files/<name>'; 失败抛错, 由调用方聚合提示. */
+async function uploadImage(file: File): Promise<string> {
+  const name = encodeURIComponent(file.name || 'image')
+  const res = await fetch(`${props.httpBase ?? ''}/files/upload?name=${name}`, {
+    method: 'POST',
+    headers: { 'content-type': file.type || 'application/octet-stream' },
+    body: file,
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data?.ok || !data?.url) {
+    throw new Error(data?.error || `HTTP ${res.status}`)
+  }
+  return data.url as string
 }
 
 function pickImages() {
@@ -460,22 +481,20 @@ function pickImages() {
     const files = Array.from(input.files ?? [])
     if (!files.length) return
     uploading.value = true
+    uploadError.value = ''
+    const failed: string[] = []
     try {
-      // 直接读成 data URL (base64 内联): 前后端可能不在
-      // 一个设备, 不依赖 /upload 落盘; data URL 直接进
-      // 统一消息协议的 image content block (path 字段).
       for (const file of files) {
-        const path = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(String(reader.result))
-          reader.onerror = () => reject(reader.error ?? new Error('read failed'))
-          reader.readAsDataURL(file)
-        })
-        pendingImages.value.push({ path })
+        try {
+          pendingImages.value.push({ path: await uploadImage(file) })
+        } catch (err) {
+          failed.push(`${file.name || 'image'}: ${(err as Error).message}`)
+        }
       }
     } finally {
       uploading.value = false
     }
+    if (failed.length) uploadError.value = `上传失败 ${failed.join('; ')}`
   }
   input.click()
 }
@@ -1481,6 +1500,16 @@ details[open] > .tool-header::before { transform: rotate(90deg); }
   display: flex;
   align-items: flex-end;
   gap: 8px;
+}
+
+.upload-error {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #ff7875;
+  padding: 0 2px;
+  word-break: break-all;
+  max-height: 32px;
+  overflow: hidden;
 }
 
 .pending-images {

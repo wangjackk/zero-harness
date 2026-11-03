@@ -78,6 +78,10 @@ routines:
   # dynamic 实验场 (creator agent 实验性 routine; watcher 热重载, 改完即生效)
   - routines/user/dynamic
 
+  # DAG 编排: run_dag / 浏览查询 / 审批与取消 / 示例节点 fixtures.
+  # 前端经 run_routine 调 dag/list、dag/spec、run_dag.
+  - routines/user/dag
+
   # car 车身控制包(car/* 命名空间): cmd_vel 直发经 ros_client 单例;
   #   底盘/rosbridge 由车端 systemd 自启(zero-chassis/zero-rosbridge),
   #   上电即控制面就绪
@@ -96,6 +100,23 @@ routines:
   #   语义化 req pose_enable/disable/status 发 vision cmd, 常驻 PUB +
   #   state evt 回执确认 + 丢包重发, 调用方零总线协议细节)
   - routines/user/device_bus
+
+  # mcp 包: MCP 接入层 (外部能力源). mcp 被动常驻, 惰性连接 app/mcp.yaml
+  #   声明的 server 并独占会话; mcp/tools 列工具, mcp/doc 查 inputSchema,
+  #   mcp/call 按 "<server>/<tool>" 调用 (三级渐进披露)。
+  #   运维面 mcp/servers + mcp/connect + mcp/disconnect **没有 meta.tool**,
+  #   不进任何提示词; 需要时 agent 用 run_routine 按名调 (create 不看
+  #   meta.tool, 所以"没暴露"不等于"调不到"), 用法用 routine/doc 现查。
+  #   MCP server 本身不是 routine ---- 进注册表的是接入单元, 不是设备
+  #   (同 ros_bridge 背后的 ROS / bus_listener 背后的设备总线)。
+  #   app/mcp.yaml 只在启动装载一次, 以及 connect/disconnect 时重读;
+  #   其它单元不读盘, 不做文件旁听。
+  - routines/user/mcp
+
+  # moss 包(MOSShell 复现域, 学习项目)**独立成进程**:
+  #   它自己有一份清单 app/moss.yaml(带模块树), 只用 `python -m app.main
+  #   app/moss.yaml` 起; 与 zero 只经 grpc dial-in 相连。
+  #   列进本清单会与那份重复注册, 故不列。
 
   # watcher: yaml/源码变更自动热重载 (HMR, 改 yaml 不用重启进程)
   - routines/watcher.py

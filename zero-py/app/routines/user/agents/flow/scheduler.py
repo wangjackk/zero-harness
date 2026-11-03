@@ -1,15 +1,10 @@
-"""工具执行: 常驻 Shell 编排 (cone 串并行) + pre_execute/result 扩展点.
+"""工具执行: 模型产生 function call 后立即并发调用.
 
-串并行判定不靠 meta 标志位 (concurrency_safe 不消费): 复用业务侧
-Shell (zero xml 包) ---- push 尽快 create, start 是调度点, 与左兄弟
-的 modules cone 交集冲突则串行, 不冲突则并行. modules 是 kernel 解析
-的占用真理源 (工具 on_created 返回), 与 TryAcquire 同源 ---- 工具要
-串行就声明 modules, 天然并行就不声明.
+不做 Shell 编排, 也不按 modules 或输出顺序排队. 每个 call 独立经过
+tool_pre_execute waterfall → create → start → wait; 失败只转成该 call
+的错误结果回传给模型, 不阻塞其他 call 或整个轮次.
 
-每 step 一批 function call: 逐个过 tool_pre_execute waterfall (拒绝
-的不 push, 合成错误结果) → push 全部 → complete → join (push 序结果,
-失败收成对象不抛) → reset (Shell 复用下一批). interrupt() 供 agent
-abort 时 top-down 排水在跑的工具.
+interrupt() 供 agent abort 时停止在途工具.
 """
 from __future__ import annotations
 
@@ -18,7 +13,6 @@ import json
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
-from ...shell import Shell
 from .wire import AGENT_ID_KEY
 
 if TYPE_CHECKING:
@@ -39,66 +33,76 @@ class ToolOutcome:
 
 
 class ToolScheduler:
-    """每 step 一批 function call 的 Shell 执行器. agent 常驻复用."""
+    """function call 即到即并发执行; agent 常驻复用."""
 
     def __init__(self, agent: 'FlowAgent') -> None:
         self._a = agent
-        self._shell = Shell(agent)
+        self._handles: set[Any] = set()
 
     async def interrupt(self) -> None:
-        """top-down 排水: 停在跑的工具, 撤未 start 的 (abort / agent stop 用)."""
-        await self._shell.interrupt()
-        self._shell.reset()
+        """停止在途工具, 撤掉尚未 start 的 (abort / agent stop 用)."""
+        for handle in list(self._handles):
+            if handle.is_done():
+                continue
+            if handle.is_started():
+                await handle.stop(fire=True)
+            else:
+                await handle.destroy(fire=True)
 
     async def execute(self, fc_calls: list, abort: 'Abort',
                       *, epoch: int, message_id: str) -> list[ToolOutcome]:
-        outcomes: list[ToolOutcome | None] = [None] * len(fc_calls)
-        pushed: list[tuple[int, Any, dict, Any]] = []
-
-        for i, fc in enumerate(fc_calls):
+        async def run(fc) -> ToolOutcome:
             abort.throw_if_aborted()
-            outcomes[i] = await self._admit(fc)
-            if outcomes[i] is not None:      # unknown / 被拒: 不 push
-                continue
             args = _parse_args(fc)
-            tool_args = dict(args)
-            tool_args[AGENT_ID_KEY] = self._a._agent_id
             try:
-                handle = await self._shell.push(fc.name, tool_args)
+                return await self._execute_one(
+                    fc, args, epoch=epoch, message_id=message_id)
             except Exception as exc:
-                outcomes[i] = _error_outcome(fc, args, exc)
-                continue
-            handle.on_started_handler = self._a.make_started_handler(
-                fc.name, args, fc.call_id, handle.id,
-                epoch=epoch, message_id=message_id)
-            pushed.append((i, fc, args, handle))
+                # 工具及其扩展点失败只汇报给模型, 不弄垮整个轮次.
+                return _error_outcome(fc, args, exc)
 
-        self._shell.complete()
+        # 每个 call 立即起自己的执行链, 不串行等待前一个.
+        tasks = [asyncio.create_task(run(fc)) for fc in fc_calls]
         try:
-            results = await self._shell.join()
-        except (asyncio.CancelledError, Exception):
+            return list(await asyncio.gather(*tasks))
+        except asyncio.CancelledError:
             await self.interrupt()
             raise
 
-        for (i, fc, args, handle), result in zip(pushed, results):
-            output = _format_result(result)
-            # post_execute: 结果定稿前可改写 LLM 可见 output (dsh tools/post-execute)
-            output = await self._a.hooks.waterfall(
-                'tool_post_execute',
-                {'name': fc.name, 'call_id': fc.call_id, 'input': args,
-                 'result': result, 'output': output},
-                output)
-            out = ToolOutcome(call_id=fc.call_id, name=fc.name, input=args,
-                              rid=handle.id, result=result,
-                              output=output or '')
-            outcomes[i] = out
-            await self._a.hooks.serial('tool_result', {
-                'name': fc.name, 'call_id': fc.call_id,
-                'input': args, 'result': result,
-            })
+    async def _execute_one(self, fc, args: dict, *, epoch: int,
+                           message_id: str) -> ToolOutcome:
+        rejected = await self._admit(fc)
+        if rejected is not None:
+            return rejected
 
-        self._shell.reset()
-        return [o for o in outcomes if o is not None]
+        tool_args = dict(args)
+        tool_args[AGENT_ID_KEY] = self._a._agent_id
+        handle = await self._a.ctx.create(fc.name, tool_args)
+        self._handles.add(handle)
+        try:
+            handle.on_started_handler = self._a.make_started_handler(
+                fc.name, args, fc.call_id, handle.id,
+                epoch=epoch, message_id=message_id)
+            await handle.start()
+            result = await handle
+        except Exception as exc:
+            return _error_outcome(fc, args, exc, rid=handle.id)
+        finally:
+            self._handles.discard(handle)
+
+        output = _format_result(result)
+        # post_execute: 结果定稿前可改写 LLM 可见 output (dsh tools/post-execute)
+        output = await self._a.hooks.waterfall(
+            'tool_post_execute',
+            {'name': fc.name, 'call_id': fc.call_id, 'input': args,
+             'result': result, 'output': output},
+            output)
+        await self._a.hooks.serial('tool_result', {
+            'name': fc.name, 'call_id': fc.call_id,
+            'input': args, 'result': result,
+        })
+        return ToolOutcome(call_id=fc.call_id, name=fc.name, input=args,
+                           rid=handle.id, result=result, output=output or '')
 
     async def _admit(self, fc) -> ToolOutcome | None:
         """unknown tool / pre_execute 拒绝 → 错误 outcome; 放行返回 None."""
@@ -114,8 +118,9 @@ class ToolScheduler:
         return None
 
 
-def _error_outcome(fc, args: dict, exc: BaseException) -> ToolOutcome:
-    return ToolOutcome(call_id=fc.call_id, name=fc.name, input=args,
+def _error_outcome(fc, args: dict, exc: BaseException,
+                   rid: str | None = None) -> ToolOutcome:
+    return ToolOutcome(call_id=fc.call_id, name=fc.name, input=args, rid=rid,
                        result=exc, output=_format_error(exc))
 
 

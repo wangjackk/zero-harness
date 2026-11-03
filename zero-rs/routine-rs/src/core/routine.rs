@@ -3,7 +3,10 @@
         messaging::{RequestSpec, RoutineSource, SubscribeSpec},
         RunContext,
     },
-    protocol::{events::ROUTINE_YIELD, ChainedError, JsonObject, JsonValue, RawWireEvent},
+    protocol::{
+        events::ROUTINE_YIELD, ChainedError, JsonObject, JsonValue, RawWireEvent,
+        TerminationReason,
+    },
 };
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -88,12 +91,13 @@ pub trait Routine: Send + Sync {
         Ok(())
     }
 
-    /// run 完成/退出后调（stopped 回报前）。对齐 Python
-    /// `on_stopped(reason, result, detail)`。reason: auto/stop/error/cancel/force/disconnect。
+    /// run 完成/退出后调（stopped 回报前）。by 是终止发起者 rid，
+    /// detail 仅供诊断，与父侧等待结果使用同一 TerminationReason。
     async fn on_stopped(
         &self,
-        _reason: &str,
+        _reason: TerminationReason,
         _result: Option<&JsonValue>,
+        _by: &str,
         _detail: &str,
     ) -> Result<(), RoutineError> {
         Ok(())

@@ -5,13 +5,13 @@
   (prime 是 bump epoch 打断重启)
 - 轮次/步骤有显式边界, pre_step 可拒绝, turn_stopping 可观察 ----
   循环的每个环节是进程内扩展点 (HookRegistry)
-- 工具串并行交给 Shell 编排: modules cone 交集冲突→串行, 不冲突→并行
-  (与 kernel TryAcquire 同一真理源, 不靠 meta 标志位)
+- 模型产生工具 call 后立即并发调用, 不按顺序排队也不自动编排
+- 工具错误转成该 call 的错误结果回传模型, 不阻塞其他 call 或轮次
 - 中断走 Abort 协作信号, cancel 可保留 inbox (排队消息不丢)
 
 零项目基础设施依赖: 存储 (EventLog) / LLM (flow.llm) / token 度量
 (flow.context) / 协议常量 (flow.wire) / prompt / schema 发现 /
-bridge 注册全部自有. 仅依赖 routine 框架本身与 Shell 编排原语.
+bridge 注册全部自有. 仅依赖 routine 框架本身.
 spawn 与前端走 FlowHub (flow.hub) ---- 独立前门, 不经 prime
 manager / preset / sqlite Store.
 """
@@ -78,7 +78,7 @@ class FlowAgent(Routine):
         'description': (
             'Turn/step loop coding agent (dsh ReactLoopAgent style). '
             'Non-interrupting inbox, turn/step event log, waterfall '
-            'extension points, Shell-orchestrated tool execution.'
+            'extension points, immediate concurrent tool execution.'
         ),
     }
 
@@ -345,8 +345,8 @@ class FlowAgent(Routine):
         async with self._event_lock:
             await self.inbox.send(
                 InboxMessage(text=content, source=from_agent), target)
-            if from_agent != USER_SOURCE:
-                await self.emit_incoming_message(content, from_agent)
+            # 收到即播报, 与来源无关 (前端只据此渲染).
+            await self.emit_incoming_message(text, from_agent)
             self._wake()
 
     async def _on_input(self, source, data: dict) -> None:
@@ -657,8 +657,8 @@ class FlowAgent(Routine):
         async with self._event_lock:
             await self.inbox.send(
                 InboxMessage(text=content, source=from_agent), 'next-step')
-            if from_agent != USER_SOURCE:
-                await self.emit_incoming_message(content, from_agent)
+            # 收到即播报, 与来源无关 (前端只据此渲染).
+            await self.emit_incoming_message(message, from_agent)
 
     def _log_deliver_error(self, task: asyncio.Task) -> None:
         if task.cancelled():

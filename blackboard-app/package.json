@@ -1,0 +1,17 @@
+{
+  "name": "blackboard-app",
+  "private": true,
+  "type": "module",
+  "workspaces": ["shared", "server", "web"],
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:demo": "BB_DEMO=1 bun run --filter '*' dev",
+    "dev:server": "bun run --cwd server dev",
+    "dev:web": "bun run --cwd web dev",
+    "check": "bun run --cwd web check",
+    "verify": "bun run verify.ts",
+    "verify:shapes": "bun run verify-shapes.ts",
+    "shot": "bun run shot.ts",
+    "verify:roles": "bun run verify-roles.ts"
+  }
+}

@@ -40,16 +40,26 @@ def wrap_from(content: str, from_agent: str) -> str:
 
 
 def _resolve_path(path: str) -> str:
-    """/files/<name> → uploads 绝对路径; 绝对路径与 data: URL 原样透传."""
+    """/files/<name> → uploads 绝对路径; 绝对路径校验存在后透传; data: 透传.
+
+    引用型输入在这里就确认文件存在: 否则坏路径会一路传到 provider 的
+    ``read_bytes()`` 才抛错, 报错点离原因很远。data: 无需检查 (内容自带)。
+    """
     if path.startswith('/files/'):
         from .uploads import UPLOADS_DIR
         name = path[len('/files/'):]
         if not name or '/' in name or '..' in name or '\\' in name:
             raise ValueError(f'invalid files ref: {path!r}')
-        return str(UPLOADS_DIR / name)
+        file = UPLOADS_DIR / name
+        if not file.is_file():
+            raise ValueError(f'image not found: {path!r}')
+        return str(file)
     if path.startswith('data:'):
         return path
-    if Path(path).is_absolute():
+    file = Path(path)
+    if file.is_absolute():
+        if not file.is_file():
+            raise ValueError(f'image not found: {path!r}')
         return path
     raise ValueError(f'image path must be /files/<name>, absolute, or data: URL, got {path!r}')
 
@@ -81,6 +91,20 @@ def resolve_content(content: list[dict]) -> list[dict]:
         else:
             out.append(block)
     return out
+
+
+def to_files_ref(path: str) -> str:
+    """绝对路径 → '/files/<name>': 只有 uploads 目录内的图前端能直接引用.
+
+    send_message 已在入口把 /files 引用 resolve 成绝对路径, 回显入站消息时
+    要转回去 (前端 img 只认 /files/<name>). data: / http / 目录外原样返回.
+    """
+    if not path or path.startswith(('data:', 'http://', 'https://')):
+        return path
+    parent, _, name = path.replace('\\', '/').rpartition('/')
+    if name and parent.rpartition('/')[2] == 'uploads':
+        return f'/files/{name}'
+    return path
 
 
 def split_content(content: list[dict]) -> tuple[str, list[str]]:

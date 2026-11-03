@@ -86,7 +86,7 @@ class GrpcClientTransport(Transport):
         """等首连完成(超时抛 TimeoutError)."""
         await asyncio.wait_for(self._ready.wait(), timeout=timeout)
 
-    async def stop(self) -> None:
+    async def close(self) -> None:
         if self._stopped:
             return
         self._stopped = True
@@ -196,7 +196,11 @@ class GrpcClientTransport(Transport):
             backoff = min(backoff * self.BACKOFF_FACTOR, self.BACKOFF_MAX)
 
     async def _connect_once(self) -> None:
-        self._channel = grpc.aio.insecure_channel(self.address)
+        # dial-in 是本地/内网直连语义: grpc 默认尊重 http(s)_proxy env,
+        # 系统代理会把 127.0.0.1 的 CONNECT 也劫走(502 时通时不通) ——
+        # 显式关闭 HTTP 代理探测, 永远直连
+        self._channel = grpc.aio.insecure_channel(
+            self.address, options=[('grpc.enable_http_proxy', 0)])
         await asyncio.wait_for(self._channel.channel_ready(),
                                timeout=self.BACKOFF_MAX)
         call = self._channel.stream_stream(

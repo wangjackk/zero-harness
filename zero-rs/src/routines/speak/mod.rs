@@ -192,9 +192,11 @@ async fn fetch_instruction(
 ) -> Result<Option<String>, String> {
     let mut kwargs = JsonObject::new();
     kwargs.insert("agent_id".to_string(), json!(agent_id));
-    let (child, _) = ctx.create("agent/state", Some(kwargs)).await?;
-    ctx.start_child(&child, 10).await?;   // 10 = 常规默认档
-    let state = ctx.wait_child(&child, 2).await?;
+    let child = ctx.create("agent/state", Some(kwargs)).await?;
+    child.start(10).await?; // 10 = 常规默认档
+    let state = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
+        .await
+        .map_err(|_| "wait agent/state timed out".to_string())??;
     Ok(state
         .get("tts_instruction")
         .and_then(JsonValue::as_str)

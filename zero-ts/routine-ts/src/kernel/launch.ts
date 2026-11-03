@@ -15,7 +15,7 @@
  *     const conn = await hub.connect(kernelRef)  // inproc: link 绑定 + catalog push;
  *                                                 // remote: grpc transport + 重连 + catalog push
  *     ...
- *     await conn.stop()  // 级联关停(grpc server → kernel → link / transport)
+ *     await conn.close()  // 级联关停(grpc server → kernel → link / transport)
  */
 import { GrpcClientTransport } from '../grpcClient'
 import type { RoutineHub } from '../hub'
@@ -76,20 +76,29 @@ export function remote(address: string): RemoteKernel {
   return new RemoteKernel(address)
 }
 
-/** hub.connect() 的产物:hub ↔ kernel 连接持有体,``stop()`` 级联关停. */
+/** hub.connect() 的产物:hub ↔ kernel 连接持有体,``close()`` 关闭连接. */
 export class Connection {
   constructor(readonly hub: RoutineHub, readonly kernel: KernelRef,
               readonly transport: Transport) {}
 
-  /** 级联关停:grpc server → kernel → link(inproc)/ transport(dial). */
-  async stop(): Promise<void> {
+  /** 关闭连接: kernel → grpc server → link(inproc)/ transport(dial).
+   *
+   *  kernel 只对**同进程** hub 的节点请求-确认(见 manager.stopNode): 那批 stop
+   *  必须趁 link 还活着发出去, 所以 kernel 在 link 之前。跨进程 hub 的节点只结算
+   *  kernel 侧的投影, 由对端在断链时自清 —— grpc 的关闭本身就是那条通告, 不需要
+   *  kernel 逐个节点去等确认。 */
+  async close(): Promise<void> {
     const k = this.kernel
     if (k instanceof InprocKernel) {
-      if (k.grpcServer) await k.grpcServer.stop()
       await k.kernel.stop()
+      if (k.grpcServer) {
+        // 0.5s: peer 是不断重连的 dial-in 客户端, 不会自己关流. 退出路上陪它
+        // 吃满 2s 只换来更慢的关停.
+        await k.grpcServer.stop(500)
+      }
       await k.link.stop()
     } else {
-      await this.transport.stop()
+      await this.transport.close()
     }
   }
 }

@@ -57,8 +57,10 @@ class CarNavigateManage(Routine):
                 await self._post(c, origin, 'start')
                 await self._wait(c, origin, True, 20.0)
             active = await self._status(c, origin)
-        return CarNavigateManageOutput(
-            action=inp.action, active=active).model_dump()
+        done = {'start': '启动', 'stop': '停止', 'restart': '重启'}[inp.action]
+        return {'content': f'导航栈已{done}, 现在{"在跑" if active else "没跑"}',
+                'details': CarNavigateManageOutput(
+                    action=inp.action, active=active).model_dump()}
 
     @staticmethod
     async def _status(c: AsyncClient, origin: str) -> bool:

@@ -121,7 +121,7 @@ class InProcessTransport(Transport):
     async def start(self) -> None:
         pass  # worker 由 link.start 统一起
 
-    async def stop(self) -> None:
+    async def close(self) -> None:
         pass
 
     async def send_event(self, payload: Dict[str, Any],
@@ -136,7 +136,7 @@ class InProcessTransport(Transport):
         return reply.get('routines', [])
 
     async def get_module_tree(self):
-        from .module_tree import ModuleTree
+        from ..module_tree import ModuleTree
         reply = await self.req({'event': REQ_GET_MODULE_TREE})
         return ModuleTree.from_dict(reply['tree'])
 

@@ -111,7 +111,7 @@ export class InProcessTransport extends Transport {
   constructor(private _link: InProcessLink) { super() }
 
   async start(): Promise<void> {}  // worker 由 link.start 统一起
-  async stop(): Promise<void> {}
+  async close(): Promise<void> {}
 
   async sendEvent(payload: Msg): Promise<void> {
     this._link.hubToKernel(payload)

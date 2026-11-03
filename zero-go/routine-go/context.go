@@ -14,7 +14,7 @@ type RoutineIO interface {
 	// lifecycle 出口
 	SendLifecycleCreated(id string, modules []string, peerID string) error
 	SendLifecycleStarted(id string, peerID string) error
-	SendLifecycleStopped(id string, reason string, result any, errMsg string, peerID string) error
+	SendLifecycleStopped(id string, reason TerminationReason, result any, errMsg, by, detail, peerID string) error
 	RequestStop(id string, peerID string) error
 
 	// routine 调 routine 反向事件
@@ -49,11 +49,11 @@ type RoutineIO interface {
 	Go(fn func())
 }
 
-// Transport 传输层抽象:入站投递 + 出站发送 + 启停.
+// Transport 传输层抽象:入站投递 + 出站发送 + 启动与关闭.
 // 对标 Python Transport.
 type Transport interface {
 	Start() error
-	Stop() error
+	Close() error
 	SendEvent(payload map[string]any, peerID string) error
 	// Req routine→kernel Req 查询(dial-in client 用)
 	Req(msg map[string]any) (map[string]any, error)
@@ -75,6 +75,8 @@ type invocationState struct {
 	mu             sync.Mutex
 	phase          phase // 生命周期相位:created/started/stopped
 	stopRequested  bool
+	stopReason     TerminationReason
+	stopBy         string
 	stopInProgress bool
 	stopFinalized  bool
 	stoppedSent    bool
@@ -82,8 +84,8 @@ type invocationState struct {
 	mainDone       chan struct{}
 	yieldUsed      bool // Run 中调过 ctx.Yield → 框架自动发 is_final 收尾
 	// handler 表(OnCreated/HandleRequest 中注册)
-	requestHandlers  map[string]RequestHandler
-	streamHandlers   map[string]StreamHandler
+	requestHandlers   map[string]RequestHandler
+	streamHandlers    map[string]StreamHandler
 	subscribeHandlers map[string]SubscribeHandler // key = namespace+"\x00"+topic
 }
 
@@ -113,6 +115,8 @@ func (s *invocationState) resetForStart() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stopRequested = false
+	s.stopReason = ""
+	s.stopBy = ""
 	s.stopInProgress = false
 	s.phase = phaseCreated
 }
@@ -194,20 +198,22 @@ func (s *invocationState) clearStopInProgress() {
 	s.mu.Unlock()
 }
 
-func (s *invocationState) requestStop() bool {
+func (s *invocationState) requestStop(reason TerminationReason, by string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopRequested {
 		return false
 	}
 	s.stopRequested = true
+	s.stopReason = reason
+	s.stopBy = by
 	return true
 }
 
-func (s *invocationState) isStopRequested() bool {
+func (s *invocationState) stopTermination() (bool, TerminationReason, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stopRequested
+	return s.stopRequested, s.stopReason, s.stopBy
 }
 
 func (s *invocationState) markStoppedSent() bool {
@@ -227,11 +233,11 @@ type RunContext struct {
 	Name   string
 	PeerID string
 
-	io       RoutineIO
-	runtime  *ServerRuntime
+	io        RoutineIO
+	runtime   *ServerRuntime
 	transport Transport
-	state    *invocationState
-	logger   *Logger
+	state     *invocationState
+	logger    *Logger
 }
 
 // AckTimeout create/acquire/release 等 kernel ack 默认超时.
@@ -626,7 +632,7 @@ var _ context.Context = (*runCtxAdapter)(nil)
 type runCtxAdapter struct{ ctx *RunContext }
 
 func (a *runCtxAdapter) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (a *runCtxAdapter) Done() <-chan struct{}        { return a.ctx.state.mainDone }
+func (a *runCtxAdapter) Done() <-chan struct{}       { return a.ctx.state.mainDone }
 func (a *runCtxAdapter) Err() error {
 	if a.ctx.state.isStopFinalized() {
 		return context.Canceled

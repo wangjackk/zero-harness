@@ -40,6 +40,7 @@ impl QueryService {
                     name: factory.routine_name().to_string(),
                     is_passive: factory.is_passive(),
                     priority: factory.passive_priority(),
+                    modules: factory.modules(None),
                     meta: factory.meta(),
                 })
                 .unwrap_or(Value::Null)

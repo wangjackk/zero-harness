@@ -78,6 +78,10 @@ class ModuleTree:
         self._cone_cache[module] = cone
         return cone
 
+    def children(self, module: str) -> List[str]:
+        """module 的直接子节点(不在树里返回空列表)."""
+        return list(self._children.get(module, []))
+
     def conflict(self, mods_a: List[str], mods_b: List[str]) -> bool:
         """两组 modules 是否冲突:任一对的 cone 相交即冲突.
 

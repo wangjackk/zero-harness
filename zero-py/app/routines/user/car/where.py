@@ -40,6 +40,8 @@ class CarWhere(Routine):
     name = 'car/where'
     meta: ClassVar[Dict[str, Any]] = {
         'readonly': True,
+        # 查询类: 结果就是答案本身, 见 status.py 同一处说明.
+        'observe': True,
         'description': (
             '查询小车当前所在区域(区域名): AMCL 位姿最新帧 → 车上区域表 '
             '(前端导航页标定)反查. 车不在线/导航栈未跑/不在任何区域时 '
@@ -82,5 +84,7 @@ class CarWhere(Routine):
             if x is not None and y is not None:
                 area = zones.locate(float(x), float(y),
                                     await zones.fetch_zones())
-        return CarWhereOutput(area=area).model_dump()
+        return {'content': (f'在「{area}」' if area
+                            else '不在任何标定区域内(或定位不可用)'),
+                'details': CarWhereOutput(area=area).model_dump()}
 

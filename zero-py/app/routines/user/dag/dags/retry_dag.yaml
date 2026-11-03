@@ -1,0 +1,32 @@
+# 测试:节点级 retry(指数退避)
+#
+# flaky_task 前 2 次故意失败,第 3 次成功.retry.max_attempts=3 足够覆盖.
+# 退避:delay_ms=1000 → 第 1 次重试等 1s,第 2 次等 2s(每次翻倍).
+#
+# 注意:FlakyTask 用模块级计数器累计失败次数,进程内只能演示一次成功路径;
+# 想重新看 retry 过程需重启服务(计数器归零).
+#
+# 跑:<run_dag dag="retry_dag"/>
+
+name: retry_dag
+description: 演示节点级 retry 指数退避
+
+nodes:
+  - id: flaky
+    routine: flaky_task
+    inputs:
+      fail_times: 2
+      tag: retry_dag
+    retry:
+      max_attempts: 3
+      delay_ms: 1000
+
+  - id: after
+    routine: summary_weather
+    depends_on: [flaky]
+    inputs:
+      data: "flaky 最终成功:$flaky.output"
+
+outputs:
+  flaky: flaky
+  after: after

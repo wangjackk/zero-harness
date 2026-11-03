@@ -1,0 +1,153 @@
+# find_skills DAG -- 对应 SKILL.md 6 步
+#
+# Step 1     parse_intent ── 用户原话 → 英文搜索关键词(sub_agent,结果直接是 str)
+#               │
+# Step 2/3    search       ── skills.sh/api/search(真实安装量)+ 输出 repos_json
+#               │
+# Step 4      verify_stars ── 从 repos_json 批量查 GitHub stars
+#               │
+# Step 5/6    recommend    ── LLM 综合 installs/stars/来源 → 推荐 → 人工审批
+#               │              批准后可调 install_skill 安装到 zero/skills
+#               ▼
+#            (submit 内部决定 approved,拒绝则带反馈重来)
+#
+# 运行:<run_dag dag="find_skills" question="怎么让 React 应用更快?"/>
+#
+# 注意(引擎约束):
+#   - $node.output 引用会被 str() 成字符串,list/dict 无法以原生对象跨节点传递.
+#     因此 search 明确输出 repos_json 字符串,verify_stars 再解析它.
+#   - sub_agent 直接返回 str,用 $node.output 即可
+
+name: find_skills
+description:
+  寻找合适的skill
+  若未检索到对应技能处理方式
+  告知用户暂无匹配技能
+  依托通用能力直接协助完成任务
+  指引用户自行创建专属技能,创建指令:npx skills init 自定义技能名
+  
+  参考回复示例:
+  未检索到相关配套技能.
+  我可以直接帮你处理该项任务,是否需要立即开始?
+
+  若该操作使用频繁,你可以自建专属技能,指令如下:
+  npx skills init my-xyz-skill
+
+inputs:
+  - name: question
+    type: str
+    desc: 用户原始问题或关键词,例如:"怎么让 React 更快" / "PR review" / "typescript"
+
+nodes:
+  # ── Step 1:明确用户需求 ──────────────────────────────────
+  - id: clarify_user_requirements
+    routine: sub_agent
+    inputs:
+      instructions: |
+        agent skill需求调研
+        明确用户需求
+        梳理用户诉求,确定三点信息:
+        所属领域(网页开发,测试,设计,部署等)
+        具体任务(编写测试用例,制作动效,代码评审等)
+        判断该任务是否存在现成配套skill
+        
+        提交合适的的skill 类别关键词等
+      prompt: |
+        $WI.question
+      tools:
+        - list_installed_skills
+        - ask
+
+  # ── Step 2 优先查看热门榜单 ─────────────────────────────────────
+  - id: view_hot_skills
+    routine: sub_agent
+    depends_on: [clarify_user_requirements]
+    output_format:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: "skill 全名,格式 owner/repo@skillId"
+          installs:
+            type: string
+            description: "安装量,如 25.1K"
+          reason:
+            type: string
+            description: "推荐理由"
+        required: [name, installs, reason]
+    inputs:
+      prompt: "$clarify_user_requirements.output"
+      instructions:
+        根据输入的skill类别关键词等进行搜索
+        
+        优先查看热门榜单
+        检索前先查看官网热门榜单,榜单按安装量排序,收录成熟常用技能.
+        
+        热门网页开发类技能参考:
+        vercel-labs/agent-skills:适配 React,Next.js,网页设计,单技能安装量超 10 万
+        anthropics/skills:前端设计,文档处理类技能,安装量超 10 万
+        
+        榜单无对应技能时,执行检索命令 search_skill [检索关键词]
+        使用示例:
+        用户询问 React 应用提速 → search_skill react performance
+        用户需要代码合并评审 → search_skill pr review
+        用户想要生成版本更新日志 → search_skill changelog
+        
+        常见技能分类
+        检索可参考以下分类关键词
+        
+        分类        检索示例
+        网页开发    框架,脚本语言,样式开发
+        测试调试    单元测试,自动化测试,端到端测试
+        运维部署    容器,集群,持续集成部署
+        文档编写    项目说明,版本日志,接口文档
+        代码优化    代码评审,语法校验,代码重构
+        界面设计    界面交互,设计规范,无障碍适配
+        效率办公    流程自动化,版本管理
+        高效检索小技巧
+        关键词精准化:用react testing替代宽泛的testing
+        替换同义词汇:检索部署可切换关键词尝试
+        锁定主流来源:多数优质技能出自两大官方仓库
+        
+        开发者资质判断(在 reason 中体现)
+        
+        完成任务后提交推荐的skills及其理由
+      tools:
+        - get_leaderboard
+        - find_in_leaderboard
+        - search_skill
+        - view_skill
+
+  # ── Step 3:硬性校验(安装量 / stars)─────────────────────────────────────
+  - id: verify_quality
+    routine: verify_quality
+    depends_on: [view_hot_skills]
+    inputs:
+      candidates: "$view_hot_skills.output"
+
+  # ── Step 4:展示推荐结果──────────────────────────────────
+  - id: recommend_skills
+    routine: ask_table
+    depends_on: [verify_quality]
+    inputs:
+      title: "推荐 Skills"
+      subtitle: "点击「安装」后复制指令到终端执行"
+      rows: "$verify_quality.output"
+      columns: |
+        [
+          {"key": "name",         "label": "技能名",   "width": "220px", "link_key": "url"},
+          {"key": "installs",     "label": "安装量",   "width": "70px"},
+          {"key": "stars",        "label": "Stars",   "width": "60px"},
+          {"key": "reason",       "label": "推荐理由", "wrap": true},
+          {"key": "quality_note", "label": "质量备注", "wrap": true, "width": "160px"}
+        ]
+      row_actions: |
+        [
+          {"label": "安装", "done_label": "已复制",
+           "emit": "install", "type": "primary",
+           "value_key": "name", "condition_key": "pass"}
+        ]
+
+outputs: recommend_skills

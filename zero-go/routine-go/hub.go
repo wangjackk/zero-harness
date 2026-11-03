@@ -66,7 +66,7 @@ func (h *RoutineHub) buildInboundHandlers() {
 		LifecycleStarted:             h.onLifecycleStarted,
 		LifecycleStopped:             h.onLifecycleStopped,
 		RoutineRejected:              h.onRoutineRejected,
-		RoutineCreated:             h.onRoutineCreated,
+		RoutineCreated:               h.onRoutineCreated,
 		RoutineAcquired:              h.onRoutineAcquired,
 		RoutineModuleLoaded:          h.onRoutineModuleLoaded,
 		RoutineModuleUnloaded:        h.onRoutineModuleUnloaded,
@@ -106,17 +106,23 @@ func (h *RoutineHub) SendLifecycleStarted(id string, peerID string) error {
 }
 
 // SendLifecycleStopped 发 lifecycle.stopped.
-func (h *RoutineHub) SendLifecycleStopped(id string, reason string, result any, errMsg string, peerID string) error {
+func (h *RoutineHub) SendLifecycleStopped(id string, reason TerminationReason, result any, errMsg, by, detail, peerID string) error {
 	payload := map[string]any{
 		"event":  LifecycleStopped,
 		"id":     id,
-		"reason": reason,
+		"reason": string(reason),
 	}
 	if result != nil {
 		payload["result"] = result
 	}
 	if errMsg != "" {
 		payload["error"] = errMsg
+	}
+	if by != "" {
+		payload["by"] = by
+	}
+	if detail != "" {
+		payload["detail"] = detail
 	}
 	return h.sendEvent(payload, peerID)
 }
@@ -442,9 +448,9 @@ func (h *RoutineHub) sendCatalogDeregister(name, reqID, peerID string) error {
 
 func (h *RoutineHub) sendCatalogDeregisterCmdAck(reqID string, ok bool, errMsg string, peerID string) error {
 	payload := map[string]any{
-		"event":   CatalogDeregisterCmdAck,
-		"req_id":  reqID,
-		"ok":      ok,
+		"event":  CatalogDeregisterCmdAck,
+		"req_id": reqID,
+		"ok":     ok,
 	}
 	if errMsg != "" {
 		payload["error"] = errMsg
@@ -519,9 +525,20 @@ func (h *RoutineHub) DispatchInbound(peerID string, msg map[string]any) {
 	}
 }
 
-// OnPeerDown peer 断开(transport 通知)→ 强制清理该 peer 的所有 running instance.
+// OnPeerDown peer 断开(transport 通知)→ 清理该 peer 的所有 running instance.
+//
+// 异步: server 侧(stream writer 收尾)不能阻塞在这里.
 func (h *RoutineHub) OnPeerDown(peerID string) {
 	h.Runtime.Go(func() { h.Lifecycle.ForceStopPeer(peerID) })
+}
+
+// OnPeerDownAndWait 与 OnPeerDown 同一件事, 但等清理完成才返回.
+//
+// client 重连循环用它: 销毁期与重建期重叠会撞 rid —— kernel 重启后 rid 从头
+// 分配, 老实例的 cleanup 会误杀重建出来的新实例(对标 py hub.handle_peer_down
+// 的 "await 销毁完成才返回", ts 的 handlePeerDown, rs 的 stop_all_local join)。
+func (h *RoutineHub) OnPeerDownAndWait(peerID string) {
+	h.Lifecycle.ForceStopPeer(peerID)
 }
 
 // onInbound kernel→server 回向事件.按 event 查 inboundHandlers 分发表派发.
@@ -550,12 +567,14 @@ func (h *RoutineHub) onLifecycleStopped(msg map[string]any) {
 	if handle == nil {
 		return
 	}
-	reason, _ := msg["reason"].(string)
+	reason := TerminationReasonFromWire(msg["reason"])
 	errMsg, _ := msg["error"].(string)
-	if errMsg == "" && reason == ReasonError {
+	if errMsg == "" && reason == ReasonFailed {
 		errMsg = fmt.Sprintf("routine stopped with reason=%s", reason)
 	}
-	handle.NotifyDone(msg["result"], errMsg, reason)
+	by, _ := msg["by"].(string)
+	detail, _ := msg["detail"].(string)
+	handle.NotifyDone(msg["result"], errMsg, reason, by, detail)
 	h.Runtime.PopHandle(cid)
 }
 
@@ -905,10 +924,10 @@ func (h *RoutineHub) serveStream(state *invocationState, data map[string]any, so
 	streamID, _ := data[EnvelopeStreamID].(string)
 	replyTo, _ := data[EnvelopeReplyTo].(string)
 	writer := &providerStreamWriter{
-		hub:        h,
-		state:      state,
-		streamID:   streamID,
-		replyTo:    replyTo,
+		hub:      h,
+		state:    state,
+		streamID: streamID,
+		replyTo:  replyTo,
 	}
 	if err := handler(source, data, writer.toStreamWriter()); err != nil {
 		writer.sendEOF("error", err.Error())
@@ -992,7 +1011,7 @@ func StartServer(registry *Registry, modules []string, address string, hubID str
 	if err := transport.Start(); err != nil {
 		return err
 	}
-	defer transport.Stop()
+	defer transport.Close()
 	return transport.Wait()
 }
 
@@ -1007,7 +1026,7 @@ func StartClient(registry *Registry, modules []string, address string, hubID str
 	if err := transport.Start(); err != nil {
 		return err
 	}
-	defer transport.Stop()
+	defer transport.Close()
 	return transport.Wait()
 }
 

@@ -1,0 +1,43 @@
+# 测试:when 条件分支 + $node.output.field 字段提取 + 多 output
+#
+#   classify ──┬──(when level==high)──► high_path
+#              └──(when level==low )──► low_path
+#
+# echo 把 kwargs 原样返回成 dict,所以 $classify.output.level 提取其中的 level 字段.
+# 没命中 when 的分支会被标成 skipped,对应 output 为 null.
+#
+# 跑:<run_dag dag="branch_dag" inputs='{"level":"high"}'/>
+#    <run_dag dag="branch_dag" inputs='{"level":"low"}'/>
+
+name: branch_dag
+description: 演示 when 条件分支与字段提取
+
+inputs:
+  - name: level
+    type: str
+    desc: high | low
+    default: high
+
+nodes:
+  - id: classify
+    routine: echo
+    inputs:
+      level: "$WI.level"
+
+  - id: high_path
+    routine: summary_weather
+    depends_on: [classify]
+    when: "$classify.output.level == 'high'"
+    inputs:
+      data: "走了高优先级分支"
+
+  - id: low_path
+    routine: summary_weather
+    depends_on: [classify]
+    when: "$classify.output.level == 'low'"
+    inputs:
+      data: "走了低优先级分支"
+
+outputs:
+  high: high_path
+  low: low_path

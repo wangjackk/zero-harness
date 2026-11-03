@@ -1,0 +1,116 @@
+# moss 装配清单 ---- 启动唯一入口: python -m app.main app/moss.yaml
+#
+# 与 routines.yaml 同为"启用哪些 routine", 只多一段 ``modules:``(kernel 的模块树).
+# 模块 = 同一时刻只容一个持有者的东西(code 的解释器、小车的底盘); 树里没有的
+# 模块在 start 时直接 KeyError, 所以换 profile 要连树一起换 ---- 树是身体拓扑,
+# 清单是零件名单.
+#
+# 装配参数(词表/prompt 片段)也在这份数据里, 不写在代码默认值里.
+#
+# **Moss 必须排在最后**: passive routine 一注册就被 kernel 拉起, 它按名字
+# create ghost/shell/mindflow, 那三条路由得已经在。
+
+modules:
+  root:
+    name: 根
+    children: [code, car]
+  code: {}
+  # 车身: 顶层节点 = 能力清单里的分组名(清单里 car/* 印在 car 组下).
+  # wheels 是真正被占的节点 —— 一套底盘同时只听一个动作, 动作族在 start 时
+  # 互斥(撞上就是 StartError 当场回灌, 不是排队). 祖先一并存在, 以后添"手臂"
+  # 之类不会跟底盘抢冲突锥.
+  car:
+    name: 车身
+    children: [wheels]
+  wheels:
+    name: 底盘
+
+routines:
+  # 灵魂与身体: Moss 组装这三个(ghost 是常驻, mindflow 是桥梁)
+  - routines/user/moss/ghost.py
+  - routines/user/moss/shell.py
+  - routines/user/moss/mindflow.py
+  - routines/user/moss/channel.py
+  - routines/user/moss/container.py
+
+  # 词表里的 routine(名字必须与 BUILTIN_VERBS 成对, 见 moss.py)
+  - routines/user/moss/commands/say.py
+  - routines/user/moss/commands/chan        # chan_create/status/clear/delete
+  - routines/user/moss/commands/code        # code
+  - routines/user/moss/code_kernel.py       # code 的执行宿主(不入词表)
+  - routines/user/moss/commands/sleep.py
+  - routines/user/moss/commands/noop.py
+  - routines/user/moss/commands/control.py  # interrupt
+  - routines/user/moss/commands/notify.py
+  - routines/user/moss/commands/query_weather.py
+  - routines/user/moss/commands/asr_mode.py
+  # creator 的内部桥: 把 Shell.registry 包成 call 可调的 routine, 让 dynamic
+  #   新能力注册后能挂进/摘出当前词表(不进 CTML 词表).
+  - routines/user/moss/registry.py
+  # routine 运维口: creator 用 list/check_name/reload 完成查重、确认热注册
+  #   与手动收敛; doc 同时是 Moss 的按需文档口.
+  - routines/user/routine
+  # 看图的唯一入口: 读本地图片, 图随回执载荷 images 走, 由脑子组装成
+  # 多模态 block 附在 <observe> 那条消息上(见 brain._with_images).
+  # 与 xml agent 共用一份实现, 差别只在"有没有调用者身份"(moss 没有).
+  - routines/user/xml/read_image.py
+
+  # 黑板(常驻, 首次 bb_* 才连服务)
+  - routines/user/moss/board
+  - routines/user/moss/commands/board
+
+  # prompt 片段(被 Moss 按名字 call 出来拼一次); creator 教模型用 code 在
+  #   dynamic 创作, 等 watcher 注册后经 shell/registry 挂载并真实自验.
+  - routines/user/moss/prompt
+  - routines/user/moss/dynamic
+
+  # 耳朵: 麦克风 + 豆包 SAUC 识别; key_listen 是 ptt 的按键监听
+  - routines/user/moss/asr
+  - routines/user/moss/key_listen.py
+
+  # 设备事件总线(车端 zmqproxy): bus_listener 被动常驻, 注册即拉起.
+  # car/snap 的拍照走它的 req snap(rgb 流临时订阅 + 排干留最新 + JPG 落盘);
+  # 它还把 voice/vision 域事件按域 publish 到 pubsub(本进程暂时没人订).
+  # 总线地址取 config.yaml network.device_bus / device_bus_pub, 不在这里配.
+  - routines/user/device_bus
+
+  # 车身: 小车(幻尔 ROSOrin). 两层分工, 别混:
+  #   ros_client 单例(app/routines/user/hiwonder/ros_client.py)是**传输层**
+  #     —— 常驻 rosbridge WS + 断线自愈 + 订阅表, 地址取 config.yaml
+  #     network.ros_bridge; car/ctrl 直接 import 它, 不依赖任何 routine;
+  #   ros_bridge 是**感知桥**(passive): 动态订阅 ROS 话题 → 同名 pubsub,
+  #     status/where/map/navigate 靠它取电池/里程计/AMCL 位姿.
+  # 底盘与 rosbridge 由车端 systemd 自启(zero-chassis / zero-rosbridge),
+  # 上电即控制面就绪 —— 本进程只当客户端, 不做引导面.
+  # 注册 ≠ 词表: 三个包整个进注册表, 但只有 moss.py 词表里那几个能写标签.
+  # 不上词表的两个(本进程没有它们的生产者, 上了只会让灵魂空等):
+  #   car/gaze(wait agent_status —— 那是 xml_agent 的事)
+  #   car/wake_track(wait voice wake —— 本进程的耳朵走 asr, 不发 wake 帧)
+  - routines/user/hiwonder
+  - routines/user/car
+
+  # 一体(最后): 词表与 prompt 片段是装配参数, 写这里而不是代码默认值
+  # verbs 里是 **注册名**(car/move), 标签就写同名 <car/move .../> —— 词法认
+  # 斜杠(见 body._TAG_NAME). 词表里没有的名字, 身体当场拒(闸门在 shell).
+  - path: routines/user/moss/moss.py
+    kwargs:
+      verbs: [query_weather, read_image,
+              car/move, car/turn, car/steer, car/shake, car/stop,
+              car/status, car/where, car/map, car/snap,
+              car/navigate, car/navigate/manage, car/track]
+      # 能力清单两级披露: detail 里的详列(签名/参数说明/示例), 名单外只印名字,
+      # 模型要用时先 <routine/doc name="…"/> 取. 前缀是每拍都在的常驻成本 ——
+      # 常客是语法与轨(say/_/all/code/interrupt), 车身那种一次对话摸不到两次,
+      # 名字在眼前就够了. 删一个名字 = 它退回裸名; 全删 = 空 =
+      # 退回全详列(不会静默丢用法). 名字写标签面写法(`_`), 不是 `__scope__`.
+      detail: [say, asr_mode, noop, _, all, any, loop, code,
+               chan_create, chan_status, chan_clear, chan_delete,
+               interrupt, sleep, routine/doc, notify, read_image]
+      # 出厂回执: 调它就是为了看结果, 不让模型每拍手写 observe="true".
+      # 写在这具身体这边, 不写进 routine 的 meta —— routine/doc 与 read_image
+      # 是跨身体共用的通用件(xml agent 也用), 不该带 moss 的调用语法.
+      observe: [routine/doc, read_image]
+      prompts: [prompt/persona, prompt/protocol, prompt/creator, prompt/capability]
+
+  # 清单/源码变更热重载(盯的就是这份文件)
+  - routines/watcher.py

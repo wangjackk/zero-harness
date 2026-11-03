@@ -24,10 +24,13 @@ type RoutineHandle struct {
 	// nil=尚未 start.编排器可读(h1.Priority vs h2.Priority 辅助裁决).
 	Priority *int
 
-	ctx     *RunContext
-	result  any
-	errMsg  string
-	reason  string
+	ctx    *RunContext
+	result any
+	errMsg string
+	// Reason 与子侧 OnStopped 一致；Wait 不据此分流。
+	Reason TerminationReason
+	By     string // 发起者 rid / host；抢占时为驱逐者 rid
+	Detail string // 人类可读补充，业务判断不要解析它
 
 	startedMu sync.Mutex
 	startedCh chan struct{}
@@ -38,8 +41,8 @@ type RoutineHandle struct {
 	ack   chan ackResult // start/stop/destroy 回执
 
 	// body 迭代
-	bodyCh    chan any
-	bodyDone  atomic.Bool
+	bodyCh   chan any
+	bodyDone atomic.Bool
 
 	// 生命周期回调
 	OnStartedHandler func(h *RoutineHandle)
@@ -48,10 +51,10 @@ type RoutineHandle struct {
 
 func newRoutineHandle(childID, name string, ctx *RunContext, modules []string) *RoutineHandle {
 	return &RoutineHandle{
-		ID:       childID,
-		Name:     name,
-		Modules:  modules,
-		ctx:      ctx,
+		ID:        childID,
+		Name:      name,
+		Modules:   modules,
+		ctx:       ctx,
 		startedCh: make(chan struct{}),
 		doneCh:    make(chan struct{}),
 		ack:       nil,
@@ -84,7 +87,7 @@ func (h *RoutineHandle) IsDone() bool {
 // Start 让 kernel start 子命令.失败 raise StartError.
 //
 // priority(模块冲突时的抢占裁决):incoming 严格大于全部第三方 holder 才逐个驱逐
-// (cascade stop,reason='force' 透传)后 start;存在 >= 平级 holder 时不驱逐任何
+// (cascade stop,reason=PREEMPTED 透传)后 start;存在 >= 平级 holder 时不驱逐任何
 // 节点,原样拒(平级不抢).默认 10=常规默认档;0 为最低档,永无驱逐资格.
 // 优先级只裁第三方(永不驱逐自己/祖先).
 func (h *RoutineHandle) Start(priority int) error {
@@ -144,7 +147,7 @@ func (h *RoutineHandle) startCommon(tryMode bool, priority int) error {
 // 回执(rejected)无人认领 ---- 只能靠 ack 超时兜底. 入口即报错.
 func (h *RoutineHandle) requireNotDone(op string) error {
 	if h.IsDone() {
-		return fmt.Errorf("%s: already done (reason=%s), cannot %s", h, h.reason, op)
+		return fmt.Errorf("%s: already done (reason=%s), cannot %s", h, h.Reason, op)
 	}
 	return nil
 }
@@ -236,10 +239,12 @@ func (h *RoutineHandle) NotifyStarted() {
 }
 
 // NotifyDone lifecycle.stopped 到达.
-func (h *RoutineHandle) NotifyDone(result any, errMsg string, reason string) {
+func (h *RoutineHandle) NotifyDone(result any, errMsg string, reason TerminationReason, by, detail string) {
 	h.result = result
 	h.errMsg = errMsg
-	h.reason = reason
+	h.Reason = reason
+	h.By = by
+	h.Detail = detail
 	// 兜底:错过 started 直接 done 时也唤醒 WaitStarted
 	h.startedMu.Lock()
 	select {

@@ -13,7 +13,9 @@
 | `handle.modules` | `Optional[list[str]]` | 子 routine `on_created()` 返回的占用 modules(编排器据此算冲突) |
 | `handle.result` | `Any` | 子 routine `run()` 的返回值(stopped 后填) |
 | `handle.error` | `Optional[str]` | 子 routine 异常停止时的 error string |
-| `handle.reason` | `Optional[str]` | `lifecycle.stopped` 的 wire reason(`AUTO/STOP/ERROR/CANCEL/FORCE/DISCONNECT`) |
+| `handle.reason` | `Optional[TerminationReason]` | 终止原因，与子侧 `on_stopped` 使用同一枚举 |
+| `handle.by` | `Optional[str]` | 结构化发起者：抢占者 rid / 失联 host；其他情况可为 `None` |
+| `handle.detail` | `str` | 人类可读补充说明，仅供日志，不作为业务判断依据 |
 
 ## 状态检查
 
@@ -38,7 +40,7 @@ await handle.start(20)             # 高优: 冲突时驱逐低优 holder 后 st
 
 - 失败(模块冲突/父未 started):抛 `StartError`。
 - 需 ctx 绑定 + **父 started**。
-- **priority 仲裁**(冲突时才生效):incoming 优先级**严格大于**全部第三方 holder 才逐个驱逐(cascade stop,`reason='force'` 透传)后 start;存在 `>=` 平级 holder 时不驱逐任何节点,原样抛 `StartError`(平级不抢)。档位约定(纯数字,无常量):`10=常规(默认档) / 20=用户驱动 / 100=安全级`;`0~9` 留给低档(后台/可牺牲类,可被默认档驱逐),`0` 为最低档永无驱逐资格。默认 `10` 即旧 call 语义:平级冲突即拒。优先级只裁第三方(永不驱逐自己/祖先;父子级联停走树权威)。
+- **priority 仲裁**(冲突时才生效):incoming 优先级**严格大于**全部第三方 holder 才逐个驱逐(cascade stop,`reason=PREEMPTED` 透传)后 start;存在 `>=` 平级 holder 时不驱逐任何节点,原样抛 `StartError`(平级不抢)。档位约定(纯数字,无常量):`10=常规(默认档) / 20=用户驱动 / 100=安全级`;`0~9` 留给低档(后台/可牺牲类,可被默认档驱逐),`0` 为最低档永无驱逐资格。默认 `10` 即旧 call 语义:平级冲突即拒。优先级只裁第三方(永不驱逐自己/祖先;父子级联停走树权威)。
 
 ### `await handle.try_start() -> Optional[StartError]`
 
@@ -79,6 +81,18 @@ await handle.destroy()   # 清 created 态
 
 - 已 start 的 routine 调本方法会被 kernel 拒(`rejected op=destroy`)——该用 `stop`。
 - **不要求父 started**(create 也不要求)。
+
+### `await handle.send(data) -> None`
+
+给子 routine 发一条定向消息(`message.send`,落到它的 `on_message`)。**created 后即可发**,消息先进实例 mailbox,`start` 早晚都不丢;与 `start/stop` 不同,这条不等回执。
+
+```python
+h = await self.create('sink', {})
+await h.send({'text': 'hi'})   # 先喂,后 start 也不丢
+await h.start()
+```
+
+载荷是业务自己的协议,框架不解析。要在句柄上长本业务的动词,由调用方在自己这一侧挂(框架句柄不因此多懂一个概念)。
 
 ## 等待
 
@@ -151,6 +165,8 @@ async def on_started(h: RoutineHandle) -> None:
     print(f'子 {h.id} started')
 
 async def on_stopped(h: RoutineHandle) -> None:
+    if h.reason is TerminationReason.PREEMPTED:
+        print(f'子 {h.id} 被 {h.by} 抢占')
     print(f'子 {h.id} stopped, result={h.result}')
 
 handle = await self.create('worker', {...})

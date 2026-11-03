@@ -1,10 +1,12 @@
 pub mod context;
+pub mod handle;
 pub mod messaging;
 pub mod module;
 pub mod routine;
 pub mod stream;
 
-pub use context::{HandleReply, ReqReply, RoutineIo, RunContext, RunContextOptions, CreateReply};
+pub use context::{CreateReply, ReqReply, RoutineIo, RunContext, RunContextOptions};
+pub use handle::{HandleCallback, RoutineHandle, RoutineTermination};
 pub use messaging::{
     request_spec, subscribe_spec, Namespace, RequestHandler, RequestSpec, RoutineSource,
     SubscribeHandler, SubscribeSpec, STREAM_OPEN_EVENT,

@@ -76,4 +76,7 @@ _mcp_probe/
 # 站点截图与预览产物 (体积大, 本地保留)
 routine-atlas/preview/
 routine-atlas/dist/
+routine-atlas/.build-check/
+# 验收页由 scripts/growth-frames.cjs 生成, 不入库
+growth-frames.html
 

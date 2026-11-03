@@ -32,7 +32,7 @@ class CarShakeInput(BaseModel):
     def _check(self) -> 'CarShakeInput':
         # 线性轴受 car/move 同款限幅; 角轴受 turn_rate 同款限幅
         if self.mode != 'yaw' and self.amp > 0.6:
-            raise ValueError('x/y 模式 amp 须 <= 0.6 m/s')
+            raise ValueError('x/y 模式 amp 须 ≤ 0.6 m/s')
         return self
 
 
@@ -41,6 +41,8 @@ class CarShake(MotionRoutine):
 
     name = 'car/shake'
     meta: ClassVar[Dict[str, Any]] = {
+        # 取值范围不写在这里: 每个参数自己的 description 会作为子行印进
+        # 清单(见 prompt/capability._param_lines), 这里只说"是什么"
         'description': '小车正弦摆动(摇头/点头/扭腰)',
         'input_schema': CarShakeInput.model_json_schema(),
         'output_schema': MotionOutput.model_json_schema(),

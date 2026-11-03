@@ -14,18 +14,8 @@ import inspect
 from typing import Any, Dict, Optional, Type
 
 from .ctx import RunContext
-from .protocol import ControlDoneReason
+from .protocol import TerminationReason
 from .routine import Routine
-
-# on_stopped reason 字符串 -> wire enum 映射.
-_REASON_TO_ENUM: Dict[str, ControlDoneReason] = {
-    'auto': ControlDoneReason.AUTO,
-    'stop': ControlDoneReason.STOP,
-    'destroyed': ControlDoneReason.DESTROYED,
-    'error': ControlDoneReason.ERROR,
-    'cancel': ControlDoneReason.CANCEL,
-    'force': ControlDoneReason.FORCE,
-}
 
 
 class LifecycleManager:
@@ -35,18 +25,37 @@ class LifecycleManager:
         self.hub = hub
         self.runtime = runtime
 
-    async def _send_stopped(self, rid: str, *, reason: str,
-                            instance: Optional[Routine] = None,
-                            result: Any = None,
-                            error: Optional[str] = None) -> None:
-        wire_reason = _REASON_TO_ENUM.get(reason, ControlDoneReason.UNKNOWN)
+    async def _fire_on_stopped(self, instance: Routine, rid: str,
+                               **kwargs) -> None:
+        """调业务 ``on_stopped`` 钩子;钩子异常只记日志,不阻断收尾.
+
+        ``_send_stopped`` + ``_cleanup`` 是 lifecycle 的硬承诺(父侧
+        ``handle._done`` 靠 stopped 回报置位), 不能被业务钩子的异常吃掉
+        ---- 否则 kernel 收不到 stopped、父侧 ``await handle`` 永远挂住.
+        ``on_created`` / ``auto_subscribe`` 已有同款兜底, 这里补齐 on_stopped 面.
+        CancelledError 原样传播(取消语义优先, 不吞).
+        """
+        try:
+            await instance.on_stopped(**kwargs)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.runtime.logger.exception(
+                f'{instance.name}#{rid} on_stopped failed: {exc}')
+
+    async def _send_stopped(
+            self, rid: str, *, reason: TerminationReason,
+            instance: Optional[Routine] = None, result: Any = None,
+            error: Optional[str] = None, by: Optional[str] = None,
+            detail: str = '') -> None:
         # 幂等守卫:runner 与 stop_runner 并发都调,靠 instance 上的
         # _stopped_sent 标志保证只发一次.instance=None(routine 未找到,一次性
         # 发,无竞态)跳过守卫.
         if instance is not None and not instance._mark_stopped_sent():
             return
         await self.hub.send_lifecycle_stopped(
-            id=rid, reason=wire_reason, result=result, error=error,
+            id=rid, reason=reason, result=result, error=error,
+            by=by, detail=detail,
         )
 
     def _cleanup(self, rid: str) -> None:
@@ -105,8 +114,10 @@ class LifecycleManager:
 
         cls = self.runtime.routines.get_routine(name)
         if cls is None:
-            self.runtime.logger.error(f'routine not found: {name}#{rid}')
-            await self._send_stopped(rid, reason='error')
+            error = f'routine not found: {name}#{rid}'
+            self.runtime.logger.error(error)
+            await self._send_stopped(
+                rid, reason=TerminationReason.FAILED, error=error)
             return
 
         instance, ctx = await self._instantiate(rid, name, cls, kwargs)
@@ -163,22 +174,36 @@ class LifecycleManager:
             except asyncio.CancelledError:
                 if instance.is_stop_finalized():
                     return
-                await instance.on_stopped(reason='cancel')
+                reason = TerminationReason.CANCELLED
+                await self._fire_on_stopped(instance, rid, reason=reason)
+                # 直接取消也要闭合父侧等待;只有 graceful stop 已接管时才跳过.
+                await self._send_stopped(rid, instance=instance, reason=reason)
                 self._cleanup(rid)
                 return
             except Exception as exc:
                 self.runtime.logger.exception(f'{name}#{rid} failed: {exc}')
-                await instance.on_stopped(reason='error', detail=str(exc))
+                reason = TerminationReason.FAILED
+                await self._fire_on_stopped(
+                    instance, rid, reason=reason, detail=str(exc))
                 await self._send_stopped(
-                    rid, instance=instance, reason='error', error=str(exc),
+                    rid, instance=instance, reason=reason, error=str(exc),
+                    detail=str(exc),
                 )
                 self._cleanup(rid)
                 return
-            reason = ('force' if instance.is_force_stop()
-                      else 'stop' if instance.is_stop_requested() else 'auto')
-            await instance.on_stopped(reason=reason, result=result)
+            reason = (
+                TerminationReason.PREEMPTED if instance.is_force_stop()
+                else TerminationReason.STOPPED if instance.is_stop_requested()
+                else TerminationReason.COMPLETED
+            )
+            by = instance.stop_by() or None
+            detail = f'evicted by {by}' if by else ''
+            await self._fire_on_stopped(
+                instance, rid, reason=reason, result=result,
+                by=by, detail=detail)
             await self._send_stopped(
                 rid, instance=instance, reason=reason, result=result,
+                by=by, detail=detail,
             )
             self._cleanup(rid)
 
@@ -225,20 +250,25 @@ class LifecycleManager:
             self.runtime.logger.exception(
                 f'{instance.name}#{rid} destroy: destroy() failed: {exc}',
             )
-        await instance.on_stopped(reason='destroyed', result=stop_result)
-        await self._send_stopped(rid, instance=instance, reason='destroyed')
+        reason = TerminationReason.DESTROYED
+        await self._fire_on_stopped(
+            instance, rid, reason=reason, result=stop_result)
+        await self._send_stopped(
+            rid, instance=instance, reason=reason, result=stop_result)
         self._cleanup(rid)
 
-    async def _graceful_stop(self, rid: str, instance: Routine, *,
-                             force: bool = False, by: str = '',
-                             notify_kernel: bool = True) -> None:
+    async def _graceful_stop(
+            self, rid: str, instance: Routine, *,
+            reason: TerminationReason = TerminationReason.STOPPED,
+            by: str = '', notify_kernel: bool = True) -> None:
         """graceful stop 核心: stop hook → 等/超时 cancel → on_stopped →
         cleanup. notify_kernel=False 供 transport 断连本地销毁(kernel 世界
         已死, stopped 回报无意义)."""
         self.runtime.logger.info(f'stop_runner #{rid} begin')
         try:
             if not instance.is_stop_requested():
-                instance._request_stop(force=force, by=by)
+                instance._request_stop(
+                    force=reason is TerminationReason.PREEMPTED, by=by)
             stop_result = None
             try:
                 stop_result = await asyncio.wait_for(
@@ -276,15 +306,21 @@ class LifecycleManager:
                     self.runtime.logger.exception(
                         f'{instance.name}#{rid} main task await error: {exc}',
                     )
-            on_reason = 'force' if instance.is_force_stop() else 'stop'
-            on_detail = (f'evicted by {instance.stop_by()}'
-                         if instance.is_force_stop() else '')
-            await instance.on_stopped(reason=on_reason, result=stop_result,
-                                      detail=on_detail)
+            on_reason = (
+                TerminationReason.PREEMPTED if instance.is_force_stop()
+                else reason
+            )
+            on_by = instance.stop_by() or None
+            on_detail = (f'evicted by {on_by}'
+                         if on_reason is TerminationReason.PREEMPTED and on_by
+                         else '')
+            await self._fire_on_stopped(
+                instance, rid, reason=on_reason, result=stop_result,
+                by=on_by, detail=on_detail)
             if notify_kernel:
                 await self._send_stopped(
                     rid, instance=instance, reason=on_reason,
-                    result=stop_result,
+                    result=stop_result, by=on_by, detail=on_detail,
                 )
             self._cleanup(rid)
         finally:
@@ -292,7 +328,7 @@ class LifecycleManager:
 
     async def handle_stop(self, msg: Dict[str, Any]) -> None:
         """lifecycle.stop(kernel→hub):graceful stop(stop hook → 等/超时 cancel →
-        stopped 回报).带 reason=force 时是驱逐,透传到 on_stopped."""
+        stopped 回报).PREEMPTED 携带驱逐者 by,与 on_stopped 共用枚举."""
         rid = str(msg.get('id', ''))
         instance = self.runtime.running_instances.get(rid)
         if instance is None:
@@ -307,12 +343,12 @@ class LifecycleManager:
                 f'(in_progress={instance.is_stop_in_progress()}, '
                 f'finalized={instance.is_stop_finalized()})')
             return
-        # force 驱逐:kernel 发 lifecycle.stop 带 reason="force" + by(evictor rid).
-        stop_reason = str(msg.get('reason', ''))
+        stop_reason = TerminationReason.from_wire(msg.get('reason'))
+        if stop_reason is TerminationReason.UNKNOWN:
+            stop_reason = TerminationReason.STOPPED
         stop_by = str(msg.get('by', ''))
-        force = stop_reason == 'force'
         self.runtime._spawn(self._graceful_stop(
-            rid, instance, force=force, by=stop_by))
+            rid, instance, reason=stop_reason, by=stop_by))
 
     async def stop_all_local(self) -> None:
         """transport 断连的本地全量销毁: 不区分 passive 一律停掉 ---- 老实例
@@ -328,7 +364,9 @@ class LifecycleManager:
             if not instance.begin_stop():
                 continue
             tasks.append(asyncio.ensure_future(
-                self._graceful_stop(rid, instance, notify_kernel=False)))
+                self._graceful_stop(
+                    rid, instance, reason=TerminationReason.DISCONNECTED,
+                    notify_kernel=False)))
         if not tasks:
             return
         results = await asyncio.gather(*tasks, return_exceptions=True)

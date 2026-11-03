@@ -2,7 +2,8 @@
 
 职责:
 - HTTP 端点:``/health`` ``/run_routine``(POST, 名字走 body, 格式自由可含
-  ``/``; X-Agent-Id 头指定调用方身份) ``/upload`` ``/files`` ``/docs``
+  ``/``; X-Agent-Id 头指定调用方身份) ``/files/upload``
+  ``/files/download/{name}`` ``/files/{name}`` ``/docs``
   (路由定义见 ``app.build_app``)----routine 能力的唯一 HTTP 契约
   是 /run_routine, 其余专用路由(agents/models/tree 等)已删, 统一走 routine
 - WS 端点:``/ws``----前端主通道,处理 user_input/run/agent/ui_request 等
@@ -329,6 +330,11 @@ class WebServer(Routine):
     @subscribe('usage')
     async def on_usage(self, source, data: dict) -> None:
         await self._broadcast({'type': 'usage', **data})
+
+    @subscribe('dag_event')
+    async def on_dag_event(self, source, data: dict) -> None:
+        """RunDag 的实时节点事件 → 前端 DAG 画布."""
+        await self._broadcast({'type': 'dag_event', **data})
 
     # ------------------------------------------------------------------
     # WS 广播

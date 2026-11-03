@@ -32,7 +32,7 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     void (async () => {
-      await conn.stop()
+      await conn.close()
       process.exit(0)
     })()
   }

@@ -191,6 +191,15 @@ class LLMClient:
         return self._provider.model_id
 
     @property
+    def supports_images(self) -> bool:
+        """本模型是否吃图片输入 (models.yaml 的 ``image``, 缺省 false).
+
+        组装侧 (谁把图拼成 content blocks 谁就是) 据此决定附不附: 不支持
+        还发是 400 当场失败, 支持却没发只是白看 —— 缺省落在不发那一侧.
+        """
+        return self._provider.supports_images
+
+    @property
     def reasoning_effort(self) -> str | None:
         """当前 reasoning effort ('high'/'medium'/'low'/None). None = 不带 reasoning."""
         return self._reasoning_effort

@@ -124,7 +124,8 @@ class Evolve(Routine):
             doc = await self._invoke('routine/doc', {'name': target}, timeout=10.0)
         except Exception:
             return None
-        text = doc.get('doc') if isinstance(doc, dict) else None
+        # 回执契约: 成功帧只有 content/details/observe, 文档正文在 content
+        text = doc.get('content') if isinstance(doc, dict) else None
         return text
 
     @staticmethod

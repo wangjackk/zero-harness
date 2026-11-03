@@ -69,12 +69,13 @@ impl Routine for SmokeCaller {
         }
         println!("RS CALLER: target registered, create + start");
 
-        let (child_id, _) = ctx
+        let child = ctx
             .create("smoke_target", None)
             .await
             .map_err(RoutineError::Message)?;
-        ctx.start_child(&child_id, 10).await   // 10 = 常规默认档
+        child.start(10).await   // 10 = 常规默认档
             .map_err(RoutineError::Message)?;
+        let child_id = child.id().to_string();
 
         println!("RS CALLER: 2 in-flight calls open, kill ts target now");
 
@@ -86,9 +87,10 @@ impl Routine for SmokeCaller {
             }
         };
         let wait_fut = async {
-            match ctx.wait_child(&child_id, 600).await {
-                Ok(v) => format!("handle done dt={:?} result={v}", t0.elapsed()),
-                Err(e) => format!("HANDLE ERROR dt={:?}: {e}", t0.elapsed()),
+            match tokio::time::timeout(Duration::from_secs(600), child.wait()).await {
+                Err(_) => format!("HANDLE ERROR dt={:?}: wait timed out", t0.elapsed()),
+                Ok(Ok(v)) => format!("handle done dt={:?} result={v}", t0.elapsed()),
+                Ok(Err(e)) => format!("HANDLE ERROR dt={:?}: {e}", t0.elapsed()),
             }
         };
         let (req_res, wait_res) = tokio::join!(req_fut, wait_fut);

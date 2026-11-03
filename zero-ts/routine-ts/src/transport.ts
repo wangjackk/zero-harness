@@ -17,7 +17,7 @@ export abstract class Transport {
   setPeerDown(handler: PeerDownHandler): void { this._peerDown = handler }
 
   async start(): Promise<void> {}
-  async stop(): Promise<void> {}
+  async close(): Promise<void> {}
 
   /** 发事件给 peer(peer_id in-proc 下忽略,单 kernel).fire-and-forget. */
   abstract sendEvent(payload: Msg, peerId?: string): Promise<void>

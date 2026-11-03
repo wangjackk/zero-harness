@@ -14,14 +14,20 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Dict, Iterable, List, Optional, Type
+from typing import (
+    TYPE_CHECKING, Any, Callable, ClassVar, Dict, Iterable, List, Optional, Type,
+)
 
 from .ctx import Phase, RunContext
 from .protocol import (
     ENVELOPE_CHUNK, ENVELOPE_DATA, ENVELOPE_EOF, ENVELOPE_ERROR,
     ENVELOPE_EVENT, ENVELOPE_OK, ENVELOPE_REQ_ID, ENVELOPE_REPLY_TO,
     ENVELOPE_STREAM_ID, MESSAGE_REQ_REPLY, MESSAGE_STREAM_DATA,
+    TerminationReason,
 )
+
+if TYPE_CHECKING:
+    from .handle import RoutineHandle
 
 # --- start 优先级(模块冲突时的抢占裁决, 只在 start 上生效) ---
 # 规则: incoming.priority > holder.priority 才驱逐(严格大于, 平级不抢);
@@ -210,14 +216,32 @@ class Routine(ABC):
         pass
 
     async def create(self, routine_name: str,
-                     kwargs: Optional[Dict[str, Any]] = None) -> 'Any':
-        """提交子 routine(经 kernel 回环).详见 ``ctx.create``."""
+                     kwargs: Optional[Dict[str, Any]] = None) -> RoutineHandle:
+        """提交子 routine(经 kernel 回环).详见 ``ctx.create``.
+
+        Returns:
+            成功创建的子 routine 句柄;只有拿到有效 child_id 才返回.
+
+        Raises:
+            CreateError: routine 名未注册 / kwargs 不合法 / kernel 拒绝创建.
+            TimeoutError: 等待 kernel created 回执超时.
+        """
         return await self.ctx.create(routine_name, kwargs)
 
     async def call(self, routine_name: str,
                    kwargs: Optional[Dict[str, Any]] = None,
                    priority: int = 10) -> Any:
-        """同步拿子 routine 结果(create→start→wait 一步到位).详见 ``ctx.call``."""
+        """同步拿子 routine 结果(create→start→wait 一步到位).详见 ``ctx.call``.
+
+        Returns:
+            子 routine 正常 return 的结果.
+
+        Raises:
+            CreateError: 子 routine 创建失败;由 create() 原样传播.
+            StartError: 子 routine 启动失败(如模块冲突).
+            RuntimeError: 父未 started / 子 routine 异常停止.
+            TimeoutError: 等待 kernel created 回执超时;由 create() 原样传播.
+        """
         return await self.ctx.call(routine_name, kwargs, priority)
 
     # --- 运行时模块占领/释放(跟类静态声明同一底层 TryAcquire/Release) ---
@@ -287,7 +311,8 @@ class Routine(ABC):
     async def on_message(self, source: 'RoutineSource', data: Any) -> None:
         """收到 message.delivered 的回调(基类空实现,子类 override).
 
-        可能并发 fire,乱序到达----业务侧自带 id reorder 后处理.
+        经实例 mailbox 逐条投递, 同一实例严格串行保序 ---- 顺序语义
+        由框架保证, 业务不建 reorder. 慢回调只积压本实例.
         """
         pass
 
@@ -325,10 +350,15 @@ class Routine(ABC):
         """started 钩子:lifecycle.started 已回报,run() 之前调.基类空实现."""
         pass
 
-    async def on_stopped(self, reason: str = 'auto', result: Any = None,
-                         detail: str = '') -> None:
+    async def on_stopped(
+            self, reason: TerminationReason = TerminationReason.COMPLETED,
+            result: Any = None, by: Optional[str] = None,
+            detail: str = '') -> None:
         """run 完成或退出后调用(lifecycle.stopped 发出前).
-        reason: 'auto' | 'error' | 'stop' | 'cancel' | 'force'."""
+
+        reason 与父侧 ``handle.reason`` 使用同一枚举;by 是可选发起者 rid,
+        抢占时为驱逐者;detail 仅供日志展示,不作为业务判断依据.
+        """
         pass
 
     # --- Context ---

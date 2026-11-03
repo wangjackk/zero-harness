@@ -9,26 +9,40 @@ from __future__ import annotations
 from enum import Enum
 
 
-class ControlDoneReason(str, Enum):
-    """lifecycle.stopped 回报里的 reason 取值(wire 大写)."""
+class TerminationReason(str, Enum):
+    """一次 routine 等待为何结束;业务钩子、父侧 handle 与 wire 共用.
 
-    UNKNOWN = 'UNKNOWN'
-    AUTO = 'AUTO'
-    STOP = 'STOP'
+    ``result`` / ``error`` 是独立字段,不从 reason 推断.UNKNOWN 只用于解码
+    未识别值的协议兜底,正常业务路径不应产生它.
+    """
+
+    COMPLETED = 'COMPLETED'
+    STOPPED = 'STOPPED'
+    PREEMPTED = 'PREEMPTED'
+    FAILED = 'FAILED'
+    CANCELLED = 'CANCELLED'
     DESTROYED = 'DESTROYED'
-    ERROR = 'ERROR'
-    CANCEL = 'CANCEL'
-    FORCE = 'FORCE'
-    DISCONNECT = 'DISCONNECT'
+    DISCONNECTED = 'DISCONNECTED'
+    UNKNOWN = 'UNKNOWN'
+
+    @classmethod
+    def from_wire(cls, value: object) -> 'TerminationReason':
+        """解码 wire reason;缺失/未识别值统一归 UNKNOWN,不污染收尾路径."""
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value or ''))
+        except ValueError:
+            return cls.UNKNOWN
 
 
 # --- lifecycle(kernel ↔ hub)---
 LIFECYCLE_CREATED = 'lifecycle.created'      # kernel→hub 实例化;hub→kernel created 回报(带 modules)
 LIFECYCLE_START = 'lifecycle.start'          # kernel→hub 启动 routine
-LIFECYCLE_STOP = 'lifecycle.stop'            # kernel→hub 打断 routine(带 reason=force/by 时为驱逐)
+LIFECYCLE_STOP = 'lifecycle.stop'            # kernel→hub 打断 routine(PREEMPTED 带 by=驱逐者)
 LIFECYCLE_DESTROY = 'lifecycle.destroy'      # kernel→hub 销毁 created 态 routine
 LIFECYCLE_STARTED = 'lifecycle.started'      # hub→kernel 已启动
-LIFECYCLE_STOPPED = 'lifecycle.stopped'      # hub→kernel 已停止(带 reason/result/error)
+LIFECYCLE_STOPPED = 'lifecycle.stopped'      # hub→kernel 已停止(reason/by/detail/result/error)
 
 # --- routine 调 kernel 请求/回执(hub→kernel→hub)---
 ROUTINE_CREATE = 'routine.create'

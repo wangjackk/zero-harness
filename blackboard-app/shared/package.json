@@ -1,0 +1,10 @@
+{
+  "name": "@bb/shared",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "protocol.ts",
+  "types": "protocol.ts",
+  "exports": {
+    ".": "./protocol.ts"
+  }
+}

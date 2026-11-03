@@ -82,11 +82,11 @@ export class PiAgentManager extends Routine {
   }
 
   async run(_kwargs: Record<string, any>): Promise<void> {
-    // loop 挂引用 + stop 时 cancel: 实例被替换而 stop() 未被调用时,
+    // loop 挂引用 + stop 事件唤醒并等待退出: 实例被替换而 stop() 未被调用时,
     // 泄漏的旧 loop 会拿死 rid 覆盖 hub 注册表 (hub 侧也有一道拒绝防御).
     this._manifestTask = this._manifestLoop()
     await this._stop.wait()
-    this._manifestTask.cancel?.()
+    await this._manifestTask
   }
 
   /** 按名查 running routine 的 rid (单次; 竞态重试在调用方). */
@@ -130,7 +130,7 @@ export class PiAgentManager extends Routine {
         lastRid = null
       }
       if (!lastRid) interval = 500
-      await sleep(interval)
+      await Promise.race([sleep(interval), this._stop.wait()])
     }
   }
 
@@ -146,7 +146,6 @@ export class PiAgentManager extends Routine {
     }
     this._agents.clear()
     this._stop.set()
-    this._manifestTask.cancel?.()
   }
 
   private async _unregisterManifest(): Promise<void> {

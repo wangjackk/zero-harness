@@ -4,40 +4,52 @@ use serde_json::{Map, Value};
 
 pub type RoutineMeta = Map<String, Value>;
 
-/// `lifecycle.stopped` 回报里的 reason 取值。
-///
-/// 对齐 Python `ControlDoneReason`:8 值。UNKNOWN 保留作默认/未知兜底。
-/// kernel 对 reason 是 dumb-forward(不按值分流),故扩值无需 kernel 侧配合。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// 一次 routine 等待为何结束；业务钩子、父侧等待结果与 wire 共用。
+/// result/error 是独立字段，不从 reason 推断。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ControlDoneReason {
-    Unknown,
-    Auto,
-    Stop,
+pub enum TerminationReason {
+    Completed,
+    Stopped,
+    Preempted,
+    Failed,
+    Cancelled,
     Destroyed,
-    Error,
-    Cancel,
-    Force,
-    Disconnect,
+    Disconnected,
+    #[serde(other)]
+    Unknown,
 }
 
-impl Default for ControlDoneReason {
+impl Default for TerminationReason {
     fn default() -> Self {
         Self::Unknown
     }
 }
 
-impl ControlDoneReason {
-    pub fn as_wire(&self) -> &'static str {
+impl TerminationReason {
+    pub fn as_wire(self) -> &'static str {
         match self {
-            Self::Unknown => "UNKNOWN",
-            Self::Auto => "AUTO",
-            Self::Stop => "STOP",
+            Self::Completed => "COMPLETED",
+            Self::Stopped => "STOPPED",
+            Self::Preempted => "PREEMPTED",
+            Self::Failed => "FAILED",
+            Self::Cancelled => "CANCELLED",
             Self::Destroyed => "DESTROYED",
-            Self::Error => "ERROR",
-            Self::Cancel => "CANCEL",
-            Self::Force => "FORCE",
-            Self::Disconnect => "DISCONNECT",
+            Self::Disconnected => "DISCONNECTED",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+
+    pub fn from_wire(value: &str) -> Self {
+        match value {
+            "COMPLETED" => Self::Completed,
+            "STOPPED" => Self::Stopped,
+            "PREEMPTED" => Self::Preempted,
+            "FAILED" => Self::Failed,
+            "CANCELLED" => Self::Cancelled,
+            "DESTROYED" => Self::Destroyed,
+            "DISCONNECTED" => Self::Disconnected,
+            _ => Self::Unknown,
         }
     }
 }
@@ -63,9 +75,10 @@ fn default_passive_priority() -> i64 {
 /// `catalog.push` / `get_routines` 返回的单条 routine 描述。
 ///
 /// 对齐 Python `query.py build_routines`:`{name, is_passive: {flag, kwargs,
-/// priority?}, meta}`。modules 不在此上报 —— 实例级,由 created 回报带回(catalog
-/// 注册时无实例,无 kwargs,静态上报对 dynamic 不准)。meta 是类级自由扩展字典,Go
-/// 侧 dumb forward 透传。
+/// priority?}, modules, meta}`。modules 是静态声明默认(``modules(None)``,
+/// 注册期无实例无 kwargs ---- 对 dynamic routine 只是默认占用,真实占用
+/// 仍以 created 回报为准;运行时 acquire 的动态占用不在此,注册期拿不到)。
+/// meta 是类级自由扩展字典,Go 侧 dumb forward 透传。
 ///
 /// priority 是 passive 声明优先级(passive 没有 call-site, 声明处即调用点,
 /// 档位同 start:10=常规默认档, 0 为最低档永无驱逐资格)——不占顶层字段,
@@ -78,13 +91,15 @@ pub struct RoutineCatalogEntry {
     #[serde(default = "default_passive_priority")]
     pub priority: i64,
     #[serde(default)]
+    pub modules: Vec<String>,
+    #[serde(default)]
     pub meta: RoutineMeta,
 }
 
 impl Serialize for RoutineCatalogEntry {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(Some(3))?;
+        let mut map = s.serialize_map(Some(4))?;
         map.serialize_entry("name", &self.name)?;
         // is_passive wire:恒为嵌套 {flag, kwargs}(rs 侧暂无 passive kwargs,
         // kwargs 恒 {})。priority 声明优先级,flag=true 且非 10(常规默认档)
@@ -97,6 +112,7 @@ impl Serialize for RoutineCatalogEntry {
             ip.insert("priority".into(), Value::from(self.priority));
         }
         map.serialize_entry("is_passive", &ip)?;
+        map.serialize_entry("modules", &self.modules)?;
         map.serialize_entry("meta", &self.meta)?;
         map.end()
     }
@@ -213,22 +229,26 @@ mod tests {
     use super::envelope;
 
     #[test]
-    fn control_done_reason_as_wire_covers_all_variants() {
-        assert_eq!(ControlDoneReason::Unknown.as_wire(), "UNKNOWN");
-        assert_eq!(ControlDoneReason::Auto.as_wire(), "AUTO");
-        assert_eq!(ControlDoneReason::Stop.as_wire(), "STOP");
-        assert_eq!(ControlDoneReason::Error.as_wire(), "ERROR");
-        assert_eq!(ControlDoneReason::Cancel.as_wire(), "CANCEL");
-        assert_eq!(ControlDoneReason::Force.as_wire(), "FORCE");
-        assert_eq!(ControlDoneReason::Disconnect.as_wire(), "DISCONNECT");
+    fn termination_reason_as_wire_covers_all_variants() {
+        assert_eq!(TerminationReason::Completed.as_wire(), "COMPLETED");
+        assert_eq!(TerminationReason::Stopped.as_wire(), "STOPPED");
+        assert_eq!(TerminationReason::Preempted.as_wire(), "PREEMPTED");
+        assert_eq!(TerminationReason::Failed.as_wire(), "FAILED");
+        assert_eq!(TerminationReason::Cancelled.as_wire(), "CANCELLED");
+        assert_eq!(TerminationReason::Destroyed.as_wire(), "DESTROYED");
+        assert_eq!(TerminationReason::Disconnected.as_wire(), "DISCONNECTED");
+        assert_eq!(TerminationReason::Unknown.as_wire(), "UNKNOWN");
     }
 
     #[test]
-    fn control_done_reason_serde_round_trip() {
-        let json = serde_json::to_string(&ControlDoneReason::Force).unwrap();
-        assert_eq!(json, "\"FORCE\"");
-        let back: ControlDoneReason = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, ControlDoneReason::Force);
+    fn termination_reason_serde_round_trip_and_unknown_fallback() {
+        let json = serde_json::to_string(&TerminationReason::Preempted).unwrap();
+        assert_eq!(json, "\"PREEMPTED\"");
+        let back: TerminationReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, TerminationReason::Preempted);
+        let unknown: TerminationReason = serde_json::from_str("\"legacy\"").unwrap();
+        assert_eq!(unknown, TerminationReason::Unknown);
+        assert_eq!(TerminationReason::from_wire("legacy"), TerminationReason::Unknown);
     }
 
     #[test]
@@ -237,6 +257,7 @@ mod tests {
             name: "edit".to_string(),
             is_passive: true,
             priority: 10,
+            modules: Vec::new(),
             meta: Map::new(),
         };
         let json = serde_json::to_value(&entry).unwrap();

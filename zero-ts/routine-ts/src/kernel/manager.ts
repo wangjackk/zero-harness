@@ -36,7 +36,7 @@ import {
   ROUTINE_START, ROUTINE_STOP, ROUTINE_CREATE, ROUTINE_CREATED,
   ROUTINE_UNLOAD_MODULE, ROUTINE_MODULE_UNLOADED, ROUTINE_DESTROY,
   ROUTINE_REJECTED, ROUTINE_YIELD, ROUTINE_YIELDED,
-  ControlDoneReason,
+  TerminationReason,
   type Msg, type Payload,
 } from '../protocol'
 import { Command, State } from './command'
@@ -65,12 +65,16 @@ function passivePriorityOf(ip: Payload): number {
 
 /** kernel 出站连接: inproc link('local')或 grpc peer(dial-in).
  *  hubId: 该 conn 绑定的 hub 身份(catalog.push 登记; hub 侧自报的稳定 id).
- *  close: 拒绝连接时断开本 conn 的回调(仅 grpc peer 有). */
+ *  close: 拒绝连接时断开本 conn 的回调(仅 grpc peer 有).
+ *  local: 同进程 hub(inproc link). 这不是优化标记, 是关停语义的分界: 只有它
+ *  能"请求 + 等确认"(通道是内存队列, 回报必达, 且全局树只在这一侧)。跨进程
+ *  peer 的实例归对方所有, 断链即通告, 对方自清(见 stopNode)。 */
 export interface KernelConn {
   readonly id: string
   send(msg: Msg): void
   hubId?: string
   close?(): void
+  readonly local?: boolean
 }
 
 export class Node {
@@ -103,6 +107,8 @@ type Handler = (msg: Msg, source: string) => Promise<void>
 export class Kernel {
   static CREATED_TIMEOUT = 30.0
   static STOP_TIMEOUT = 10.0
+  /** 退出语境的耐心: kernel.stop() 里替代 STOP_TIMEOUT(见 stop)。 */
+  static SHUTDOWN_TIMEOUT = 3.5
 
   readonly tree: Tree
   readonly nodes = new Map<number, Node>()
@@ -123,6 +129,8 @@ export class Kernel {
   private _watchConns = new Set<string>()
   private _watchSeq = 0
   private _rootId = 0
+  /** 正在 kernel.stop() 的退出语境(缩短每个节点的等待耐心). */
+  private _exiting = false
   private _dispatch: Map<string, Handler>
 
   constructor(tree: Tree) {
@@ -163,7 +171,7 @@ export class Kernel {
 
   bind(link: InProcessLink): void {
     this._link = link
-    this._conns.set('local', { id: 'local', send: m => link.kernelToHub(m) })
+    this._conns.set('local', { id: 'local', local: true, send: m => link.kernelToHub(m) })
   }
 
   /** 注册出站 conn(grpc peer dial-in 接入时调). */
@@ -181,19 +189,29 @@ export class Kernel {
     for (const [name, r] of [...this.routes]) {
       if (r.owner === owner) { this.routes.delete(name); this._passiveStarted.delete(name) }
     }
-    for (const [rid, n] of [...this.nodes]) {
-      if (n.owner !== owner) continue
-      this.unsubscribeRid(String(rid))
-      const err = `hub '${owner}' disconnected`
-      n.createdFut.resolve({ modules: [], error: err })
-      n.stoppedFut.resolve({ event: 'lifecycle.stopped', reason: err })
-      // 不走 cmd.stop(): peer 已死,lifecycle.stop 无处可发(会错路由到别的 conn);
-      // body 靠上面 resolved 的 future 自然退出,finally 里 release 模块.
-      this.removeNode(rid)
-      this.tree.release(rid)
-    }
+    // 节点不在这里就地摘除: 交给停路径(stopNode), 那才是"先子后父"的唯一出处。
+    // 死 owner 的节点由它本地结算; 它们的子若属于别的活着的 hub(跨 hub 父子),
+    // 会在同一趟递归里照常收到 stop —— 直接 removeNode 会把那类子节点变成孤儿
+    // (仍在跑, 父链已断, 无人再能找到)。
+    const dead = [...this.nodes.values()].filter(n => n.owner === owner)
+    if (dead.length) void this.reapDead(dead)
     this.pushModuleView()
-    log.warning(`conn '${connId}' (hub '${owner}') dropped: routes failed, nodes cleaned`)
+    log.warning(`conn '${connId}' (hub '${owner}') dropped: routes failed, ` +
+                `${dead.length} node(s) settling`)
+  }
+
+  /** owner 断线的收尾(dropConn 的异步尾): 逐个走停路径.
+   *  dropConn 是同步回调(grpc stream 收尾), 而停级联要等活着的子节点回报,
+   *  所以挪到这里。节点可能已被前面的级联带走, 逐个复查。 */
+  private async reapDead(nodes: Node[]): Promise<void> {
+    for (const n of nodes) {
+      if (!this.nodes.has(n.cmd.id)) continue
+      try {
+        await this.stopNode(n, true, 0)
+      } catch (e) {
+        log.error(`reap ${n.cmd} failed: ${e}`)
+      }
+    }
   }
 
   async start(): Promise<void> {
@@ -214,10 +232,33 @@ export class Kernel {
   get rootId(): number { return this._rootId }
 
   async stop(): Promise<void> {
-    await this.stopNode(this.nodes.get(this._rootId)!, false, 0)
+    // 退出语境的耐心比稳态短: 用户已经按下 Ctrl+C, 再等满 10s 的 STOP_TIMEOUT
+    // 只让他以为卡死、再按一次(把关停劈断)。不确认的节点照样拆 —— 拆完即走。
+    this._exiting = true
+    const root = this.nodes.get(this._rootId)
+    if (root) await this.stopNode(root, false, 0)
+    // 只走 root 级联不够: 顶层 create(parentId=0)的节点、父先走留下的节点都不在
+    // root.children 里, 级联永远停不到 —— 它们的 cmd body 会挂到事件循环关闭。
+    const left = [...this.nodes.values()]
+    if (left.length) {
+      log.warning(`kernel.stop: ${left.length} node(s) not under root, stopping: ` +
+                  left.map(n => String(n.cmd)).join(', '))
+      for (const n of left) {
+        try { await this.stopNode(n, true, 0) }
+        catch (e) { log.error(`kernel.stop: settle ${n.cmd} failed: ${e}`) }
+      }
+    }
   }
 
   // --- 出入站 ---
+
+  /** owner(hub 身份或直连 conn id)的活连接; undefined = 该宿主已失联.
+   *  单点解析: hub 身份先经 _hubConns 映射到 conn id, 已是 conn id 的直接取.
+   *  断线后 _hubConns/_conns 均摘除, 所以"查不到"就是"没有了"——停的请求无处
+   *  可发, 只能本地结算. */
+  private connOfOwner(owner: string): KernelConn | undefined {
+    return this._conns.get(this._hubConns.get(owner) ?? owner)
+  }
 
   /** 出站显式目标发送(对齐 Go sendOut: publish 到 conn 的出站通道).
    *  target 两种取值, 单点解析: hub 身份(Route/Node owner, 经 _hubConns
@@ -225,7 +266,7 @@ export class Kernel {
    *  丢弃(fire-and-forget 语义). 路由决策在各调用点: 回执类发 source,
    *  lifecycle 命令发 node owner, module.tree 广播. */
   private sendTo(target: string, msg: Msg): void {
-    const conn = this._conns.get(this._hubConns.get(target) ?? target)
+    const conn = this.connOfOwner(target)
     if (!conn) {
       log.debug(`send_to ${target}: conn gone, drop ${String(msg.event ?? '')}`)
       return
@@ -388,20 +429,69 @@ export class Kernel {
 
   // --- stop 级联 ---
 
+  /** 停 n: 先递归级联停子, 再停自己("父必须等子").
+   *
+   *  兄弟之间没有先后要求 —— 并行停: 每个子都在等自己的 lifecycle.stopped
+   *  回报, 串行等于把 N 份等待相加, 退出时用户看到的就是"按了 Ctrl+C 却还在
+   *  转", 于是一路再按(把关停劈断)。父仍然等全部子停完才动。
+   *
+   *  只有 Kernel.stop() 的退出语境(_exiting)对存活跨进程 hub 只结算 kernel
+   *  自己的投影, 由对方在断链时自清。正常显式 stop、reload、抢占仍须请求-
+   *  确认。递归在判定之前 —— 它的子可能属于别的活着的 hub(跨 hub 父子),
+   *  那些要照常下发 stop, 否则就成孤儿。
+   */
   private async stopNode(n: Node, cascade: boolean, forceBy: number): Promise<void> {
     if (cascade) {
       if (n.stopping) return
       n.stopping = true
-      if (forceBy) { n.stopReason = 'force'; n.stopBy = forceBy }
+      if (forceBy) { n.stopReason = TerminationReason.PREEMPTED; n.stopBy = forceBy }
     }
-    for (const c of [...n.children]) await this.stopNode(c, true, forceBy)
+    const kids = [...n.children]
+    if (kids.length) {
+      const results = await Promise.allSettled(
+        kids.map(c => this.stopNode(c, true, forceBy)))
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          log.error(`stop child ${kids[i].cmd} failed: ${r.reason}`)
+        }
+      })
+    }
+
+    const conn = this.connOfOwner(n.owner)
+    if (!conn) {
+      log.info(`🪦 settle ${n.cmd} (hub '${n.owner}' gone)`)
+      this.settleLocal(n, TerminationReason.DISCONNECTED,
+        `routine ${n.cmd.name} host disconnected: hub '${n.owner}' down`)
+      return
+    }
+
+    if (this._exiting && !conn.local) {
+      // 仅 kernel 自身关停:跨进程 hub 的实例是它的, 不是 kernel 的: 它自己有一套完整的自清路径
+      // (transport 断 → hub.handlePeerDown → lifecycle.stopAllLocal, stop hook
+      // 与 main task 照跑)。kernel 在这里只结算自己的投影 —— nodes 表、cmd
+      // body、路由、在途调用, 全在 kernel 内存里, 只有 kernel 能收。
+      // 不发 lifecycle.stop、不等确认: 通道一会儿就随 kernel 一起关掉, 等来的
+      // 只会是退出日志里的假超时(而真卡住的节点会被它淹没)。
+      log.info(`🤝 settle ${n.cmd} (hub '${n.owner}' 是独立进程, 断链后自行收摊)`)
+      this.settleLocal(n, TerminationReason.DISCONNECTED,
+        `routine ${n.cmd.name} host is a separate process: ` +
+        `hub '${n.owner}' cleans up on peer down`)
+      // 结算只解 future, 真要等 body 退出还得等一次(它收到 stopped 才收尾)。
+      // 这不是"等确认", 等的是 kernel 自己的 task 结束。
+      await n.cmd.wait()
+      return
+    }
 
     if (n.cmd.state === State.CREATED) {
       // created 态(已 create 未 start):发 destroy 让 hub 销毁 instance
       // (先发再删: 发给 node owner, 对齐 Go sendDestroy)
-      this.emitLifecycleStop('destroyed', n)
+      this.emitLifecycleStop('destroyed', n, { reason: TerminationReason.DESTROYED })
       this.unsubscribeRid(String(n.cmd.id))
       this.sendTo(n.owner, { event: LIFECYCLE_DESTROY, id: String(n.cmd.id) })
+      this.relayToParent(n.cmd.id, {
+        event: LIFECYCLE_STOPPED, id: String(n.cmd.id),
+        reason: TerminationReason.DESTROYED,
+      })
       this.removeNode(n.cmd.id)
       return
     }
@@ -412,9 +502,34 @@ export class Kernel {
       // 不要再发 lifecycle.stop.
       await n.cmd.wait()
     } else {
-      await n.cmd.stop()  // 发 lifecycle.stop → 等 stopped → release
+      await n.cmd.stop(this._exiting ? Kernel.SHUTDOWN_TIMEOUT : Command.STOP_TIMEOUT)
     }
     this.removeNode(n.cmd.id)
+  }
+
+  /** 宿主失联节点的本地结算: 按"对端已终止"走完正常停止的状态迁移.
+   *
+   *  与 onLifecycleStopped 同一种收尾(解 created/stopped future、发终止帧、
+   *  中转父、摘节点、还模块), 区别只有一点: 不等对端回报 —— 对端已经不在了,
+   *  等就是白等超时, 子节点也跟着全卡住. 调用前提: n.children 已全部结算
+   *  (stopNode 的先子后父保证), 否则这里摘掉父链会把子变成孤儿. */
+  private settleLocal(n: Node, reason: TerminationReason, error: string): void {
+    const rid = n.cmd.id
+    const by = reason === TerminationReason.DISCONNECTED ? n.owner : null
+    if (!n.createdFut.done) n.createdFut.resolve({ modules: [], error })
+    if (!n.stoppedFut.done) {
+      n.stoppedFut.resolve({ event: LIFECYCLE_STOPPED, reason, error, by })
+    }
+    this.emitLifecycleStop('stopped', n, { reason, by })
+    this.unsubscribeRid(String(rid))
+    if (n.parent) {
+      // 中转必须在 removeNode 之前:父侧 handle 据此收尾(父可能在别的 hub)。
+      this.sendTo(n.parent.owner, {
+        event: LIFECYCLE_STOPPED, id: String(rid), reason, error, by,
+      })
+    }
+    this.removeNode(rid)
+    this.tree.release(rid)
   }
 
   private async onTerminated(rid: number): Promise<void> {
@@ -701,7 +816,7 @@ export class Kernel {
   }
 
   /** 优先级驱逐: cone 内第三方 holder 全部 priority 严格低于本 start 才逐个
-   * cascade stop(reason='force')后返回;存在 >= 本优先级的 holder 时不驱逐
+   * cascade stop(reason=PREEMPTED)后返回;存在 >= 本优先级的 holder 时不驱逐
    * 任何节点, 直接抛原 ConflictError(平级不抢).modules 是要清场的模块集
    * (start 裁决传 declared, acquire 传目标 modules).优先级只裁第三方
    * (排除自己/祖先);父子级联停走树权威, 不参与比较. */
@@ -773,7 +888,7 @@ export class Kernel {
       // destroy ack 会永久挂起. relay 须在 remove 之前(node 带 parent).
       this.relayToParent(childId, {
         event: LIFECYCLE_STOPPED, id: String(childId),
-        reason: ControlDoneReason.DESTROYED,
+        reason: TerminationReason.DESTROYED,
       })
       this.removeNode(childId)
       log.info(`↩️ destroy ${n.cmd}`)

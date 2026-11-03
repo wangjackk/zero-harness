@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from routine import Routine, RoutineSource
+from routine import Routine, RoutineSource, TerminationReason
 
 from ..shell import Shell
 from .body_chunk import BodyChunk, BodyChunkKind, TextChunk
@@ -122,8 +122,10 @@ class XmlRoutine(Routine):
         # on_message 只入队),start 后由 parse_task 拉取驱动 on_body_chunk.
         self._parse_task = asyncio.create_task(self._parse_loop())
 
-    async def on_stopped(self, reason: str = 'auto', result: Any = None,
-                         detail: str = '') -> None:
+    async def on_stopped(
+            self, reason: TerminationReason = TerminationReason.COMPLETED,
+            result: Any = None, by: Optional[str] = None,
+            detail: str = '') -> None:
         # 只清本 routine 自己的业务:parse_task(后台解析 task).子 routine 的清退
         # 由 kernel 级联负责(m.stop 先停子再停父,父 on_stopped 时子已 done),不在这处理.
         if self._parse_task is not None and not self._parse_task.done():

@@ -1,12 +1,12 @@
 use crate::{
-    core::{HandleReply, ReqReply, RoutineIo, CreateReply},
+    core::{CreateReply, ReqReply, RoutineHandle, RoutineIo},
     grpc,
     protocol::{
         events::{
             LIFECYCLE_CREATED, LIFECYCLE_HEARTBEAT_ACK,
             LIFECYCLE_STARTED, LIFECYCLE_STOP, LIFECYCLE_STOPPED,
         },
-        ControlDoneReason, JsonObject, RawWireEvent,
+        TerminationReason, JsonObject, RawWireEvent,
     },
     hub::ServerRuntime,
 };
@@ -89,9 +89,11 @@ impl OutboundTransport {
     pub async fn send_lifecycle_stopped(
         &self,
         id: &str,
-        reason: ControlDoneReason,
+        reason: TerminationReason,
         result: Option<Value>,
         error: Option<JsonObject>,
+        by: &str,
+        detail: &str,
         peer_id: Option<&str>,
     ) -> Result<(), String> {
         let mut payload = RawWireEvent::new(LIFECYCLE_STOPPED)
@@ -102,6 +104,12 @@ impl OutboundTransport {
         }
         if let Some(error) = error {
             payload = payload.with_field("error", Value::Object(error));
+        }
+        if !by.is_empty() {
+            payload = payload.with_field("by", Value::String(by.to_string()));
+        }
+        if !detail.is_empty() {
+            payload = payload.with_field("detail", Value::String(detail.to_string()));
         }
         self.send_raw_event(payload, peer_id).await
     }
@@ -180,21 +188,12 @@ impl RoutineIo for OutboundTransport {
         self.runtime.pop_create_future(req_id).await
     }
 
-    async fn register_handle_waiter(
-        &self,
-        child_id: String,
-        sender: oneshot::Sender<HandleReply>,
-    ) {
-        self.runtime
-            .register_handle_waiter(&child_id, sender)
-            .await;
+    async fn register_handle(&self, handle: RoutineHandle) {
+        self.runtime.register_handle(handle).await;
     }
 
-    async fn pop_handle_waiter(
-        &self,
-        child_id: &str,
-    ) -> Option<oneshot::Sender<HandleReply>> {
-        self.runtime.pop_handle_waiter(child_id).await
+    async fn pop_handle(&self, child_id: &str) -> Option<RoutineHandle> {
+        self.runtime.pop_handle(child_id).await
     }
 
     async fn register_req_future(&self, req_id: String, sender: oneshot::Sender<ReqReply>) {

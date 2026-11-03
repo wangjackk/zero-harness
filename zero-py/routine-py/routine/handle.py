@@ -12,6 +12,7 @@ import asyncio
 from typing import Any, Awaitable, Callable, Optional
 
 from .errors import StartError
+from .protocol import TerminationReason
 
 # body 迭代终结哨兵(distinguish from yielded None / result)
 _BODY_DONE = object()
@@ -36,9 +37,10 @@ class RoutineHandle:
         self.priority: Optional[int] = None
         self.result: Any = None
         self.error: Optional[str] = None
-        # lifecycle.stopped 的 wire reason(大写 enum 值).父侧可读分流
-        # (force=被驱逐 / auto=自然结束 / stop=被停 / ...);wait() 不据此分流.
-        self.reason: Optional[str] = None
+        # 终止语义与子侧 on_stopped 完全一致;wait() 不据此分流.
+        self.reason: Optional[TerminationReason] = None
+        self.by: Optional[str] = None       # 发起者 rid / host;抢占时为驱逐者 rid
+        self.detail: str = ''               # 人类可读补充,业务判断不要解析它
         self._ctx = ctx
         self._started = asyncio.Event()
         self._done = asyncio.Event()
@@ -209,6 +211,15 @@ class RoutineHandle:
 
     # --- waits ---
 
+    async def send(self, data: Any = None) -> None:
+        """给子 routine 发一条定向消息(message.send, 落到它的 on_message).
+
+        created 态即可发: 消息先进实例 mailbox, start 早晚都不丢. 与
+        start/stop 不同, 这条不占 ``_ack``(没有回执要等, 投递即完).
+        """
+        await self._require_ctx('send')
+        await self._ctx.send(self.id, data if data is not None else {})
+
     async def wait_started(self) -> None:
         """等 lifecycle.started{child_id}.失败兜底也会 resolve(不死锁)."""
         await self._started.wait()
@@ -236,10 +247,13 @@ class RoutineHandle:
         self._fire_handler(self.on_started_handler)
 
     def notify_done(self, result: Any = None, error: Optional[str] = None,
-                    reason: Optional[str] = None) -> None:
+                    reason: Optional[TerminationReason] = None,
+                    by: Optional[str] = None, detail: str = '') -> None:
         self.result = result
         self.error = error
         self.reason = reason
+        self.by = by
+        self.detail = detail
         # 兜底:错过 started 直接 done 时也唤醒 wait_started
         self._started.set()
         self._done.set()

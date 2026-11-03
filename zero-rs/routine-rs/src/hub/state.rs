@@ -1,11 +1,11 @@
 use crate::{
     core::{
         messaging::{RequestHandler, RequestSpec, RoutineSource, SubscribeHandler, SubscribeSpec},
-        BaseModule, HandleReply, RoutineError, RoutineOutput, RoutineRegistry,
-        RunContext, CreateReply, Routine,
+        BaseModule, CreateReply, Routine, RoutineError, RoutineHandle, RoutineOutput,
+        RoutineRegistry, RunContext,
     },
     grpc::routine::Frame,
-    protocol::{JsonObject, JsonValue},
+    protocol::{JsonObject, JsonValue, TerminationReason},
 };
 use std::{
     collections::HashMap,
@@ -25,10 +25,6 @@ const MAIL_SLOW: Duration = Duration::from_secs(2);
 /// create 回执等待者: req_id → oneshot sender.
 /// 父 routine create 后等 routine.created{req_id, child_id, modules} 回执.
 pub type CreateWaiter = oneshot::Sender<CreateReply>;
-
-/// 子 routine 完成等待者: child_id → oneshot sender.
-/// 父 routine call/handle.wait 等 lifecycle.stopped{id=child_id, result, error} 中转回.
-pub type HandleWaiter = oneshot::Sender<HandleReply>;
 
 /// p2p req 回执等待者: req_id → oneshot sender(等 message.req_reply 回执)。
 pub type ReqWaiter = oneshot::Sender<crate::core::context::ReqReply>;
@@ -102,11 +98,12 @@ impl RoutineInstance {
 
     pub async fn on_stopped(
         &self,
-        reason: &str,
+        reason: TerminationReason,
         result: Option<&JsonValue>,
+        by: &str,
         detail: &str,
     ) -> Result<(), RoutineError> {
-        self.routine.on_stopped(reason, result, detail).await
+        self.routine.on_stopped(reason, result, by, detail).await
     }
 }
 
@@ -168,9 +165,9 @@ pub struct ServerRuntime {
     /// create 回执等待表: req_id → waiter. 父 routine create 后注册,等
     /// routine.created 回执唤醒. 对齐 Python runtime.register_create_future.
     pub create_futures: Mutex<HashMap<String, CreateWaiter>>,
-    /// 子 routine 完成等待表: child_id → waiter. 父 routine call/handle.wait
-    /// 注册,等 lifecycle.stopped 中转回唤醒. 对齐 Python handle._wait_event.
-    pub handle_waiters: Mutex<HashMap<String, HandleWaiter>>,
+    /// 父侧子调用句柄表: child_id → 共享 RoutineHandle。started/stopped/
+    /// rejected/yielded 都经这里分发；终止或断连时摘除。
+    pub handles: Mutex<HashMap<String, RoutineHandle>>,
     /// p2p req 回执等待表: req_id → waiter. req() 发 message.req 后注册,
     /// message.req_reply_delivered 到达时唤醒.
     pub req_waiters: Mutex<HashMap<String, ReqWaiter>>,
@@ -194,7 +191,7 @@ impl ServerRuntime {
             last_heartbeat: Mutex::new(HashMap::new()),
             watchdog_started: AtomicBool::new(false),
             create_futures: Mutex::new(HashMap::new()),
-            handle_waiters: Mutex::new(HashMap::new()),
+            handles: Mutex::new(HashMap::new()),
             req_waiters: Mutex::new(HashMap::new()),
             mailboxes: Mutex::new(HashMap::new()),
             subscribers: Mutex::new(HashMap::new()),
@@ -407,19 +404,37 @@ impl ServerRuntime {
         self.create_futures.lock().await.remove(req_id)
     }
 
-    pub async fn register_handle_waiter(
-        &self,
-        child_id: &str,
-        sender: HandleWaiter,
-    ) {
-        self.handle_waiters
+    pub async fn register_handle(&self, handle: RoutineHandle) {
+        self.handles
             .lock()
             .await
-            .insert(child_id.to_string(), sender);
+            .insert(handle.id().to_string(), handle);
     }
 
-    pub async fn pop_handle_waiter(&self, child_id: &str) -> Option<HandleWaiter> {
-        self.handle_waiters.lock().await.remove(child_id)
+    pub async fn get_handle(&self, child_id: &str) -> Option<RoutineHandle> {
+        self.handles.lock().await.get(child_id).cloned()
+    }
+
+    pub async fn pop_handle(&self, child_id: &str) -> Option<RoutineHandle> {
+        self.handles.lock().await.remove(child_id)
+    }
+
+    /// kernel 断连后，所有父侧等待立即以 DISCONNECTED 结算，不留悬挂 task。
+    pub async fn peer_down_all(&self, peer_id: &str, detail: String) {
+        let handles = {
+            let mut registered = self.handles.lock().await;
+            registered.drain().map(|(_, handle)| handle).collect::<Vec<_>>()
+        };
+        for handle in handles {
+            handle.notify_done(
+                JsonValue::Null,
+                Some(detail.clone()),
+                TerminationReason::Disconnected,
+                Some(peer_id.to_string()),
+                detail.clone(),
+            );
+            handle.resolve_ack(Err(detail.clone()));
+        }
     }
 
     /// 启动时打印一行 routine 注册统计（总数 / enabled / passive）。

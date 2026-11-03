@@ -1,0 +1,24 @@
+# 子工作流:被 nested_dag 当作普通节点 push.
+# 吃 inputs(c1, c2),合并后吐单一 result(outputs.merged).
+#
+# 对父来说这就是个黑盒节点:父只看到 merged 这个聚合结果,
+# 看不到内部的 merge 节点.作用域隔离----它有独立的 outputs map.
+
+name: sub_calc
+description: 子工作流----合并两个输入
+
+inputs:
+  - name: c1
+    type: str
+  - name: c2
+    type: str
+
+nodes:
+  - id: merge
+    routine: merge_weather
+    inputs:
+      a: "$WI.c1"
+      b: "$WI.c2"
+
+outputs:
+  merged: merge

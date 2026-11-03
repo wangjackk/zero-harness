@@ -19,7 +19,7 @@ from routine.logger import setup_logger
 
 from app.modules import MODULE_MOUTH
 
-from .tts import create_tts, get_player
+from ..tts import create_tts, get_player
 
 _log = setup_logger('speak')
 

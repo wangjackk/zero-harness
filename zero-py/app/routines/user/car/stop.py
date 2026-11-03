@@ -29,6 +29,9 @@ class CarStop(Routine):
 
     name = 'car/stop'
     meta: ClassVar[Dict[str, Any]] = {
+        # 安全动作: "以为停了其实没停"是最坏的臆造, 所以出厂声明 observe
+        # —— 零速真的发出去了才回到下一拍, 模型不用猜也不用等下句话.
+        'observe': True,
         'description': '小车急停(打断在跑动作并立即发零速). 底盘异常/失控时的第一反应',
         'input_schema': CarStopInput.model_json_schema(),
         'output_schema': CarStopOutput.model_json_schema(),
@@ -36,4 +39,5 @@ class CarStop(Routine):
 
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         await ctrl.stop_robot()
-        return CarStopOutput(stopped=True).model_dump()
+        return {'content': '已急停, 零速已发',
+                'details': CarStopOutput(stopped=True).model_dump()}

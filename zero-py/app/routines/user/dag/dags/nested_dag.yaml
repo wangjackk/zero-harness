@@ -1,0 +1,38 @@
+# 测试:子工作流嵌套(run_dag push run_dag,结构性免费)
+#
+#   north(run_dag sub_calc) ──┐
+#                             ├──► final
+#   south(run_dag sub_calc) ──┘
+#
+# north / south 各自是一个 run_dag 节点,跑独立的 sub_calc 子工作流(各有
+# 独立 outputs map,互不污染).子工作流返回 {merged: ...},所以父用
+# $north.output.merged 提取聚合结果----父看不到子工作流内部节点.
+#
+# run_dag 的 inputs 是 JSON 字符串(前端 XML 同款).
+#
+# 跑:<run_dag dag="nested_dag"/>
+
+name: nested_dag
+description: 演示子工作流嵌套(递归免费)
+
+nodes:
+  - id: north
+    routine: run_dag
+    inputs:
+      dag: sub_calc
+      inputs: '{"c1": "北京", "c2": "哈尔滨"}'
+
+  - id: south
+    routine: run_dag
+    inputs:
+      dag: sub_calc
+      inputs: '{"c1": "广州", "c2": "深圳"}'
+
+  - id: final
+    routine: summary_weather
+    depends_on: [north, south]
+    inputs:
+      data: "北方=[$north.output.merged] 南方=[$south.output.merged]"
+
+outputs:
+  result: final

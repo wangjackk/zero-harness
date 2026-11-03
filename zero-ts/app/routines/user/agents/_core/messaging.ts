@@ -44,6 +44,18 @@ export function buildContent(text: string, images: string[] = []): ContentBlock[
   return content
 }
 
+/** 绝对路径 -> '/files/<name>': 只有 uploads 目录内的图前端能直接引用.
+ *
+ * send_message 已在入口把 /files 引用 resolve 成绝对路径, 回显入站消息时
+ * 要转回去 (前端 img 只认 /files/<name>). data: / http / 目录外原样返回.
+ */
+export function toFilesRef(path: string): string {
+  if (!path || path.startsWith('data:') || path.startsWith('http')) return path
+  const parts = path.replace(/\\/g, '/').split('/')
+  const name = parts.pop() ?? ''
+  return name && parts[parts.length - 1] === 'uploads' ? `/files/${name}` : path
+}
+
 /** 消费层拆解: content 数组 -> [text 主体, image path 列表].
  *
  * 多个 text block 以 \n 连接成单一主体 (LLM 接口是 text 主体 + images 附件). */

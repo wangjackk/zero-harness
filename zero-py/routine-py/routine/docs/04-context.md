@@ -38,6 +38,8 @@ handle = await self.ctx.create('echo', {'text': 'hi'})
 # handle.modules = 子 routine on_created() 返回的占用 modules
 ```
 
+子的父固定是本实例(父停子停靠这条边),句柄固定是 `RoutineHandle`。两件都不开放给调用方改写。
+
 ### `await ctx.call(name, kwargs=None, priority=10) -> Any`
 
 同步拿子 routine 结果:create → start(priority) → wait 一步到位。**要求父 started**。
@@ -109,7 +111,7 @@ async with await self.ctx.stream_req(counter_rid, 'count', data=5) as s:
 
 ### `await ctx.send(target, data=None)`
 
-给 target routine 发定向消息(`message.send`)。派发是 spawn 并发——对端 `on_message` 可能并发 fire + 乱序到达,**业务侧自带 id reorder**。created 后即可收(不必 start)。
+给 target routine 发定向消息(`message.send`)。对端经实例 mailbox 串行投递,同一实例的 `on_message` 严格保序(顺序语义由框架保证,业务不建 reorder)。created 后即可收(不必 start)。
 
 ```python
 # 对端

@@ -1,131 +1,65 @@
-"""routine/doc ---- 查看 routine 的精简文档(schema 翻译成人类可读).
+"""routine/doc —— 取回一个 routine 的完整用法(签名 / 参数说明 / 示例).
 
-比 routine/list 的原始 schema 更精简:签名 + 参数列表.无参数的 routine 只列签名.
+能力清单分两级披露: 装配 ``detail:`` 里点名的详列, 其余只印名字. 名字在
+眼前、用法留在门外 —— 真要用时用这一句取回来:
 
-调用示例:
-    curl -XPOST localhost:7780/run/routine/doc -d '{"name":"routine/list"}'
-    run_routine({name: 'routine/doc', kwargs: {name: 'routine/list'}})
+    <routine/doc name="car/move"/>
+
+**数据源是 routine 自己的 meta**, 渲染走 ``prompt/capability.entry`` —— 与
+清单里那一项是**同一个函数**. 两处各写一遍格式就会漂移: 清单印
+``speed=0.1``, 查回来又是另一种写法, 模型还得自己翻译一遍 (翻译就是猜).
+
+只查 catalog(kernel 路由表), 不经过 shell: 这具身体与别的装配共用这份
+routine, 不该为一个"查文档"的动作依赖于某具身体里有谁在跑. 名字在不在
+词表里由投递口管 —— 文档说清楚"清单里有这些名字"就够.
+
+**也不声明 ``observe``**: 查回来的结果该不该进下一拍, 是调用它的那具
+身体的判断(见 moss 装配清单的 ``observe:`` 名单), 不是这个 routine 的
+属性. 跨身体共用的单元把某具身体的调用语法写进 meta, 换个装配就变成
+一句没人读的谎.
 """
 from typing import Any, ClassVar, Dict
 
 from pydantic import BaseModel, Field
 
+from app.routines.user.moss.prompt.capability import canon, entry
 from routine import Routine
 
-__all__ = ['RoutineDoc']
+__all__ = ['RoutineDoc', 'RoutineDocInput']
 
 
 class RoutineDocInput(BaseModel):
-    """routine/doc 输入:必须指定 name."""
+    """routine/doc 输入: 必须指定 name."""
 
     name: str = Field(
-        description='要查看文档的 routine name',
-    )
-
-
-class RoutineDocOutput(BaseModel):
-    doc: str = Field(
-        default='',
-        description='routine 的精简文档(签名 + 参数列表)',
+        description='要查的 routine 名, 照清单里那一行原样写(如 car/move, bb_write)',
     )
 
 
 class RoutineDoc(Routine):
-    """查看 routine 的精简文档(schema 翻译成人类可读)."""
+    """取回一个 routine 的完整用法(签名 + 参数说明 + 示例)."""
 
     name = 'routine/doc'
+
     meta: ClassVar[Dict[str, Any]] = {
-        'description': '查看 routine 文档(schema 翻译成精简可读格式).必须指定 name',
+        'description': ('取回一个 routine 的完整用法(签名/参数说明/示例): '
+                        '清单里只列了名字的那些, 用前先查它'),
         'input_schema': RoutineDocInput.model_json_schema(),
-        'output_schema': RoutineDocOutput.model_json_schema(),
+        'example': (
+            '要用清单里只列了名字的能力, 先取它的参数:\n'
+            '<routine/doc name="car/move"/>'),
     }
 
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        inp = RoutineDocInput.model_validate(kwargs)
-        try:
-            routines = await self.get_routines()
-        except NotImplementedError:
-            return {'error': 'get_routines not implemented for this transport', 'doc': ''}
-        except Exception as exc:
-            self._logger.warning('routine_doc failed: %s', exc)
-            return {'error': f'{type(exc).__name__}: {exc}', 'doc': ''}
-        routines = [r for r in routines if r.get('name') == inp.name]
-        if not routines:
-            return {'error': f'routine not found: {inp.name}', 'doc': ''}
-        self._logger.info('routine_doc: %s', inp.name)
-        return {'doc': _render_doc(routines[0])}
-
-
-def _render_doc(routine: Dict[str, Any]) -> str:
-    """把单个 routine 的 meta(input_schema + description)翻译成精简文档.
-
-    格式::
-
-        routine: routine/list
-        列出 routine(已注册 / 运行中).kind=registered(默认)|running
-        参数:
-        - kind (string) 可选 默认 registered - registered=已注册(默认); running=运行中
-
-    无参数的 routine 只列 name + description.
-    """
-    name = routine.get('name', '') or '?'
-    meta = routine.get('meta') or {}
-    desc = meta.get('description') or ''
-    schema = meta.get('input_schema') or {}
-    props = schema.get('properties') or {}
-    required = set(schema.get('required') or [])
-
-    lines = [f'routine: {name}']
-    if desc:
-        lines.append(desc)
-    if props:
-        lines.append('参数:')
-        defs = schema.get('$defs') or {}
-        for pname, pschema in props.items():
-            pschema = pschema if isinstance(pschema, dict) else {}
-            parts = [f'- {pname}']
-            ptype, enum_vals = _resolve_type(pschema, defs)
-            if ptype:
-                parts.append(f'({ptype})')
-            if pname in required:
-                parts.append('必填')
-            elif 'default' in pschema:
-                parts.append(f'默认 {_fmt_default(pschema["default"])}')
-            if enum_vals:
-                parts.append(f'[{" / ".join(enum_vals)}]')
-            pdesc = (pschema.get('description') or '').strip()
-            if pdesc:
-                parts.append(f'- {pdesc}')
-            lines.append(' '.join(parts))
-    return '\n'.join(lines)
-
-
-def _resolve_type(pschema: Dict[str, Any], defs: Dict[str, Any]) -> tuple[str, list[str]]:
-    """从 schema property 解析类型名(处理 $ref / anyOf / oneOf).
-
-    返回 (type, enum_vals):enum_vals 非空时是 $ref 指向的 enum 定义的可选值列表.
-    """
-    t = pschema.get('type')
-    if t:
-        return t, list(pschema.get('enum') or [])
-    # $ref: 往 $defs 查.常见于 str-enum:type=string + enum=[...].
-    ref = pschema.get('$ref')
-    if ref and ref.startswith('#/$defs/'):
-        def_name = ref[len('#/$defs/'):]
-        defn = defs.get(def_name) or {}
-        return defn.get('type', 'string'), list(defn.get('enum') or [])
-    for combo in ('anyOf', 'oneOf'):
-        opts = pschema.get(combo) or []
-        for opt in opts:
-            if isinstance(opt, dict) and opt.get('type') != 'null':
-                return opt.get('type', 'string'), list(opt.get('enum') or [])
-    return 'string', []
-
-
-def _fmt_default(v) -> str:
-    """int-like float 去尾零(pydantic 把 10 标准化成 10.0 时还原)."""
-    if isinstance(v, float) and v.is_integer():
-        return str(int(v))
-    if v is None:
-        return 'null'
-    return str(v)
+        inp = RoutineDocInput.model_validate(kwargs or {})
+        name = canon(inp.name)
+        metas = {e.get('name'): e.get('meta') or {}
+                 for e in await self.get_routines()}
+        meta = metas.get(name)
+        if meta is None:
+            # 名字写错与"装配漏了这个文件"对模型是同一件事: 它两个都改不了,
+            # 能做的是换个名字. 所以一句话说清"没有这个名字", 别说 catalog.
+            raise RuntimeError(
+                f'没有这个 routine: {inp.name}(照清单里的名字写, 别自己起名)')
+        self._logger.info('routine/doc: %s', name)
+        return {'content': entry(name, meta)}

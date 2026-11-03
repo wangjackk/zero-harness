@@ -17,10 +17,13 @@ from .screenshot import Screenshot
 # from .wechat_watch import WeChatWatch
 # from .wechat_config import WeChatConfig
 from .sysinfo import SysInfo
+from .fanout_search import FanoutSearch
 from .evolve import Evolve
 from .mini_agent import MiniAgent
 from .approval_gate import ApprovalGate
+from .phone_power import PhonePower
+from .deep_research import DeepResearch
 
 __all__ = ['Screenshot',
     # 'WeChatSend', 'WeChatWatch', 'WeChatConfig',
-    'SysInfo', 'Evolve', 'MiniAgent', 'ApprovalGate']
+    'SysInfo', 'FanoutSearch', 'Evolve', 'MiniAgent', 'ApprovalGate', 'PhonePower', 'DeepResearch']

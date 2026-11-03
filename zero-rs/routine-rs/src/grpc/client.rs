@@ -70,7 +70,7 @@ impl GrpcClient {
         }
     }
 
-    pub fn stop(&self) {
+    pub fn close(&self) {
         self.stopped.store(true, Ordering::SeqCst);
     }
 
@@ -259,7 +259,7 @@ impl GrpcClient {
                     // kernel 拒绝连接(hub_id 重复/缺失): 重连无意义, 停止重连 loop
                     // (kernel 会 cancel stream, run 循环按 stopped 退出).
                     tracing::error!("[client] ❌ catalog.pushed rejected (req_id={req_id}): {error}");
-                    self.stop();
+                    self.close();
                     return;
                 }
                 let registered = msg

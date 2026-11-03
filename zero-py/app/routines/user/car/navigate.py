@@ -72,8 +72,10 @@ class CarNavigate(Routine):
                 },
             },
         })
-        return CarNavigateOutput(
-            area=str(z.get('name', inp.area)), x=x, y=y, sent=True).model_dump()
+        area = str(z.get('name', inp.area))
+        return {'content': f'已发往「{area}」({x:.2f}, {y:.2f}), 导航栈接管',
+                'details': CarNavigateOutput(
+                    area=area, x=x, y=y, sent=True).model_dump()}
 
     @staticmethod
     async def _require_nav() -> None:

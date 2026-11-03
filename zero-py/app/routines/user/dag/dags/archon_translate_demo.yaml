@@ -1,0 +1,65 @@
+# 演示 Archon YAML → 本地 DAG YAML 的节点类型翻译
+#
+# Archon 节点类型对照表
+# ─────────────────────────────────────────────────
+# Archon               本地 routine       核心 inputs
+# ─────────────────────────────────────────────────
+# bash: "cmd"        → run_bash          cmd
+# prompt: "..."      → run_llm           prompt, system, model
+# command: myfile    → run_llm           system=<file内容>, prompt
+# script: "..." py   → run_script        code, runtime=python
+# script: "..." bun  → run_script        code, runtime=bun
+# approval:          → dag_approval      message, capture_response
+# loop:              → (暂不支持)
+# ─────────────────────────────────────────────────
+#
+# 跑:<run_dag dag="archon_translate_demo"/>
+
+name: archon_translate_demo
+description: Archon 节点类型翻译示例
+
+nodes:
+  # ── bash 节点 ─────────────────────────────────
+  # Archon: bash: "echo hello"
+  - id: fetch_date
+    routine: run_bash
+    inputs:
+      cmd: "date /T"          # Windows: date /T;Linux 改成 date '+%Y-%m-%d'
+      timeout: 10
+
+  # ── prompt / LLM 节点 ─────────────────────────
+  # Archon: prompt: "今天是 $fetch_date.output,写一句今日格言"
+  - id: greeting
+    routine: run_llm
+    depends_on: [fetch_date]
+    inputs:
+      prompt: "今天是 $fetch_date.output,写一句今日格言(20字以内)"
+      model: gpt-4o-mini
+      temperature: 0.9
+
+  # ── script 节点(Python inline)──────────────
+  # Archon: script: "..." runtime: python
+  - id: reverse
+    routine: run_script
+    depends_on: [greeting]
+    inputs:
+      runtime: python
+      code: |
+        import sys
+        text = """$greeting.output"""
+        print(text[::-1])
+
+  # ── 人工审批节点 ─────────────────────────────
+  # Archon: approval:
+  - id: approve
+    routine: dag_approval
+    depends_on: [reverse]
+    inputs:
+      message: "倒序结果:$reverse.output\n原文:$greeting.output\n是否通过?"
+      capture_response: true
+      max_attempts: 1
+
+outputs:
+  greeting: greeting
+  reversed: reverse
+  approval: approve

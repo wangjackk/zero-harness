@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Sequence
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -20,6 +20,7 @@ from app.routines.user.skill.registry import build_registry
 
 from .._core.llm import LLMClient
 from .._core.memory import build_context_provider
+from .._core.messaging import to_files_ref
 from .._core.session import SessionStore
 from .._core.system_prompt import build_system_prompt
 from ...tool_schema import tool_schema
@@ -304,21 +305,26 @@ class ReactorAgent(Routine):
     # ── 事件处理 ──
 
     async def _on_input(self, source, data: dict) -> None:
+        from app.routines.user.agents._core.messaging import USER_SOURCE, wrap_from
+        text = str((data or {}).get('text') or '')
+        images = [str(p) for p in (data or {}).get('images') or []]
+        if not text and not images:
+            return
+        from_agent = str((data or {}).get('from') or USER_SOURCE)
+        # 收到即播报 (与来源无关), 前端只据此渲染. 先于取消在飞轮次:
+        # 气泡不该等 agent 收敛才出现. 播报用原文, from 由前端做标签.
+        # 播报失败只记日志, 不能连累后面的入库与 react.
+        try:
+            await self.emit_incoming_message(text, from_agent, images)
+        except Exception:
+            _log.warning('emit incoming_message failed', exc_info=True)
         async with self._event_lock:
-            from app.routines.user.agents._core.messaging import USER_SOURCE, wrap_from
-            text = str((data or {}).get('text') or '')
-            images = [str(p) for p in (data or {}).get('images') or []]
-            if not text and not images:
-                return
-            from_agent = str((data or {}).get('from') or USER_SOURCE)
             content = wrap_from(text, from_agent)
             if images and not content:
                 content = '[image]'
             self._epoch += 1
             await self._cancel_tracker()
             self._ctx.append_user(content, images=images or None)
-            if from_agent != USER_SOURCE:
-                await self.emit_incoming_message(content, from_agent)
             self._tracker_task = asyncio.create_task(self._run_react(self._epoch))
 
     async def _on_interrupt(self, source, data: dict) -> None:
@@ -421,8 +427,16 @@ class ReactorAgent(Routine):
             'percent': percent,
         }
 
-    async def emit_incoming_message(self, text: str, from_agent: str) -> None:
+    async def emit_incoming_message(
+        self, text: str, from_agent: str, images: Sequence[str] = (),
+    ) -> None:
+        """播报入站消息到前端 (收到即播, 与来源无关).
+        images 是磁盘路径, 回显前转 /files/<name> 引用 ---- 前端 img 只认
+        web_server 的 /files 路由; None 按空序列处理."""
         data = {'text': text, 'from': from_agent, 'agent_id': self._agent_id}
+        refs = [p for p in (to_files_ref(str(x)) for x in (images or ())) if p]
+        if refs:
+            data['images'] = refs
         await self.publish('incoming_message', data)
         await self.publish('incoming_message', data, namespace=self._agent_id)
 

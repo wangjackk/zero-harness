@@ -14,7 +14,7 @@
     conn = await hub.connect(kernel_ref)   # inproc: link 绑定 + catalog push;
                                            # remote: grpc transport + 重连 + catalog push
     ...
-    await conn.stop()   # 级联关停(grpc server → kernel → link / transport)
+    await conn.close()   # 级联关停(grpc server → kernel → link / transport)
 """
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ def remote(address: str) -> RemoteKernel:
 
 
 class Connection:
-    """hub.connect() 的产物:hub ↔ kernel 连接持有体,``stop()`` 级联关停."""
+    """hub.connect() 的产物:hub ↔ kernel 连接持有体,``close()`` 关闭连接."""
 
     def __init__(self, hub: RoutineHub, kernel: KernelRef,
                  transport: Transport) -> None:
@@ -86,16 +86,24 @@ class Connection:
         self.kernel = kernel
         self.transport = transport
 
-    async def stop(self) -> None:
-        """级联关停:grpc server → kernel → link(inproc)/ transport(dial)."""
+    async def close(self) -> None:
+        """关闭连接:kernel → grpc server → link(inproc)/ transport(dial).
+
+        kernel 只对**同进程** hub 的节点请求-确认(见 _stop_node): 那批 stop
+        必须趁 link 还活着发出去, 所以 kernel 在 link 之前。跨进程 hub 的节点
+        只结算 kernel 侧的投影, 由对端在断链时自清 ---- grpc 的关闭本身就是
+        那条通告, 不需要 kernel 逐个节点去等确认。
+        """
         k = self.kernel
         if isinstance(k, InprocKernel):
-            if k.grpc_server:
-                await k.grpc_server.stop()
             await k.kernel.stop()
+            if k.grpc_server:
+                # 只给 0.5s: peer 是不断重连的 dial-in 客户端, 不会自己关流;
+                # 这里在退出路上, 陪它吃满 2s 的 grace 只换来"关停完成 (4.0s)".
+                await k.grpc_server.stop(grace=0.5)
             await k.link.stop()
         else:
-            await self.transport.stop()
+            await self.transport.close()
 
 
 async def connect(hub: RoutineHub, kernel: KernelRef) -> Connection:

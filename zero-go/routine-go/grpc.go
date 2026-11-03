@@ -146,15 +146,15 @@ type GrpcServerTransport struct {
 	listener  net.Listener
 	boundPort int
 
-	mu         sync.Mutex
-	outQueues  map[string]chan *structpb.Struct
-	stopCh     chan struct{}
-	stopOnce   sync.Once
+	mu        sync.Mutex
+	outQueues map[string]chan *structpb.Struct
+	stopCh    chan struct{}
+	stopOnce  sync.Once
 
 	// dial-out get_running / get_module_tree 请求-回执 future 表.
-	getRunningFutures     map[string]chan map[string]any
-	getModuleTreeFutures  map[string]chan map[string]any
-	futuresMu             sync.Mutex
+	getRunningFutures    map[string]chan map[string]any
+	getModuleTreeFutures map[string]chan map[string]any
+	futuresMu            sync.Mutex
 }
 
 // NewGrpcServerTransport 创建 dial-out server transport.
@@ -203,8 +203,8 @@ func (t *GrpcServerTransport) Wait() error {
 	return nil
 }
 
-// Stop 停 grpc server.
-func (t *GrpcServerTransport) Stop() error {
+// Close 关闭 grpc server 连接。
+func (t *GrpcServerTransport) Close() error {
 	t.stopOnce.Do(func() {
 		if t.server != nil {
 			t.server.Stop()
@@ -455,8 +455,8 @@ type GrpcClientTransport struct {
 	stream   grpc.BidiStreamingClient[structpb.Struct, structpb.Struct]
 	streamMu sync.Mutex
 
-	outQ     chan map[string]any
-	outQLen  int
+	outQ    chan map[string]any
+	outQLen int
 
 	stopFlag  bool
 	stopMu    sync.Mutex
@@ -468,12 +468,12 @@ type GrpcClientTransport struct {
 
 // dial-in 常量.
 const (
-	ClientPeerID       = "kernel"
-	BackoffInitial     = 200 * time.Millisecond
-	BackoffMax         = 5 * time.Second
-	BackoffFactor      = 1.5
-	ClientReqTimeout   = 5 * time.Second
-	ClientOutQMaxSize  = 256
+	ClientPeerID        = "kernel"
+	BackoffInitial      = 200 * time.Millisecond
+	BackoffMax          = 5 * time.Second
+	BackoffFactor       = 1.5
+	ClientReqTimeout    = 5 * time.Second
+	ClientOutQMaxSize   = 256
 	ClientStableSeconds = 2.0
 )
 
@@ -505,8 +505,8 @@ func (t *GrpcClientTransport) Wait() error {
 	return nil
 }
 
-// Stop 主动停.
-func (t *GrpcClientTransport) Stop() error {
+// Close 主动关闭连接。
+func (t *GrpcClientTransport) Close() error {
 	t.stopMu.Lock()
 	if t.stopFlag {
 		t.stopMu.Unlock()
@@ -672,9 +672,10 @@ func (t *GrpcClientTransport) run() {
 			return
 		}
 
-		// peer 断连:清 instance.
+		// peer 断连:清 instance.等清理完成再退避/重连 —— 销毁期与重建期
+		// 重叠会在 kernel 重启后撞 rid, 老 cleanup 误杀重建的新实例.
 		if t.hub != nil {
-			t.hub.OnPeerDown(t.peerID)
+			t.hub.OnPeerDownAndWait(t.peerID)
 		}
 
 		// 健康(连上后稳定)重置 backoff;连上即断保留 backoff.

@@ -186,7 +186,7 @@ except StreamError as exc:
 | `another start/stop in flight` | `handle._send_and_wait` 重入 | 等上一个 start/stop 完成再调 |
 | `request_stop requires peer_id` | `RoutineHub.request_stop` 没传 peer_id | 传 peer_id |
 | `Cannot bind to address` | gRPC 端口被占 | 改地址 / 释放端口 |
-| `routine stopped with reason=ERROR` | `handle.wait()` 等到子异常停止 | 看子 routine error——子 `run()` 抛了 |
+| `routine stopped with reason=FAILED` | `handle.wait()` 等到子异常停止 | 看子 routine error——子 `run()` 抛了 |
 
 ### `handle.wait()` 的 `RuntimeError`
 
@@ -202,25 +202,24 @@ except RuntimeError as exc:
     self._logger.error('worker failed: %s', exc)
 ```
 
-子 routine `run()` 的原始异常**不会**跨 wire 透传类型——只透传 `str(exc)`。`handle.reason` 字段保留 `lifecycle.stopped` 的 reason 诊断值(`AUTO/STOP/ERROR/CANCEL/FORCE/DISCONNECT`)。
+子 routine `run()` 的原始异常**不会**跨 wire 透传类型——只透传 `str(exc)`。`handle.reason` 是 `TerminationReason` 枚举，`handle.error` 仍是独立字段。
 
-## `lifecycle.stopped` reason 值
+## `TerminationReason`：统一终止原因
 
-`reason` 是 wire 上的诊断字段,**kernel 不按值分流**(dumb-forward),只给父侧 `handle.reason` 和 routine 的 `on_stopped` 钩子用。
+`TerminationReason` 同时用于子侧 `on_stopped`、父侧 `handle.reason` 和 wire；只有传输边界做 `.value` 编解码。**kernel 不按值分流**，只负责透传与断连本地结算。
 
 | reason | 含义 | 触发 |
 |---|---|---|
-| `AUTO` | routine 自然结束(`run` return) | runner 正常退出,无 stop 请求 |
-| `STOP` | 被 `lifecycle.stop` 正规打断 | 父侧 `handle.stop()` / kernel stop |
-| `ERROR` | `run()` 抛异常 | runner 未捕获异常 |
-| `CANCEL` | `CancelledError`(force_stop 接管前的取消路径) | task 取消,后续 force_stop 接管 |
-| `FORCE` | 被更高档位的 `start(priority)` / passive 拉起 / `acquire` 驱逐 | 抢占式资源回收 |
-| `DISCONNECT` | peer 断连,`force_stop_peer` 清理 | 网络断 / 进程退出 |
-| `UNKNOWN` | 未识别的 reason 字符串 | 兜底(不应出现) |
+| `COMPLETED` | `run()` 自然 return | runner 正常退出，无 stop 请求 |
+| `STOPPED` | 正常 stop 请求后结束 | 父侧 `handle.stop()` / kernel stop |
+| `PREEMPTED` | 模块优先级仲裁导致驱逐 | 更高档位的 `start` / passive / `acquire` |
+| `FAILED` | 执行或创建失败 | 查看独立字段 `error` |
+| `CANCELLED` | 主 task 被直接取消 | 非 graceful stop 接管的兜底路径 |
+| `DESTROYED` | created 后、start 前撤销 | `handle.destroy()` / 级联清理 created 子 |
+| `DISCONNECTED` | 与宿主或 kernel 失联 | 网络断开 / 进程退出；不确认对端已停止 |
+| `UNKNOWN` | 未识别的 wire 值 | 协议兜底，正常业务不应产生 |
 
-业务层用小写字符串(`'auto'/'stop'/'error'/'cancel'/'force'/'disconnect'`),wire 上传大写 enum(`ControlDoneReason`),由 `lifecycle._REASON_TO_ENUM` 映射。`on_stopped` 钩子收小写,`handle.reason` 收大写。
-
-扩展 reason **不需要改 kernel**——加新值即可,Kernel 透传不解析。
+结构化发起者放在 `by`：抢占时是驱逐者 rid，断连本地结算时是 host。`detail` 仅用于日志，不要解析。`result` / `error` 始终独立；`wait()` 仍只在 `error` 非空时抛 `RuntimeError`，不会因 `PREEMPTED` 等原因自动抛错。
 
 ## 错误恢复模式
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -41,12 +41,33 @@ class CarStatusOutput(BaseModel):
     odom_theta: Optional[float] = Field(None, description='里程计朝向 θ (rad)')
 
 
+def _summary(out: CarStatusOutput) -> str:
+    """给模型的那一行: 人话 + 缺什么直说(字段名不外露)."""
+    parts: List[str] = []
+    if out.voltage_v is None:
+        parts.append('电池读数没拿到(话题静默, 车可能不在线)')
+    elif out.voltage_v < 5.0:
+        parts.append(f'电压 {out.voltage_v:.2f}V(USB 供电假读数, 电量不可信)')
+    else:
+        parts.append(f'电量 {out.battery_pct or 0.0:.0f}%({out.voltage_v:.2f}V)')
+    if out.odom_x is None:
+        parts.append('位姿没拿到(定位不可用)')
+    else:
+        parts.append(f'位置 ({out.odom_x:.2f}, {out.odom_y or 0.0:.2f}) '
+                     f'朝向 {out.odom_theta or 0.0:.2f}rad')
+    return '; '.join(parts)
+
+
 class CarStatus(Routine):
     """查询小车电池电压/电量与里程计位姿(订阅感知桥取最新帧)."""
 
     name = 'car/status'
     meta: ClassVar[Dict[str, Any]] = {
         'readonly': True,
+        # 查询类: 调它就是为了拿这一句读数。出厂声明 observe = 每次都要,
+        # 不用模型在标签上手写 observe="true"(漏写的结果是"这一拍白调,
+        # 下一拍才看见")。readonly 在 mossv2 里没有读者, 别指望它。
+        'observe': True,
         'description': (
             '查询小车状态: 电池电压/估算电量 + 里程计 x/y/θ '
             '(感知桥最新帧; 车不在线时字段为 null. '
@@ -110,4 +131,4 @@ class CarStatus(Routine):
             out.odom_y = pos.get('y')
             out.odom_theta = 2.0 * math.atan2(
                 float(quat.get('z', 0.0)), float(quat.get('w', 1.0)))
-        return out.model_dump()
+        return {'content': _summary(out), 'details': out.model_dump()}

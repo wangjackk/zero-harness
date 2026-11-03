@@ -35,6 +35,22 @@ log = logging.getLogger('kernel.grpc')
 # dial-in peer conn id 自增,"s" 前缀(对齐 Go serverConnIDCounter).
 _peer_counter = itertools.count(1)
 
+# 手机等拨入端用 20s 空连接 ping 探测半开连接。服务端既允许无活动 RPC 的
+# keepalive,也把接收频率门槛放宽到 10s(给 20s 周期留调度抖动余量)。
+#
+# 参数名坑: 1.6x 之后叫 min_ping_interval_without_data_ms —— 前缀是
+# min_ping(不是 min_recv_ping),末尾必须带 _ms。gRPC 对不认识的 channel arg
+# 是**静默忽略**的,写错不报错也不告警。此前这里少写 _ms 又用了旧前缀,整行
+# 从未生效,服务端门槛仍是默认 5min,于是 20s 一 ping 的 kt 端攒到第 3 个就被
+# 判 too_many_pings 直接 GOAWAY(ts/rs 不发 idle ping,所以只有 kt 中招)。
+# max_ping_strikes=0 关掉"按 ping 次数直接断连": 频率不合规的 ping 只记日志,
+# 链路保留。真要限流靠 min_ping_interval 那行,不靠断连。
+_SERVER_OPTIONS = (
+    ('grpc.keepalive_permit_without_calls', 1),
+    ('grpc.http2.min_ping_interval_without_data_ms', 10_000),
+    ('grpc.http2.max_ping_strikes', 0),
+)
+
 
 def _wire_serializer(msg) -> bytes:
     """response 序列化: handler/write 直接产出 wire bytes(透传).
@@ -65,7 +81,7 @@ class GrpcKernelServer:
         self._kernel = kernel
         self._addr = addr
         self._bound = False
-        self._server = grpc.aio.server()
+        self._server = grpc.aio.server(options=_SERVER_OPTIONS)
         req_handler = grpc.unary_unary_rpc_method_handler(
             self._on_req,
             request_deserializer=frame_decode,
@@ -96,13 +112,17 @@ class GrpcKernelServer:
         self._bound = True
         log.info('grpc kernel server on %s (dial-in)', self._addr)
 
-    async def stop(self) -> None:
+    async def stop(self, grace: float = 2.0) -> None:
+        """停 server. ``grace`` = 等 dial-in peer 自己关流的上限.
+
+        peer 是常驻重连的, 不会自发结束, 所以几乎总要吃满 grace 再强断(对齐
+        TS tryShutdown→forceShutdown). **进程退出时**没有理由陪它: 对端反正
+        要重连, 这段等待只让 Ctrl+C 更慢 —— ``Connection.close`` 传更短的 grace.
+        """
         if not self._bound:
             return
         self._bound = False
-        # dial-in client 常驻重连不会自发结束, 2s grace 后强断(对端走重连
-        # loop 是正常生命周期), 对齐 TS tryShutdown→forceShutdown.
-        await self._server.stop(2.0)
+        await self._server.stop(grace)
 
     # --- Req(unary): routine→kernel 查询 ---
 
@@ -204,14 +224,29 @@ class GrpcKernelServer:
             id=peer_id, send=_send, close=_reject))
         log.info('peer %s connected', peer_id)
 
-        # 正常路径: 客户端断开(reader 完成); 拒绝路径: reject_evt 置位.
-        await asyncio.wait({reader_t, reject_t},
-                           return_when=asyncio.FIRST_COMPLETED)
-        drop()
-        for t in (reader_t, reject_t, writer_t, worker_t):
-            if t.done():
-                continue
-            try:
-                await asyncio.wait_for(t, timeout=2.0)
-            except (asyncio.TimeoutError, Exception):
+        try:
+            # 正常路径: 客户端断开(reader 完成); 拒绝路径: reject_evt 置位.
+            await asyncio.wait({reader_t, reject_t},
+                               return_when=asyncio.FIRST_COMPLETED)
+            drop()
+            # 优雅收尾: 给 writer/worker 2s 把已入队帧写完/派完(shield:
+            # 超时由下面统一取消, 不在这里 cancel, 否则任务是 cancelled
+            # 但没人收尸)
+            for t in (writer_t, worker_t):
+                if t.done():
+                    continue
+                try:
+                    await asyncio.wait_for(asyncio.shield(t), timeout=2.0)
+                except (asyncio.TimeoutError, Exception):
+                    pass
+        finally:
+            # gRPC 也会直接取消整个 handler(尤其网络断开时), 不能只把清理
+            # 写在正常 return 路径。无论从哪里退出都先注销 conn, 再把四个
+            # 连接任务 cancel + await; 漏掉 reject_t 就会留下 Event.wait().
+            drop()
+            pending = [t for t in (reader_t, reject_t, writer_t, worker_t)
+                       if not t.done()]
+            for t in pending:
                 t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)

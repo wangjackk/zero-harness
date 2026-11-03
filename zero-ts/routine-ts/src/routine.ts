@@ -9,7 +9,7 @@ import {
   ENVELOPE_CHUNK, ENVELOPE_DATA, ENVELOPE_EOF, ENVELOPE_ERROR,
   ENVELOPE_EVENT, ENVELOPE_OK, ENVELOPE_REQ_ID, ENVELOPE_REPLY_TO,
   ENVELOPE_STREAM_ID, MESSAGE_REQ_REPLY, MESSAGE_STREAM_DATA,
-  type Msg, type Payload,
+  TerminationReason, type Msg, type Payload,
 } from './protocol'
 import { fmtMs, type Deferred } from './async'
 import { RegisterError } from './errors'
@@ -128,8 +128,8 @@ export abstract class Routine {
   _activeCtx: RunContext | null = null
   _mainDone: Deferred<void> | null = null
   _stopRequested = false
-  /** force 驱逐标志 + 驱逐者 rid:lifecycle.stop(reason=force) 时置. */
-  _stopForce = false
+  /** 终止原因 + 发起者 rid：lifecycle.stop 时置。 */
+  _stopReason: TerminationReason = TerminationReason.STOPPED
   _stopBy = ''
   _stopInProgress = false
   _stopFinalized = false
@@ -293,14 +293,15 @@ export abstract class Routine {
   /** started 钩子:lifecycle.started 已回报,run() 之前调. */
   async onStarted(): Promise<void> {}
 
-  /** run 完成或退出后调用(lifecycle.stopped 发出前).
-   * reason: 'auto' | 'error' | 'stop' | 'cancel' | 'force'. */
-  async onStopped(reason: string = 'auto', result: any = undefined, detail: string = ''): Promise<void> {}
+  /** run 完成或退出后调用（lifecycle.stopped 发出前）。
+   * by 是终止发起者 rid，detail 仅供诊断。 */
+  async onStopped(reason: TerminationReason = TerminationReason.COMPLETED,
+                  result: any = undefined, by = '', detail = ''): Promise<void> {}
 
   // --- Stop control ---
 
-  _requestStop(force = false, by = ''): boolean {
-    if (force) this._stopForce = true
+  _requestStop(reason: TerminationReason = TerminationReason.STOPPED, by = ''): boolean {
+    this._stopReason = reason
     if (by) this._stopBy = by
     if (this._stopRequested) return false
     this._stopRequested = true
@@ -318,7 +319,7 @@ export abstract class Routine {
 
   resetForStart(): void {
     this._stopRequested = false
-    this._stopForce = false
+    this._stopReason = TerminationReason.STOPPED
     this._stopBy = ''
     this._stopInProgress = false
     this._phase = 'created'
@@ -349,8 +350,8 @@ export abstract class Routine {
   isStopFinalized(): boolean { return this._stopFinalized }
   isStopInProgress(): boolean { return this._stopInProgress }
   isStopRequested(): boolean { return this._stopRequested }
-  isForceStop(): boolean { return this._stopForce }
-  /** force 驱逐者 rid(非 force 为空串). */
+  stopReason(): TerminationReason { return this._stopReason }
+  /** 终止发起者 rid；抢占时为驱逐者 rid。 */
   stopByRid(): string { return this._stopBy }
 
   bindCtx(ctx: RunContext): void { this._activeCtx = ctx }

@@ -1,9 +1,9 @@
-"""ReadImage ---- 读取本地图片文件, 图片引用随 result 返回, 由调用方 agent 合并.
+"""ReadImage ---- 读取本地图片文件, 图片引用随 result 返回, 由组装侧附进消息.
 
-返回 ``{'content': 元数据文本, 'images': [路径]}``: agent 侧特判 read_image 的
-result, 把图片与 feedback 文本合并成一条多模态消息进 LLM 上下文 -- 消息位置
-天然在 assistant 之后, 增量窗口内. 底层模型不支持读图时 agent 组装侧剥掉图,
-只留元数据文本.
+返回 ``{'content': 元数据文本, 'images': [路径]}``: 组装侧把图片与同一条
+消息的文本合并成多模态 (xml agent 特判 read_image 合并进 ``[feedback]``;
+moss 侧走回执载荷 ``images`` → ``<observe>`` 的 content blocks). 底层模型
+不支持读图时组装侧剥掉图, 只留元数据文本.
 
 原 tools/file_ops/ReadImageTool 迁来 (prime 工具集下线, read_image 是
 xml agent 白名单依赖独立存活).
@@ -17,13 +17,18 @@ from typing import Any, ClassVar, Dict, Optional, Tuple
 from pydantic import BaseModel, Field
 from routine import Routine
 
-from app.routines.user.agents._core.paths import AGENT_ID_KEY, resolve_tool_path, display_tool_path
+from app.routines.user.agents._core.paths import (
+    AGENT_ID_KEY, display_tool_path, pop_project_root, resolve_tool_path,
+)
+
+#: 注册表只认 __all__(manifest 语义): 单文件条目被别的清单引用时靠它
+__all__ = ['ReadImage']
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024   # 与 uploads 上限一致
 
 DESCRIPTION = (
-    'Reads an image file from the local filesystem and attaches it to the tool '
-    'feedback message, so you can visually inspect it. '
+    'Reads an image file from the local filesystem and attaches it to the result, '
+    'so you can visually inspect it. '
     'The file_path parameter must be an absolute path, not a relative path. '
     'Supported formats: png, jpeg, gif, webp (recognized by content, extension is not required). '
     'Use it to view plots saved by plotting code, screenshots, downloaded images, or any local image file. '
@@ -94,9 +99,9 @@ class ReadImage(Routine):
     """Read an image from the local filesystem.
 
     - file_path must be absolute
-    - The result carries metadata text plus an ``images`` path list; the caller
-      agent merges the images into the feedback message (multimodal), dropping
-      them when the underlying model cannot see images
+    - The result carries metadata text plus an ``images`` path list; the
+      assembling side merges the images into the same message (multimodal),
+      dropping them when the underlying model cannot see images
     - Formats are recognized by magic bytes, extension is not required
     """
 
@@ -110,9 +115,15 @@ class ReadImage(Routine):
     }
 
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        agent_id = kwargs.pop(AGENT_ID_KEY, '')
-        state = await self.call('agent/state', {'agent_id': agent_id})
-        project_root = state.get('project_root')
+        agent_id = str(kwargs.pop(AGENT_ID_KEY, '') or '')
+        # 项目根只有"有调用者身份"时才去问: agent 那套才有 agent/state.
+        # moss 这边没有 agent 概念(也就不注入 from_agent_id), 相对路径按
+        # 进程 cwd 解析 —— 判据是"没有身份就别去问我是谁", 不是给旧写法
+        # 兜底, 所以不 catch 异常(真问错了要看得见).
+        project_root = pop_project_root(kwargs)
+        if agent_id and not project_root:
+            state = await self.call('agent/state', {'agent_id': agent_id})
+            project_root = state.get('project_root')
         inp = ReadImageInput(**kwargs)
         path = resolve_tool_path(inp.file_path, project_root)
 
@@ -141,8 +152,8 @@ class ReadImage(Routine):
         dim_text = f', {dims[0]}x{dims[1]}' if dims else ''
         display = display_tool_path(path, project_root)
 
-        # result 携带图片引用 (agent 侧特判 read_image: 随 feedback 合并成一条
-        # 多模态消息进 LLM 上下文; 模型不支持读图时 agent 组装侧剥掉).
+        # result 携带图片引用 (组装侧特判: 随同一条消息合并成多模态;
+        # 模型不支持读图时组装侧剥掉).
         content = (
             f'Read image: {display} ({media_type}{dim_text}, {size} bytes). '
             'The image is attached to this feedback message.'

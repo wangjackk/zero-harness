@@ -15,7 +15,7 @@ use tonic::transport::Server;
 pub use lifecycle::LifecycleManager;
 pub use queries::QueryService;
 pub use router::BusinessEventRouter;
-pub use state::{HandleWaiter, ServerRuntime, CreateWaiter};
+pub use state::{CreateWaiter, ServerRuntime};
 pub use transport::OutboundTransport;
 
 pub use crate::grpc::client::{GrpcClient, GrpcClientOptions};
@@ -76,7 +76,7 @@ impl RoutineHub {
     }
 
     /// 接入 kernel(RemoteKernel 引用),grpc 拨入 + catalog push + 后台重连,
-    /// 返回 Connection(stop 级联关停 / join 挂住)。
+    /// 返回 Connection(close 关闭连接 / join 挂住)。
     ///
     /// 对齐 Python `hub.connect(kernel.remote(addr))`:连接在后台任务驱动,
     /// 断线退避重连(200ms→5s),不阻塞本调用。
@@ -109,9 +109,9 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// 级联关停:停重连循环并等待后台任务退出(5s 上限)。
-    pub async fn stop(self) {
-        self.client.stop();
+    /// 关闭连接:停重连循环并等待后台任务退出(5s 上限)。
+    pub async fn close(self) {
+        self.client.close();
         let _ = tokio::time::timeout(Duration::from_secs(5), self.handle).await;
     }
 

@@ -2,6 +2,7 @@ package routine
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -23,16 +24,12 @@ func NewLifecycleManager(server *RoutineHub, runtime *ServerRuntime) *LifecycleM
 }
 
 // sendStopped 幂等发 lifecycle.stopped.先 markStoppedSent 守住,后到者 no-op.
-func (m *LifecycleManager) sendStopped(prid, id, peerID, reason string,
-	state *invocationState, result any, errMsg string) error {
-	wireReason, ok := reasonToEnum[reason]
-	if !ok {
-		wireReason = ReasonUnknown
-	}
+func (m *LifecycleManager) sendStopped(prid, id, peerID string, reason TerminationReason,
+	state *invocationState, result any, errMsg, by, detail string) error {
 	if state != nil && !state.markStoppedSent() {
 		return nil
 	}
-	return m.server.SendLifecycleStopped(id, wireReason, result, errMsg, peerID)
+	return m.server.SendLifecycleStopped(id, reason, result, errMsg, by, detail, peerID)
 }
 
 // cleanup 清理 instance 路由表 + 注册表.对标 Python _cleanup.
@@ -74,14 +71,14 @@ func (m *LifecycleManager) instantiate(peerID, rid, name string,
 	m.runtime.RegisterCreated(rid, state)
 	// ctx 绑到 created:on_created() hook + 所有发送(req/publish/send/create/...)可用.
 	ctx := &RunContext{
-		ID:      rid,
-		Name:    name,
-		PeerID:  peerID,
-		io:      m.server,
-		runtime: m.runtime,
+		ID:        rid,
+		Name:      name,
+		PeerID:    peerID,
+		io:        m.server,
+		runtime:   m.runtime,
 		transport: m.server.Transport,
-		state:   state,
-		logger:  m.runtime.logger.Named(fmt.Sprintf("[ROUTINE] %s", name)),
+		state:     state,
+		logger:    m.runtime.logger.Named(fmt.Sprintf("[ROUTINE] %s", name)),
 	}
 	state.ctxOnce.Do(func() { state.ctx = ctx })
 	state.initKwargs = kwargs
@@ -115,14 +112,14 @@ func (m *LifecycleManager) HandleCreated(peerID string, msg map[string]any) {
 	factory := m.runtime.Registry.Get(name)
 	if factory == nil {
 		m.runtime.logger.Errorf("routine not found: %s#%s", name, rid)
-		_ = m.sendStopped(peerID+":"+rid, rid, peerID, "error", nil, nil, "")
+		_ = m.sendStopped(peerID+":"+rid, rid, peerID, ReasonFailed, nil, nil, "", "", "")
 		return
 	}
 
 	instance, ctx, err := m.instantiate(peerID, rid, name, factory, kwargs)
 	if err != nil {
 		m.runtime.logger.Errorf("%s#%s instantiate failed: %v", name, rid, err)
-		_ = m.sendStopped(peerID+":"+rid, rid, peerID, "error", nil, nil, err.Error())
+		_ = m.sendStopped(peerID+":"+rid, rid, peerID, ReasonFailed, nil, nil, err.Error(), "", "")
 		return
 	}
 
@@ -155,7 +152,7 @@ func (m *LifecycleManager) HandleStart(peerID string, msg map[string]any) {
 
 	factory := m.runtime.Registry.Get(name)
 	if factory == nil {
-		_ = m.sendStopped(prid, rid, peerID, "error", nil, nil, "")
+		_ = m.sendStopped(prid, rid, peerID, ReasonFailed, nil, nil, "", "", "")
 		return
 	}
 
@@ -167,7 +164,7 @@ func (m *LifecycleManager) HandleStart(peerID string, msg map[string]any) {
 		var err error
 		instance, ctx, err = m.instantiate(peerID, rid, name, factory, map[string]any{})
 		if err != nil {
-			_ = m.sendStopped(prid, rid, peerID, "error", nil, nil, err.Error())
+			_ = m.sendStopped(prid, rid, peerID, ReasonFailed, nil, nil, err.Error(), "", "")
 			return
 		}
 		state = m.runtime.GetInstance(prid)
@@ -227,21 +224,26 @@ func (m *LifecycleManager) runRunner(prid, rid, peerID, name string,
 	if runErr != nil {
 		m.runtime.logger.Errorf("%s#%s run failed: %v", name, rid, runErr)
 		if hooks, ok := instance.(LifecycleHooks); ok {
-			_ = hooks.OnStopped("error", nil, runErr.Error())
+			_ = hooks.OnStopped(ReasonFailed, nil, "", runErr.Error())
 		}
-		_ = m.sendStopped(prid, rid, peerID, "error", state, nil, runErr.Error())
+		_ = m.sendStopped(prid, rid, peerID, ReasonFailed, state, nil, runErr.Error(), "", runErr.Error())
 		m.cleanup(prid)
 		return
 	}
 
-	reason := "auto"
-	if state.isStopRequested() {
-		reason = "stop"
+	reason := ReasonCompleted
+	stopped, stopReason, stopBy := state.stopTermination()
+	if stopped {
+		reason = stopReason
+	}
+	detail := ""
+	if reason == ReasonPreempted && stopBy != "" {
+		detail = "evicted by " + stopBy
 	}
 	if hooks, ok := instance.(LifecycleHooks); ok {
-		_ = hooks.OnStopped(reason, result, "")
+		_ = hooks.OnStopped(reason, result, stopBy, detail)
 	}
-	_ = m.sendStopped(prid, rid, peerID, reason, state, result, "")
+	_ = m.sendStopped(prid, rid, peerID, reason, state, result, "", stopBy, detail)
 	m.cleanup(prid)
 }
 
@@ -259,9 +261,9 @@ func (m *LifecycleManager) HandleDestroy(peerID string, msg map[string]any) {
 		if err := hooks.Destroy(); err != nil {
 			m.runtime.logger.Errorf("%s#%s Destroy() failed: %v", state.instance.Name(), rid, err)
 		}
-		_ = hooks.OnStopped("destroyed", nil, "")
+		_ = hooks.OnStopped(ReasonDestroyed, nil, "", "")
 	}
-	_ = m.sendStopped(prid, rid, peerID, "destroyed", state, nil, "")
+	_ = m.sendStopped(prid, rid, peerID, ReasonDestroyed, state, nil, "", "", "")
 	m.cleanup(prid)
 }
 
@@ -276,15 +278,15 @@ func (m *LifecycleManager) HandleStop(peerID string, msg map[string]any) {
 	if !state.beginStop() {
 		return
 	}
-	stopReason, _ := msg["reason"].(string)
+	stopReason := TerminationReasonFromWire(msg["reason"])
+	if stopReason == ReasonUnknown {
+		stopReason = ReasonStopped
+	}
 	stopBy, _ := msg["by"].(string)
-	force := stopReason == "force"
 
 	m.runtime.Go(func() {
 		defer state.clearStopInProgress()
-		if !state.isStopRequested() {
-			state.requestStop()
-		}
+		state.requestStop(stopReason, stopBy)
 		var stopResult any
 		if hooks, ok := state.instance.(LifecycleHooks); ok {
 			r, err := hooks.Stop()
@@ -302,30 +304,47 @@ func (m *LifecycleManager) HandleStop(peerID string, msg map[string]any) {
 		case <-time.After(StopTimeout):
 			m.runtime.logger.Warnf("%s#%s main task did not exit; abandon", state.instance.Name(), rid)
 		}
-		onReason := "stop"
 		onDetail := ""
-		if force {
-			onReason = "force"
-			if stopBy != "" {
-				onDetail = "evicted by " + stopBy
-			}
+		if stopReason == ReasonPreempted && stopBy != "" {
+			onDetail = "evicted by " + stopBy
 		}
 		if hooks, ok := state.instance.(LifecycleHooks); ok {
-			_ = hooks.OnStopped(onReason, stopResult, onDetail)
+			_ = hooks.OnStopped(stopReason, stopResult, stopBy, onDetail)
 		}
-		_ = m.sendStopped(prid, rid, peerID, onReason, state, stopResult, "")
+		_ = m.sendStopped(prid, rid, peerID, stopReason, state, stopResult, "", stopBy, onDetail)
 		m.cleanup(prid)
 	})
 }
 
-// ForceStopPeer peer 断连时强制清理该 peer 的所有 running instance.
+// ForceStopPeer peer 断连时清理该 peer 的所有 running instance.
+//
+// 并行 + join: 每个实例都要跑 Stop() hook 并等 main task 退出(各有界), 串行
+// 等于把 N 份等待相加。调用方(client 重连循环)必须等它结束再进入重连期 ——
+// 否则销毁期与重建期重叠, kernel 重启后 rid 从头分配会撞上销毁中的老 rid,
+// 老 cleanup 误杀重建的新实例。
 func (m *LifecycleManager) ForceStopPeer(peerID string) {
 	prids := m.runtime.InstancesByPeer(peerID)
-	for _, prid := range prids {
-		m.forceStopOne(peerID, prid)
+	if len(prids) == 0 {
+		return
 	}
+	var wg sync.WaitGroup
+	for _, prid := range prids {
+		prid := prid
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.forceStopOne(peerID, prid)
+		}()
+	}
+	wg.Wait()
 }
 
+// forceStopOne 断链时的单实例收尾: 与 HandleStop 同一条路(Stop hook → 等 main
+// task → OnStopped → cleanup), 区别只有两点:
+//   - 不等对端回报(它已经死了, 等就是白等);
+//   - Stop() 与 main task 各自有界 —— hook 里可能正在等一个永不回来的回执.
+//
+// 硬杀(跳过 Stop)会让业务收尾漏掉(收麦/断服务/flush), 那正是断链时最需要的.
 func (m *LifecycleManager) forceStopOne(peerID, prid string) {
 	state := m.runtime.GetInstance(prid)
 	if state == nil {
@@ -334,8 +353,9 @@ func (m *LifecycleManager) forceStopOne(peerID, prid string) {
 	if !state.beginStop() {
 		return
 	}
-	state.finalizeStop()
-	state.markNotStarted()
+	defer state.clearStopInProgress()
+	state.requestStop(ReasonDisconnected, peerID)
+
 	rid := prid
 	for i := len(prid) - 1; i >= 0; i-- {
 		if prid[i] == ':' {
@@ -343,11 +363,38 @@ func (m *LifecycleManager) forceStopOne(peerID, prid string) {
 			break
 		}
 	}
-	m.runtime.logger.Infof("⏹️ force stop %s#%s (peer %s disconnected)", state.instance.Name(), rid, peerID)
-	defer state.clearStopInProgress()
+
 	if hooks, ok := state.instance.(LifecycleHooks); ok {
-		_ = hooks.OnStopped("disconnect", nil, "")
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if _, err := hooks.Stop(); err != nil {
+				m.runtime.logger.Errorf("%s#%s Stop() failed: %v",
+					state.instance.Name(), rid, err)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(StopTimeout):
+			m.runtime.logger.Warnf("%s#%s Stop() did not return in %v; abandon",
+				state.instance.Name(), rid, StopTimeout)
+		}
 	}
-	_ = m.sendStopped(prid, rid, peerID, "disconnect", state, nil, "")
+
+	state.finalizeStop()
+	state.markNotStarted()
+	select {
+	case <-state.mainDone:
+	case <-time.After(StopTimeout):
+		m.runtime.logger.Warnf("%s#%s main task did not exit; abandon",
+			state.instance.Name(), rid)
+	}
+
+	m.runtime.logger.Infof("⏹️ force stop %s#%s (peer %s disconnected)",
+		state.instance.Name(), rid, peerID)
+	if hooks, ok := state.instance.(LifecycleHooks); ok {
+		_ = hooks.OnStopped(ReasonDisconnected, nil, peerID, "")
+	}
+	_ = m.sendStopped(prid, rid, peerID, ReasonDisconnected, state, nil, "", peerID, "")
 	m.cleanup(prid)
 }

@@ -1,0 +1,42 @@
+# 测试:cancel 节点(dag_cancel 普通 routine)终止整个 DAG
+#
+#   check ──┬──(when mode==abort)──► abort(dag_cancel)  → 终止整棵 DAG,RunDag 抛错
+#           └──(when mode==go   )──► proceed            → 正常完成
+#
+# mode=abort 时:abort 节点返回 cancel 哨兵,父 RunDag 在 done 循环识别后终止,
+# 整个 run_dag 抛 RuntimeError;并发的 proceed 分支被 skip.
+#
+# 跑:<run_dag dag="cancel_dag" inputs='{"mode":"abort"}'/>   → 终止
+#    <run_dag dag="cancel_dag" inputs='{"mode":"go"}'/>      → 正常完成
+
+name: cancel_dag
+description: 演示 cancel 节点终止整个 DAG
+
+inputs:
+  - name: mode
+    type: str
+    desc: abort | go
+    default: abort
+
+nodes:
+  - id: check
+    routine: echo
+    inputs:
+      mode: "$WI.mode"
+
+  - id: abort
+    routine: dag_cancel
+    depends_on: [check]
+    when: "$check.output.mode == 'abort'"
+    inputs:
+      reason: "mode=abort,主动终止工作流"
+
+  - id: proceed
+    routine: summary_weather
+    depends_on: [check]
+    when: "$check.output.mode == 'go'"
+    inputs:
+      data: "条件满足,继续执行"
+
+outputs:
+  result: proceed

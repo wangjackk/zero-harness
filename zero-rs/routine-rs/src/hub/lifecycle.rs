@@ -5,7 +5,7 @@ use crate::{
         RunContextOptions,
     },
     protocol::{
-        events::{PUBSUB_SUBSCRIBE, ROUTINE_YIELD}, ChainedError, ControlDoneReason, JsonObject,
+        events::{PUBSUB_SUBSCRIBE, ROUTINE_YIELD}, ChainedError, TerminationReason, JsonObject,
         JsonValue, RawWireEvent,
     },
     hub::{
@@ -68,7 +68,7 @@ impl LifecycleManager {
             };
             for prid in stale {
                 tracing::warn!("heartbeat timeout: {prid}");
-                let _ = self.stop_instance(&prid, true, "disconnect").await;
+                let _ = self.stop_instance(&prid, true, TerminationReason::Disconnected, "host").await;
             }
         }
     }
@@ -212,6 +212,15 @@ impl LifecycleManager {
     pub async fn handle_stop(&self, peer_id: &str, msg: JsonObject) -> Result<(), String> {
         let rid = coerce_string(&msg, "id").unwrap_or_default();
         let prid = format!("{peer_id}:{rid}");
+        let reason = coerce_string(&msg, "reason")
+            .map(|value| TerminationReason::from_wire(&value))
+            .unwrap_or(TerminationReason::Stopped);
+        let reason = if reason == TerminationReason::Unknown {
+            TerminationReason::Stopped
+        } else {
+            reason
+        };
+        let by = coerce_string(&msg, "by").unwrap_or_default();
         let (instance, run_task) = {
             let mut running_instances = self.runtime.running_instances.lock().await;
             let Some(state) = running_instances.get_mut(&prid) else {
@@ -227,7 +236,7 @@ impl LifecycleManager {
         if let Some(instance) = instance {
             let this = self.clone_for_task();
             tokio::spawn(async move {
-                let _ = this.stop_runner(prid, instance, run_task).await;
+                let _ = this.stop_runner(prid, instance, run_task, reason, by).await;
             });
         }
         Ok(())
@@ -264,10 +273,11 @@ impl LifecycleManager {
         let result = Self::destroy_with_timeout(instance.clone()).await;
         self.finalize_invocation(
             &prid,
-            ControlDoneReason::Destroyed,
+            TerminationReason::Destroyed,
             result,
             None,
-            "destroyed",
+            "",
+            "",
             Some(instance),
             true,
         )
@@ -302,14 +312,14 @@ impl LifecycleManager {
     /// 单实例终止(running 态 graceful stop). notify_kernel=false 供 transport
     /// 断连本地销毁(kernel 世界已死, stopped 回报无意义); heartbeat
     /// watchdog 超时路径传 true. instance 传 Some → stop hook 照走(对齐
-    /// py/ts graceful stop). done_reason 喂 on_stopped hook: 断连/心跳超时
-    /// "disconnect", stop "stop". created 态销毁不在此 ---- 走
-    /// handle_destroy 的独立 destroy hook.
+    /// py/ts graceful stop)。reason/by 同时喂 on_stopped 与 stopped 回报。
+    /// created 态销毁不在此 ---- 走 handle_destroy 的独立 destroy hook。
     pub async fn stop_instance(
         &self,
         prid: &str,
         notify_kernel: bool,
-        done_reason: &str,
+        reason: TerminationReason,
+        by: &str,
     ) -> Result<(), String> {
         let (instance, run_task) = {
             let mut running_instances = self.runtime.running_instances.lock().await;
@@ -331,10 +341,11 @@ impl LifecycleManager {
             let result = Self::stop_with_timeout(instance.clone()).await;
             self.finalize_invocation(
                 prid,
-                ControlDoneReason::Stop,
+                reason,
                 result,
                 None,
-                done_reason,
+                by,
+                "",
                 Some(instance),
                 notify_kernel,
             )
@@ -349,6 +360,9 @@ impl LifecycleManager {
     /// 与重建期重叠, kernel 重启后 rid 从头分配会撞上销毁中的老 rid,
     /// 老 cleanup 误杀重建的新实例. join 有界(并行, 每实例 ~STOP_TIMEOUT).
     pub async fn stop_all_local(&self, peer_id: &str) {
+        self.runtime
+            .peer_down_all(peer_id, format!("transport peer down ({peer_id})"))
+            .await;
         let prefix = format!("{peer_id}:");
         let prids: Vec<String> = {
             let running_instances = self.runtime.running_instances.lock().await;
@@ -362,7 +376,9 @@ impl LifecycleManager {
             return;
         }
         tracing::warn!(%peer_id, "peer down; destroying all local instances");
-        let futures = prids.iter().map(|prid| self.stop_instance(prid, false, "disconnect"));
+        let futures = prids.iter().map(|prid| {
+            self.stop_instance(prid, false, TerminationReason::Disconnected, peer_id)
+        });
         futures::future::join_all(futures).await;
     }
 
@@ -394,10 +410,11 @@ impl LifecycleManager {
             tracing::warn!(%prid, %routine_name, %error, "on_started failed");
             self.finalize_invocation(
                 &prid,
-                ControlDoneReason::Error,
+                TerminationReason::Failed,
                 None,
                 error_obj,
-                "error",
+                "",
+                &error,
                 Some(instance.clone()),
                 true,
             )
@@ -417,10 +434,11 @@ impl LifecycleManager {
                 tracing::warn!(%prid, %routine_name, %error, "routine run failed");
                 self.finalize_invocation(
                     &prid,
-                    ControlDoneReason::Error,
+                    TerminationReason::Failed,
                     None,
                     error_obj,
-                    "error",
+                    "",
+                    &error,
                     Some(instance.clone()),
                     true,
                 )
@@ -431,10 +449,11 @@ impl LifecycleManager {
 
         self.finalize_invocation(
             &prid,
-            ControlDoneReason::Stop,
+            TerminationReason::Completed,
             result,
             None,
-            "auto",
+            "",
+            "",
             Some(instance),
             true,
         )
@@ -485,15 +504,23 @@ impl LifecycleManager {
         prid: String,
         instance: SharedRoutine,
         run_task: Option<JoinHandle<()>>,
+        reason: TerminationReason,
+        by: String,
     ) -> Result<(), String> {
         Self::abort_run_task(run_task).await;
         let result = Self::stop_with_timeout(instance.clone()).await;
+        let detail = if reason == TerminationReason::Preempted && !by.is_empty() {
+            format!("evicted by {by}")
+        } else {
+            String::new()
+        };
         self.finalize_invocation(
             &prid,
-            ControlDoneReason::Stop,
+            reason,
             result,
             None,
-            "stop",
+            &by,
+            &detail,
             Some(instance),
             true,
         )
@@ -559,9 +586,11 @@ impl LifecycleManager {
                 self.transport
                     .send_lifecycle_stopped(
                         &rid,
-                        ControlDoneReason::Error,
+                        TerminationReason::Failed,
                         None,
                         error_obj,
+                        "",
+                        &error,
                         Some(peer_id),
                     )
                     .await?;
@@ -580,10 +609,11 @@ impl LifecycleManager {
     async fn finalize_invocation(
         &self,
         prid: &str,
-        reason: ControlDoneReason,
+        reason: TerminationReason,
         result: Option<JsonValue>,
         error: Option<JsonObject>,
-        done_reason: &str,
+        by: &str,
+        detail: &str,
         instance: Option<SharedRoutine>,
         notify_kernel: bool,
     ) -> Result<(), String> {
@@ -596,7 +626,7 @@ impl LifecycleManager {
                 return Ok(());
             }
             state.finalized = true;
-            state.status = if matches!(reason, ControlDoneReason::Error) {
+            state.status = if matches!(reason, TerminationReason::Failed) {
                 InvocationStatus::Error
             } else {
                 InvocationStatus::Stopped
@@ -607,7 +637,7 @@ impl LifecycleManager {
         };
         if let Some(instance) = instance {
             // on_stopped hook（stopped 回报前）。异常不阻断收尾。
-            if let Err(exc) = instance.on_stopped(done_reason, result.as_ref(), "").await {
+            if let Err(exc) = instance.on_stopped(reason, result.as_ref(), by, detail).await {
                 tracing::warn!(%prid, %exc, "on_stopped failed");
             }
         }
@@ -617,7 +647,7 @@ impl LifecycleManager {
         if notify_kernel {
             if let Err(exc) = self
                 .transport
-                .send_lifecycle_stopped(&rid, reason, result, error, Some(&peer_id))
+                .send_lifecycle_stopped(&rid, reason, result, error, by, detail, Some(&peer_id))
                 .await
             {
                 tracing::warn!(%prid, %exc, "send lifecycle.stopped failed; cleanup anyway");
@@ -816,8 +846,8 @@ mod tests {
         let stopped = stopped_event.expect("lifecycle.stopped should arrive after start failure");
         assert_eq!(
             stopped.get("reason").and_then(Value::as_str),
-            Some("ERROR"),
-            "start failure must stop with reason=ERROR"
+            Some("FAILED"),
+            "start failure must stop with reason=FAILED"
         );
         let error = stopped
             .get("error")
@@ -847,7 +877,7 @@ mod tests {
         let runtime = Arc::new(ServerRuntime::new(registry, Vec::new()));
         let transport = Arc::new(OutboundTransport::new(runtime.clone()));
         let lifecycle = LifecycleManager::new(runtime.clone(), transport);
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
         runtime
             .peer_to_queue
             .lock()
@@ -872,12 +902,35 @@ mod tests {
             Value::String(LIFECYCLE_STOP.to_string()),
         );
         stop.insert("id".to_string(), Value::String("rid".to_string()));
+        stop.insert(
+            "reason".to_string(),
+            Value::String("PREEMPTED".to_string()),
+        );
+        stop.insert("by".to_string(), Value::String("evictor".to_string()));
         lifecycle.handle_stop("peer", stop).await.unwrap();
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let recorded = events.lock().unwrap().clone();
         assert_eq!(recorded, vec!["start", "stop"]);
+
+        let stopped = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let message = rx.recv().await.expect("lifecycle event");
+                let event = crate::grpc::frame_to_json(&message);
+                if event.get("event").and_then(Value::as_str) == Some("lifecycle.stopped") {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("preempted stopped should arrive");
+        assert_eq!(stopped.get("reason").and_then(Value::as_str), Some("PREEMPTED"));
+        assert_eq!(stopped.get("by").and_then(Value::as_str), Some("evictor"));
+        assert_eq!(
+            stopped.get("detail").and_then(Value::as_str),
+            Some("evicted by evictor")
+        );
     }
 
     #[tokio::test]

@@ -13,27 +13,31 @@ const (
 	LifecycleStopped = "lifecycle.stopped" // server → 调度器:已停止(带 reason)
 )
 
-// stopped 回报 reason 取值(对标 Python ControlDoneReason).
+// TerminationReason 表示一次 routine 等待为何结束。
+// 业务钩子、父侧 handle 与 wire 共用同一组值；result/error 仍是独立字段。
+type TerminationReason string
+
 const (
-	ReasonUnknown     = "UNKNOWN"
-	ReasonAuto        = "AUTO"
-	ReasonStop        = "STOP"
-	ReasonDestroyed = "DESTROYED"
-	ReasonError       = "ERROR"
-	ReasonCancel      = "CANCEL"
-	ReasonForce       = "FORCE"
-	ReasonDisconnect  = "DISCONNECT"
+	ReasonCompleted    TerminationReason = "COMPLETED"
+	ReasonStopped      TerminationReason = "STOPPED"
+	ReasonPreempted    TerminationReason = "PREEMPTED"
+	ReasonFailed       TerminationReason = "FAILED"
+	ReasonCancelled    TerminationReason = "CANCELLED"
+	ReasonDestroyed    TerminationReason = "DESTROYED"
+	ReasonDisconnected TerminationReason = "DISCONNECTED"
+	ReasonUnknown      TerminationReason = "UNKNOWN"
 )
 
-// reason 语义字符串 → wire enum 映射.
-var reasonToEnum = map[string]string{
-	"auto":       ReasonAuto,
-	"stop":       ReasonStop,
-	"destroyed":  ReasonDestroyed,
-	"error":      ReasonError,
-	"cancel":     ReasonCancel,
-	"force":      ReasonForce,
-	"disconnect": ReasonDisconnect,
+// TerminationReasonFromWire 解码 wire reason；缺失或未识别值统一归 UNKNOWN。
+func TerminationReasonFromWire(value any) TerminationReason {
+	text, _ := value.(string)
+	switch reason := TerminationReason(text); reason {
+	case ReasonCompleted, ReasonStopped, ReasonPreempted, ReasonFailed,
+		ReasonCancelled, ReasonDestroyed, ReasonDisconnected, ReasonUnknown:
+		return reason
+	default:
+		return ReasonUnknown
+	}
 }
 
 // Req 查询事件(走 Req unary).
@@ -47,47 +51,47 @@ const (
 // lifecycle 观察流(conn 级观察者,kernel 内 routine 树状态变更的原始广播).
 // 区别于 pubsub(业务 topic 寻址):lifecycle 是框架可观察性原语.
 const (
-	LifecycleWatch   = "lifecycle.watch"   // hub→kernel: 开启观察(幂等,带 req_id)
+	LifecycleWatch    = "lifecycle.watch"    // hub→kernel: 开启观察(幂等,带 req_id)
 	LifecycleUnwatch  = "lifecycle.unwatch"  // hub→kernel: 关闭观察
 	LifecycleSnapshot = "lifecycle.snapshot" // kernel→hub: enable 回执(当前树快照)
-	LifecycleEvent         = "lifecycle.event"          // kernel→hub: 框架事件帧(type=created/started/stopped/destroyed)
+	LifecycleEvent    = "lifecycle.event"    // kernel→hub: 框架事件帧(type=created/started/stopped/destroyed)
 )
 
 // routine 调 routine 反向事件(py→kernel,走同一条 Stream).
 const (
-	RoutineCreate            = "routine.create"
-	RoutineDestroy          = "routine.destroy"
-	RoutineStart             = "routine.start" // 带可选 priority(int,缺省 10=常规默认档;0~9 低档):冲突时 incoming > holder 才驱逐后 start
-	RoutineStop              = "routine.stop"
-	RoutineCreated         = "routine.created"
-	RoutineRejected          = "routine.rejected"
-	RoutineAcquire           = "routine.acquire"
-	RoutineAcquired          = "routine.acquired"
-	RoutineRelease           = "routine.release"
-	RoutineReleased          = "routine.released"
-	RoutineGetRunning        = "routine.get_running"
-	RoutineGetRunningReply   = "routine.get_running_reply"
-	RoutineGetModuleTree     = "routine.get_module_tree"
+	RoutineCreate             = "routine.create"
+	RoutineDestroy            = "routine.destroy"
+	RoutineStart              = "routine.start" // 带可选 priority(int,缺省 10=常规默认档;0~9 低档):冲突时 incoming > holder 才驱逐后 start
+	RoutineStop               = "routine.stop"
+	RoutineCreated            = "routine.created"
+	RoutineRejected           = "routine.rejected"
+	RoutineAcquire            = "routine.acquire"
+	RoutineAcquired           = "routine.acquired"
+	RoutineRelease            = "routine.release"
+	RoutineReleased           = "routine.released"
+	RoutineGetRunning         = "routine.get_running"
+	RoutineGetRunningReply    = "routine.get_running_reply"
+	RoutineGetModuleTree      = "routine.get_module_tree"
 	RoutineGetModuleTreeReply = "routine.get_module_tree_reply"
-	RoutineLoadModule        = "routine.load_module"
-	RoutineModuleLoaded      = "routine.module_loaded"
-	RoutineUnloadModule      = "routine.unload_module"
-	RoutineModuleUnloaded    = "routine.module_unloaded"
+	RoutineLoadModule         = "routine.load_module"
+	RoutineModuleLoaded       = "routine.module_loaded"
+	RoutineUnloadModule       = "routine.unload_module"
+	RoutineModuleUnloaded     = "routine.module_unloaded"
 )
 
 // message.* 事件(py→kernel→py,kernel dumb forward by target_id).
 const (
-	MessageSend                = "message.send"
-	MessageDelivered           = "message.delivered"
-	MessageReq                 = "message.req"
-	MessageReqDelivered        = "message.req_delivered"
-	MessageReqReply            = "message.req_reply"
-	MessageReqReplyDelivered   = "message.req_reply_delivered"
-	MessageStreamOpen          = "message.stream_open"
-	MessageStreamOpenDelivered = "message.stream_open_delivered"
-	MessageStreamData          = "message.stream_data"
-	MessageStreamDataDelivered = "message.stream_data_delivered"
-	MessageStreamCancel        = "message.stream_cancel"
+	MessageSend                  = "message.send"
+	MessageDelivered             = "message.delivered"
+	MessageReq                   = "message.req"
+	MessageReqDelivered          = "message.req_delivered"
+	MessageReqReply              = "message.req_reply"
+	MessageReqReplyDelivered     = "message.req_reply_delivered"
+	MessageStreamOpen            = "message.stream_open"
+	MessageStreamOpenDelivered   = "message.stream_open_delivered"
+	MessageStreamData            = "message.stream_data"
+	MessageStreamDataDelivered   = "message.stream_data_delivered"
+	MessageStreamCancel          = "message.stream_cancel"
 	MessageStreamCancelDelivered = "message.stream_cancel_delivered"
 )
 
@@ -101,8 +105,8 @@ const (
 
 // yield 事件(child→parent routine yield,kernel dumb forward).
 const (
-	RoutineYield          = "routine.yield"
-	RoutineYielded        = "routine.yielded"
+	RoutineYield   = "routine.yield"
+	RoutineYielded = "routine.yielded"
 )
 
 // module.tree:kernel→server 推模块树拓扑(静态 config,运行期不变).

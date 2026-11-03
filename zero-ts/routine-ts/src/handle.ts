@@ -8,7 +8,7 @@
  */
 import { AsyncEvent, AsyncQueue, withTimeout } from './async'
 import { StartError } from './errors'
-import type { Msg } from './protocol'
+import type { Msg, TerminationReason } from './protocol'
 import type { RunContext } from './ctx'
 
 // body 迭代终结哨兵(distinguish from yielded null / result)
@@ -28,8 +28,12 @@ export class RoutineHandle {
   priority: number | null = null
   result: any = undefined
   error: string | null = null
-  /** lifecycle.stopped 的 wire reason(大写 enum 值).父侧可读分流. */
-  reason: string | null = null
+  /** 与子侧 onStopped 完全一致；wait() 不据此分流。 */
+  reason: TerminationReason | null = null
+  /** 发起者 rid / host；抢占时为驱逐者 rid。 */
+  by: string | null = null
+  /** 人类可读补充，业务判断不要解析它。 */
+  detail = ''
   /** 可选生命周期回调(外部直接赋值). */
   onStarted: ((h: RoutineHandle) => Promise<void>) | null = null
   onStopped: ((h: RoutineHandle) => Promise<void>) | null = null
@@ -124,7 +128,7 @@ export class RoutineHandle {
    * StartError.
    *
    * priority(模块冲突时的抢占裁决): incoming 严格大于全部第三方 holder
-   * 才逐个驱逐(cascade stop,reason='force' 透传)后 start;存在 >= 平级
+   * 才逐个驱逐(cascade stop,reason=PREEMPTED 透传)后 start;存在 >= 平级
    * holder 时不驱逐任何节点,原样拒(平级不抢).默认 10=常规默认档;
    * 0 为最低档,永无驱逐资格.只裁第三方(永不驱逐自己/祖先). */
   async start(priority: number = 10): Promise<void> {
@@ -188,10 +192,14 @@ export class RoutineHandle {
     this._fireHandler(this.onStarted)
   }
 
-  notifyDone(result: any = undefined, error: string | null = null, reason: string | null = null): void {
+  notifyDone(result: any = undefined, error: string | null = null,
+             reason: TerminationReason | null = null, by: string | null = null,
+             detail = ''): void {
     this.result = result
     this.error = error
     this.reason = reason
+    this.by = by
+    this.detail = detail
     // 兜底:错过 started 直接 done 时也唤醒 waitStarted
     this._started.set()
     this._done.set()

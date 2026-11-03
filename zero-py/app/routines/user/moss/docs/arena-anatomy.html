@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mossv2 擂台解剖 · 各部件的运作逻辑与功能</title>
+<style>
+  :root{
+    --ink:#2C2C2A; --ink2:#5F5E5A; --ink3:#888780;
+    --bg:#FAFAF7; --card:#FFFFFF; --line:#D3D1C7;
+    --purple:#534AB7; --purple-bg:#EEEDFE; --purple-ink:#3C3489;
+    --teal:#0F6E56; --teal-bg:#E1F5EE; --teal-ink:#085041;
+    --amber:#BA7517; --amber-bg:#FAEEDA; --amber-ink:#633806;
+    --blue:#185FA5; --blue-bg:#E6F1FB; --blue-ink:#0C447C;
+    --coral:#993C1D; --coral-bg:#FAECE7; --coral-ink:#712B13;
+    --pink:#D4537E; --pink-bg:#FBEAF0; --pink-ink:#993556;
+    --green:#639922; --green-bg:#EAF3DE; --green-ink:#27500A;
+    --gray:#5F5E5A; --gray-bg:#F1EFE8; --gray-ink:#444441;
+    --red:#A32D2D; --red-bg:#FCEBEB;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);font:13px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:16px;}
+  .wrap{max-width:1160px;margin:0 auto;}
+
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;}
+  h1{font-size:16px;font-weight:600;letter-spacing:.5px;}
+  h1 small{color:var(--ink3);font-weight:400;font-size:12px;margin-left:8px;}
+  .tabs{display:flex;gap:6px;}
+  .tab{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--ink2);}
+  .tab.on{border-color:var(--purple);color:var(--purple-ink);background:var(--purple-bg);font-weight:600;}
+  .ctrl{margin-left:auto;display:flex;gap:6px;align-items:center;}
+  button.b{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--ink);}
+  button.b:hover{border-color:var(--ink3);}
+  button.b.pri{border-color:var(--purple);color:var(--purple-ink);font-weight:600;}
+  .stepinfo{font-size:12px;color:var(--ink3);min-width:150px;text-align:right;}
+
+  .legend{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:var(--ink2);}
+  .legend span{display:inline-flex;align-items:center;gap:4px;}
+  .dot{width:9px;height:9px;border-radius:3px;display:inline-block;}
+
+  .stage{position:relative;width:100%;height:620px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:none;}
+  .stage.on{display:block;}
+  #stage2{height:710px;}
+
+  .mod{position:absolute;border-radius:10px;border:1px solid;padding:8px 10px;transition:box-shadow .3s, transform .3s;}
+  .mod h3{font-size:13px;font-weight:600;}
+  .mod p{font-size:11px;line-height:1.45;margin-top:2px;}
+  .mod.hot{box-shadow:0 0 0 3px rgba(83,74,183,.25);transform:scale(1.03);z-index:5;}
+  .mod.click{cursor:pointer;}
+  .mod.dashed{border-style:dashed;}
+
+  .zone{border:1px dashed var(--purple);border-radius:7px;background:var(--card);font-size:10px;padding:2px 7px;margin-top:4px;color:var(--purple-ink);}
+  .zone.tealz{border-color:var(--teal);color:var(--teal-ink);}
+
+  /* 场景1: 帧工作台 / 档案柜 */
+  .badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;min-height:20px;}
+  .badge{font-size:10px;padding:1px 7px;border-radius:8px;background:var(--card);border:1px solid var(--purple);color:var(--purple-ink);}
+  .badge.dead{border-color:var(--red);color:var(--red);text-decoration:line-through;}
+  .badge.echo{border-color:var(--teal);color:var(--teal-ink);}
+  .fr{display:flex;gap:6px;font-size:10px;line-height:1.5;margin-top:4px;align-items:baseline;}
+  .fr b{flex:0 0 52px;font-weight:600;color:var(--teal-ink);}
+  .fr span{color:var(--ink2);word-break:break-all;}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;min-height:22px;}
+  .chip{font-size:10px;padding:1px 6px;border-radius:6px;background:var(--card);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .chip.frame{border:1px solid var(--teal);color:var(--teal-ink);}
+  .chip.gone{opacity:.4;}
+  .caps{font-size:10px;color:var(--ink3);margin-top:5px;}
+  .lanes{margin-top:5px;font-size:11px;line-height:1.7;}
+  .lane b{display:inline-block;width:44px;font-weight:600;color:var(--coral-ink);}
+  .lane span{color:var(--ink2);}
+
+  .tok{position:absolute;z-index:9;font-size:11px;padding:2px 8px;border-radius:10px;color:#fff;white-space:nowrap;transform:translate(-50%,-50%);transition:left 1s cubic-bezier(.4,.1,.3,1), top 1s cubic-bezier(.4,.1,.3,1), opacity .5s;box-shadow:0 1px 3px rgba(0,0,0,.25);pointer-events:none;}
+  .tok.fade{opacity:0;}
+
+  /* 场景0 职能卡面板 */
+  #cardPanel{margin-top:10px;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px 14px;min-height:120px;}
+  #cardPanel .ctitle{font-size:13px;font-weight:600;margin-bottom:4px;}
+  #cardPanel .crole{font-size:12px;color:var(--purple-ink);margin-bottom:4px;}
+  #cardPanel ul{list-style:none;}
+  #cardPanel li{font-size:12px;color:var(--ink2);line-height:1.6;padding-left:14px;position:relative;}
+  #cardPanel li::before{content:'▸';position:absolute;left:0;color:var(--ink3);}
+  #cardPanel .cfoot{font-size:11px;color:var(--ink3);margin-top:5px;border-top:1px dashed var(--line);padding-top:4px;}
+  #cardPanel table{border-collapse:collapse;font-size:12px;}
+  #cardPanel td{padding:2px 10px 2px 0;color:var(--ink2);vertical-align:top;}
+  #cardPanel td.k{color:var(--purple-ink);white-space:nowrap;font-weight:600;}
+
+  /* 场景2 战报卡 / 对照带 / 档案柜 */
+  #frameCard{position:absolute;left:14px;top:14px;width:450px;border:1px solid var(--teal);border-radius:10px;background:var(--teal-bg);padding:8px 12px;}
+  #frameCard .fcHead{font-size:13px;font-weight:600;color:var(--teal-ink);}
+  #frameCard .fcSub{font-size:10px;color:var(--teal-ink);opacity:.75;margin-bottom:6px;}
+  .q{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:6px 9px;margin-top:6px;cursor:pointer;transition:box-shadow .3s, transform .3s;}
+  .q b{display:block;font-size:11px;font-weight:600;color:var(--teal-ink);}
+  .q span{display:block;font-size:10px;color:var(--ink2);margin-top:2px;word-break:break-all;}
+  .q.hot{box-shadow:0 0 0 3px rgba(15,110,86,.28);transform:scale(1.02);}
+  #qInfo{position:absolute;left:482px;top:14px;right:14px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 14px;font-size:12px;color:var(--ink2);min-height:180px;}
+  #qInfo .qh{font-size:13px;font-weight:600;color:var(--teal-ink);margin-bottom:4px;}
+
+  #timeband{position:absolute;left:14px;right:14px;top:330px;height:190px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px 12px;}
+  #timeband .tbTitle{font-size:11px;font-weight:600;color:var(--ink2);}
+  .tRow{position:relative;height:36px;border:1px solid var(--line);border-radius:6px;margin-top:6px;background:var(--bg);overflow:hidden;}
+  .tRow .seg{position:absolute;top:0;height:100%;border-right:1px solid var(--line);font-size:9px;color:var(--ink3);display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;}
+  .tRow .seg.beat{background:var(--teal-bg);color:var(--teal-ink);font-weight:600;}
+  .tRow .seg.gap{background:repeating-linear-gradient(45deg,#F1EFE8,#F1EFE8 6px,#EAE7DE 6px,#EAE7DE 12px);}
+  .tRow.lower .seg.beat{background:var(--teal);}
+  .tRow.lower .seg.gap{color:var(--ink3);}
+  .blk{position:absolute;top:0;height:100%;opacity:0;transition:opacity .45s;}
+  .blk.show{opacity:1;}
+  .blk.beatb{background:var(--teal);border-radius:3px;}
+  .blk.gapb{font-size:9px;color:var(--ink3);display:flex;align-items:center;justify-content:center;}
+  #nowline{position:absolute;top:30px;width:2px;height:66px;background:var(--red);z-index:8;transition:left .9s linear;}
+  #nowline::after{content:'现在';position:absolute;top:-16px;left:-12px;font-size:9px;color:var(--red);}
+  #tCaption{font-size:10px;color:var(--ink3);margin-top:5px;min-height:16px;}
+
+  #shelf2Wrap{position:absolute;left:14px;right:14px;top:545px;height:150px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px 12px;}
+  #shelf2Wrap .sTitle{font-size:11px;font-weight:600;color:var(--ink2);}
+  #shelf2{position:relative;display:flex;gap:3px;align-items:flex-end;height:74px;margin-top:6px;border:1px dashed var(--line);border-radius:6px;background:var(--bg);padding:4px;overflow:hidden;}
+  .sblk{flex:0 0 auto;border-radius:4px;background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal-ink);font-size:9px;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;transition:opacity .4s;}
+  .sblk.recap{background:var(--purple-bg);border-color:var(--purple);color:var(--purple-ink);font-weight:600;}
+  .sblk.interrupted{background:var(--red-bg);border-color:var(--red);color:var(--red);}
+  .sblk.gone{opacity:.15;}
+  #sCaps{font-size:10px;color:var(--ink3);margin-top:4px;}
+
+  .logpanel{margin-top:10px;border:1px solid var(--line);border-radius:12px;background:var(--card);height:170px;overflow-y:auto;padding:8px 12px;font-family:Consolas,Menlo,monospace;font-size:12px;}
+  .logpanel .ln{display:flex;gap:8px;padding:1px 0;}
+  .logpanel .tm{color:var(--ink3);flex:0 0 44px;}
+  .logpanel .md{flex:0 0 84px;font-weight:600;}
+  .logpanel .tx{color:var(--ink2);}
+  .logpanel .hr{color:var(--ink3);margin:3px 0;}
+  .c-purple{color:var(--purple-ink);} .c-teal{color:var(--teal-ink);} .c-amber{color:var(--amber-ink);}
+  .c-blue{color:var(--blue-ink);} .c-coral{color:var(--coral-ink);} .c-gray{color:var(--gray-ink);}
+  .c-pink{color:var(--pink-ink);} .c-green{color:var(--green-ink);}
+
+  .hint{margin-top:8px;font-size:11px;color:var(--ink3);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>mossv2 擂台解剖<small>各部件的运作逻辑与功能 · 检录 → 仲裁 → 思考 → 落帧</small></h1>
+    <div class="tabs">
+      <button class="tab on" data-sc="S0">全景解剖 · 部件职能</button>
+      <button class="tab" data-sc="S1">一拍全程 · 帧结构闭环</button>
+      <button class="tab" data-sc="S2">史官特写 · Moment</button>
+    </div>
+    <div class="ctrl">
+      <button class="b pri" id="btnPlay">▶ 播放</button>
+      <button class="b" id="btnStep">单步</button>
+      <button class="b" id="btnReset">重置</button>
+      <button class="b" id="btnSpeed">速度 1×</button>
+      <span class="stepinfo" id="stepInfo">待播放</span>
+    </div>
+  </header>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--gray)"></i>UI 外挂 感知源驱动</span>
+    <span><i class="dot" style="background:var(--purple)"></i>Mindflow 擂台系统</span>
+    <span><i class="dot" style="background:var(--teal)"></i>Ghost 灵魂（含史官 Moments，虚线）</span>
+    <span><i class="dot" style="background:var(--amber)"></i>Brain 脑子外设</span>
+    <span><i class="dot" style="background:var(--blue)"></i>Shell 身体</span>
+    <span><i class="dot" style="background:var(--coral)"></i>Channel 轨</span>
+    <span><i class="dot" style="background:var(--pink)"></i>动作 say / wave</span>
+  </div>
+
+  <!-- ============ 场景0: 全景解剖 ============ -->
+  <div class="stage on" id="stage0">
+    <div class="mod click" id="aInteract" style="left:14px;top:150px;width:140px;background:var(--gray-bg);border-color:var(--gray);">
+      <h3 style="color:var(--gray-ink);">UI 外挂</h3><p>感知源驱动 · 输入一行 = 一次 declare（即回）· 随时插话 · 进程外接</p>
+    </div>
+    <div class="mod click" id="aMindflow" style="left:180px;top:16px;width:300px;min-height:250px;background:var(--purple-bg);border-color:var(--purple);">
+      <h3 style="color:var(--purple-ink);">Mindflow 擂台系统</h3><p>检录 + 仲裁 + 排程 · 裁判不写史</p>
+      <div class="zone">declare 总服务台 —— 原版八检录窗口塌缩成一个参数化申报单</div>
+      <div class="zone">擂台 · 仲裁 —— Priority 体重级别 / Strength 同级战力 / 保护期 = 拳王特权期</div>
+      <div class="zone">账本 · 挂账 ≤100 —— 观众席等下届</div>
+      <div class="zone">泵 · rank 循环 peek —— 队列空 = 泵挂起（无刺激不思考）</div>
+    </div>
+    <div class="mod click" id="aBrain" style="left:180px;top:330px;width:220px;background:var(--amber-bg);border-color:var(--amber);border-style:dashed;">
+      <h3 style="color:var(--amber-ink);">Brain 脑子</h3><p>外聘教练 · 只出主意不记事 · brain_factory 可换</p>
+    </div>
+    <div class="mod click" id="aGhost" style="left:510px;top:16px;width:300px;min-height:170px;background:var(--teal-bg);border-color:var(--teal);">
+      <h3 style="color:var(--teal-ink);">Ghost 灵魂</h3><p>拳王的脑子 + 战报作者 · 拍 = 一场比赛</p>
+      <div class="zone tealz">帧工作台 · think —— 开帧缝回声 → 字流转身体 → logos 落帧</div>
+      <div class="zone tealz">三拍形态 —— 正常 / 反射(command 直投) / 空拍(interrupt 留痕)</div>
+    </div>
+    <div class="mod click dashed" id="aMoments" style="left:510px;top:214px;width:300px;min-height:160px;background:var(--teal-bg);border-color:var(--teal);">
+      <h3 style="color:var(--teal-ink);">Moments 史官+档案柜</h3><p>ghost 内部组件（无独立时间轴 → 不开 routine）</p>
+      <div class="zone tealz">档案柜 · 滑窗 100 帧 —— 塞满丢最旧</div>
+      <div class="zone tealz">pending 回声槽 —— 散场未归档回执，开下一帧时缝入</div>
+      <div class="zone tealz">epoch —— 赛季更替：战报压缩成 recap 置顶</div>
+    </div>
+    <div class="mod click" id="aShell" style="left:844px;top:16px;width:180px;background:var(--blue-bg);border-color:var(--blue);">
+      <h3 style="color:var(--blue-ink);">Shell 身体</h3><p>CTML 解析 · 开标签入轨 · Tracer 总账 · 观测攒批回灌</p>
+    </div>
+    <div class="mod click" id="aChannel" style="left:844px;top:180px;width:180px;min-height:110px;background:var(--coral-bg);border-color:var(--coral);">
+      <h3 style="color:var(--coral-ink);">Channel 轨</h3><p>后台器械组 · 同轨 FIFO 串行 · 跨轨并行 · abort 丢弃未起跑的</p>
+    </div>
+    <div class="mod click" id="aAct" style="left:844px;top:330px;width:180px;background:var(--pink-bg);border-color:var(--pink);">
+      <h3 style="color:var(--pink-ink);">动作 say / wave</h3><p>台上打出的招式 · 由轨调度执行 · 结果进观测回执</p>
+    </div>
+  </div>
+
+  <!-- ============ 场景1: 一拍全程 ============ -->
+  <div class="stage" id="stage1">
+    <div class="mod" id="fInteract" style="left:14px;top:150px;width:140px;background:var(--gray-bg);border-color:var(--gray);">
+      <h3 style="color:var(--gray-ink);">UI 外挂</h3><p>感知源驱动 · declare 即回 · 不锁输入</p>
+    </div>
+    <div class="mod" id="fMindflow" style="left:180px;top:16px;width:230px;min-height:190px;background:var(--purple-bg);border-color:var(--purple);">
+      <h3 style="color:var(--purple-ink);">Mindflow 擂台</h3><p>仲裁 + 拍链：何时想 / 想几拍</p>
+      <div class="badges" id="badges"></div>
+    </div>
+    <div class="mod" id="fBrain" style="left:180px;top:300px;width:220px;background:var(--amber-bg);border-color:var(--amber);border-style:dashed;">
+      <h3 style="color:var(--amber-ink);">Brain 脑子</h3><p>LLM 流式外设</p>
+    </div>
+    <div class="mod" id="fGhost" style="left:440px;top:16px;width:290px;min-height:240px;background:var(--teal-bg);border-color:var(--teal);">
+      <h3 style="color:var(--teal-ink);">Ghost 灵魂 · 帧工作台</h3><p>战报 #<span id="fNo">–</span> · 拍 = 一场比赛</p>
+      <div class="fr"><b>缝合缝</b><span id="fPrev">(未开帧)</span></div>
+      <div class="fr"><b>percepts</b><span id="fPer">(未开帧)</span></div>
+      <div class="fr"><b>logos</b><span id="fLogos">(未开帧)</span></div>
+    </div>
+    <div class="mod dashed" id="fMoments" style="left:440px;top:280px;width:290px;min-height:170px;background:var(--teal-bg);border-color:var(--teal);">
+      <h3 style="color:var(--teal-ink);">Moments 史官</h3><p>档案柜 · 滑窗 100 帧（演示 7）</p>
+      <div class="chips" id="shelf"></div>
+      <div class="caps">帧 <span id="mN">0</span> · dropped <span id="mDrop">0</span> · epochs <span id="mEp">0</span> · pending <span id="mPend">0</span></div>
+    </div>
+    <div class="mod" id="fShell" style="left:762px;top:16px;width:170px;background:var(--blue-bg);border-color:var(--blue);">
+      <h3 style="color:var(--blue-ink);">Shell 身体</h3><p>CTML 解析 · 一轮一个流 · Tracer 总账</p>
+    </div>
+    <div class="mod" id="fChannel" style="left:762px;top:160px;width:170px;min-height:110px;background:var(--coral-bg);border-color:var(--coral);">
+      <h3 style="color:var(--coral-ink);">Channel 轨</h3>
+      <div class="lanes"><div class="lane"><b>main</b><span id="laneMain">·</span></div><div class="lane"><b>hand</b><span id="laneHand">·</span></div></div>
+    </div>
+    <div class="mod" id="fSay" style="left:962px;top:160px;width:110px;background:var(--pink-bg);border-color:var(--pink);">
+      <h3 style="color:var(--pink-ink);">say</h3><p>TTS 出声</p>
+    </div>
+    <div class="mod" id="fWave" style="left:962px;top:250px;width:110px;background:var(--green-bg);border-color:var(--green);">
+      <h3 style="color:var(--green-ink);">wave</h3><p>挥手 0.15s</p>
+    </div>
+  </div>
+
+  <!-- ============ 场景2: 史官特写 ============ -->
+  <div class="stage" id="stage2">
+    <div id="frameCard">
+      <div class="fcHead">战报 #7</div>
+      <div class="fcSub">Moment 帧 —— 单场官方记录 · ghost 开拍时立卡，不是收拍补写</div>
+      <div class="q" id="qPrev"><b>缝合缝 previous · 上场交接备忘</b><span>logos「从前有座山…」 · 回声×2：say ✓ wave ✓ · stop_reason 正常收链</span></div>
+      <div class="q" id="qPer"><b>报名单 percepts · 按源 keyed</b><span>user:「再讲一个」 · voice:「声音有点哑」</span></div>
+      <div class="q" id="qDyn"><b>记分牌 dynamic_context · 瞬态</b><span>[机身] 电量 72% —— 同源覆盖 · 永不写入史书正文</span></div>
+      <div class="q" id="qLogos"><b>动作 logos · 实际打出</b><span>say:「从前有座山…」 · wave ✓</span></div>
+    </div>
+    <div id="qInfo">
+      <div class="qh">Moment 是什么</div>
+      <div id="qBody">按<b>事件</b>切，不按时间切 —— 拍 = 一场比赛，比赛边界（开拍/拉铃/空拍收链）决定帧界，钟表说了不算。点击左侧战报的四个栏位，看史官的四条记录纪律。</div>
+    </div>
+    <div id="timeband">
+      <div class="tbTitle">Moment ≠ 时间片 —— 上轨：物理时间（等速，永不停）；下轨：帧链（只在比赛段产帧）</div>
+      <div class="tRow upper" id="tUpper"></div>
+      <div class="tRow lower" id="tLower"></div>
+      <div id="nowline" style="left:0%;"></div>
+      <div id="tCaption"></div>
+    </div>
+    <div id="shelf2Wrap">
+      <div class="sTitle">档案柜 · 帧链滑窗（演示容量 12 · 真柜 100 帧，塞满丢最旧）</div>
+      <div id="shelf2"></div>
+      <div id="sCaps">柜内 0 / 12 · 总帧数 0 · dropped 0 · epochs 0</div>
+    </div>
+  </div>
+
+  <div id="cardPanel"></div>
+  <div class="logpanel" id="log"></div>
+  <div class="hint">提示：三个场景共用 播放/单步/重置/速度；场景0 点击部件看职能卡（播放 = 自动巡礼）；场景2 随时可点战报栏位。数据流 = 真实代码路径（mindflow.py / ghost.py / moment.py / shell.py / channel.py）。</div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  const $ = id => document.getElementById(id);
+  let speed = 1, paused = true, runId = 0, nextResolve = null, stepClicks = 0, running = false;
+  let cur = 'S0';
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms / speed));
+
+  function centerOf(id){
+    const el = $(id);
+    return { x: el.offsetLeft + el.offsetWidth/2, y: el.offsetTop + el.offsetHeight/2 };
+  }
+  function stageOf(id){ return $(id).closest('.stage'); }
+  function hl(id, on){ $(id).classList.toggle('hot', on !== false); }
+  function unAll(){ document.querySelectorAll('.hot').forEach(m => m.classList.remove('hot')); }
+
+  const MOD_CLS = { interact:'c-gray', mindflow:'c-purple', ghost:'c-teal', moments:'c-teal',
+    brain:'c-amber', shell:'c-blue', channel:'c-coral', act:'c-pink', arena:'c-purple' };
+  const MOD_NAME = { interact:'UI', mindflow:'擂台', ghost:'灵魂', moments:'史官',
+    brain:'脑子', shell:'身体', channel:'轨', act:'动作', arena:'擂台' };
+
+  let t0 = 0;
+  function log(mod, text){
+    const now = ((performance.now() - t0) / 1000).toFixed(1).padStart(5,'0');
+    const ln = document.createElement('div');
+    ln.className = 'ln';
+    const tm = document.createElement('span'); tm.className = 'tm'; tm.textContent = now + 's';
+    const md = document.createElement('span'); md.className = 'md ' + MOD_CLS[mod]; md.textContent = MOD_NAME[mod];
+    const tx = document.createElement('span'); tx.className = 'tx'; tx.textContent = text;
+    ln.appendChild(tm); ln.appendChild(md); ln.appendChild(tx);
+    const p = $('log');
+    p.appendChild(ln);
+    p.scrollTop = p.scrollHeight;
+  }
+  function logHr(text){
+    const ln = document.createElement('div');
+    ln.className = 'hr';
+    ln.textContent = '──── ' + text + ' ────';
+    const p = $('log');
+    p.appendChild(ln);
+    p.scrollTop = p.scrollHeight;
+  }
+  function clearLog(){ $('log').innerHTML = ''; }
+
+  function tok(from, to, label, colorVar, dur){
+    const st = stageOf(from);
+    const ms = (dur || 1000) / speed;
+    return new Promise(res => {
+      const a = centerOf(from), b = centerOf(to);
+      const el = document.createElement('div');
+      el.className = 'tok';
+      el.textContent = label;
+      el.style.background = 'var(--' + colorVar + ')';
+      el.style.transitionDuration = ms + 'ms, ' + ms + 'ms, .5s';
+      el.style.left = a.x + 'px'; el.style.top = a.y + 'px';
+      st.appendChild(el);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.style.left = b.x + 'px'; el.style.top = b.y + 'px';
+      }));
+      setTimeout(() => { el.classList.add('fade'); setTimeout(() => el.remove(), 600); res(); }, ms);
+    });
+  }
+
+  async function gate(){
+    if (!paused) return;
+    if (stepClicks > 0){ stepClicks--; return; }
+    await new Promise(r => { nextResolve = r; });
+    nextResolve = null;
+  }
+
+  // ================= 场景0: 职能卡 =================
+  const PARTS = {
+    interact: { name:'UI 外挂 · 感知源驱动', role:'场馆售票口 —— 第一个「感知源」routine（进程外挂）',
+      points:[
+        'UI 输入框一行 = 一次 mindflow.declare；订阅 pubsub 渲染字流/观测',
+        'declare 即回（对齐原版 fire-and-forget）：不锁输入框，moss 边想用户边说',
+        '/stop → declare{interrupt:true} = 拉铃；/do &lt;ctml&gt; → command 免检通道',
+        '原版对照：感知驱动在 shell 层；L1 语音/机身来了 = 加驱动 routine，经 declare 七参数申报，不加「核 routine」'],
+      file:'ui.py' },
+    mindflow: { name:'Mindflow · 擂台系统', role:'赛事运营方 —— 检录 + 仲裁 + 排程；裁判不写史',
+      points:[
+        'declare 总服务台：原版八检录窗口（input/notify/interrupt/command/knock/aside/cell_event/listener）塌缩成一张参数化申报单',
+        '仲裁：Priority=体重级别（跨级不比，FATAL=绝对拳）/ Strength=同级战力（随时间衰减）/ 保护期=拳王特权期 / 同 id 尾包=队友合体吸收',
+        '账本挂账 ≤100：notify 输了留条等下届；knock 忙时即丢；aside 递条子不抢擂；next 插队',
+        '泵：rank 循环 peek 拉单，队列空 = 泵挂起（无刺激不思考）；idle = 静默屏障',
+        '拍链：obs 只记账不驱动（指令结果不是激活源）；自续唯一驱动 = next 插队（显式声明）；无它 → 收链',
+        '原版对照：仲裁常数 1.1 / 3.0 / 0.2 逐条照抄 _attention.py:301，连怪癖都没「顺手修好」'],
+      file:'mindflow.py' },
+    ghost: { name:'Ghost · 灵魂', role:'拳王的脑子 + 战报作者 —— 每场比赛的当事人',
+      points:[
+        'think 一拍：开帧（缝 pending 回声成缝合缝）→ 瞬态入槽 → 字流逐块转身体 → logos 落帧 → 等观测（15s 超时）',
+        '三拍形态：正常 / 反射（command 直投不调脑）/ 空拍（interrupt 拉铃，record_only 留痕不回应）',
+        '中断：字流块边界 = 中止检查点，抛错退出；反幻觉 = 已执行的部分 logos 照样落帧',
+        '打断收尾：补发 abort 收尾令（重开解析器/处死未决流/轨打断）+ 拍号门禁，防旧拍回声冒充新拍观测',
+        '原版对照：记忆+思考在 ghost，动作解析执行在 shell —— 原版同分层'],
+      file:'ghost.py' },
+    moments: { name:'Moments · 史官+档案柜', role:'史官 —— 只记事实；裁判不写史，史官不判拳',
+      points:[
+        '帧 = 单场战报四栏：缝合缝（上场 executed_logos + 回声 + stop_reason）/ percepts 按源报名单 / 瞬态记分牌（同源覆盖，永不入史）/ logos 实际动作',
+        'pending 回声 = 散场未归档回执，开下一帧时才缝进缝合缝 —— 两张战报之间的针脚',
+        '档案柜滑窗：只留最近 100 场（原版同参），塞满丢最旧',
+        'epoch = 赛季更替：战报全卷压缩成 recap 前情提要置顶，柜清空转生',
+        '反幻觉 history_turns：有 executed_logos 无 logos 也缝入 —— 史书不许漏掉已发生的事',
+        '身份：ghost 内部普通组件（无独立时间轴/无第二消费者 → 不开 routine）'],
+      file:'moment.py' },
+    brain: { name:'Brain · 脑子', role:'外聘教练 —— 只出主意，不记事，不碰档案柜',
+      points:[
+        'stream(档案视图, system)：每拍吃的都是史官递的同一份「上季 recap + 本季逐场战报」',
+        '转译：非 user 源加 [源] 前缀；epoch 的 recap 摘要也由它写',
+        'brain_factory 可换：测试里是假脑（定字流），真身是 openai-responses 流式'],
+      file:'brain.py' },
+    shell: { name:'Shell · 身体', role:'拳王的身体 —— 台上真正打出去的拳',
+      points:[
+        'CTML 解析：一轮一个流；开标签即入轨；未决流处死；协议违规当场收成 error 观测',
+        '流收尾：冲尾 + 查未闭合 + 不等在途（指令漂着，原版拍尾只等观测类）+ 总账整批 drain 回灌灵魂（obs 只记账不驱动回声）',
+        '观测 = 身体的回执（只报执行事实不复读内容）→ 下一帧缝合缝的料',
+        '原版对照：打断收尾 = 原版 thinking 退出即 shell.clear 同构'],
+      file:'shell.py' },
+    channel: { name:'Channel · 轨', role:'后台器械组 —— 同轨 FIFO 串行，跨轨并行',
+      points:[
+        '单消费者队列：动作实例永远在轨手里；完成即 trace 报账入 shell 总账（长动作迟到由迟到转发带旧拍号只入史）',
+        'abort 打断：队列里未 start 的 destroy（无账），在跑的 stop（动作自己的 stop hook 优雅收场）',
+        '原版对照：原版轨即锥合一（靠建模纪律）；我们两坐标系分离（声明式），跨域动作声明锥并集、原子占用、挂任意轨'],
+      file:'channel.py' },
+    act: { name:'动作 · say / wave', role:'台上的具体招式',
+      points:[
+        '由 shell 开标签入轨，轨调度执行，结果进观测回执',
+        'say = TTS 出声；wave = 挥手 0.15s —— 动作不思考，被打断就停',
+        '观测回执攒批回灌：下一拍的脑子看得见身体干了什么'],
+      file:'commands/say.py, commands/wave.py' },
+  };
+
+  function showCard(key){
+    const c = $('cardPanel');
+    c.innerHTML = '';
+    c.style.fontFamily = 'inherit';
+    if (key === 'vocab'){
+      const t = document.createElement('div');
+      t.innerHTML = '<div class="ctitle">擂台词汇速查表</div>' +
+        '<table><tr><td class="k">擂台 / 检录处八窗口</td><td>mindflow / 原版 nucleus（mossv2 并成 declare 总服务台）</td></tr>' +
+        '<tr><td class="k">现任拳王 · 体重级别 · 同级战力</td><td>Attention 现任链 · Priority（FATAL=绝对拳）· Strength（衰减）</td></tr>' +
+        '<tr><td class="k">观众席 · 挂账</td><td>BACKGROUND · 输了留条等下届（≤100）</td></tr>' +
+        '<tr><td class="k">拍 = 一场比赛 · 战报</td><td>beat · Moment 帧（缝合缝 / percepts / 瞬态 / logos）</td></tr>' +
+        '<tr><td class="k">记分牌 · 散场未归档回执</td><td>瞬态 dynamic_context（不入史）· pending 回声</td></tr>' +
+        '<tr><td class="k">史官 · 赛季更替 · 尸检报告</td><td>Moments 滑窗 100 帧 · epoch 压 recap · 中断留痕</td></tr></table>';
+      c.appendChild(t);
+      return;
+    }
+    const p = PARTS[key];
+    if (!p) return;
+    const box = document.createElement('div');
+    const h = document.createElement('div'); h.className = 'ctitle'; h.textContent = p.name;
+    const r = document.createElement('div'); r.className = 'crole'; r.textContent = '擂台角色：' + p.role;
+    const ul = document.createElement('ul');
+    p.points.forEach(pt => {
+      const li = document.createElement('li');
+      li.innerHTML = pt.replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+      ul.appendChild(li);
+    });
+    const f = document.createElement('div'); f.className = 'cfoot'; f.textContent = '文件：' + p.file + ' · 点击图上其他部件继续看';
+    box.appendChild(h); box.appendChild(r); box.appendChild(ul); box.appendChild(f);
+    c.appendChild(box);
+  }
+
+  const TOUR = [
+    ['interact', 'interact', '入口(UI 外挂进程)：一行输入 = 一次 declare，即回不锁输入'],
+    ['mindflow', 'mindflow', '擂台系统：八检录窗口并成 declare 总服务台 + 拉取时仲裁 + 裁判循环'],
+    ['ghost', 'ghost', '灵魂：think 一拍 = 开帧 → 字流 → logos 落帧'],
+    ['moments', 'moments', '史官：帧链滑窗 + pending 回声 + epoch 赛季压缩'],
+    ['brain', 'brain', '脑子：外设，只出主意不记事，factory 可换'],
+    ['shell', 'shell', '身体：CTML 解析 + Tracer 总账 + 观测回执'],
+    ['channel', 'channel', '轨：同轨串行跨轨并行，abort 丢未起跑的'],
+    ['act', 'act', '动作：say/wave 由轨调度，结果进观测'],
+    ['vocab', null, '收口：擂台词汇速查 —— 三个部门：入口的规矩 / 场上的规矩 / 史书的规矩'],
+  ].map(function(it, i){
+    return { n:(i+1) + '. ' + (it[1] ? PARTS[it[1]].name.split(' · ')[0] : '词汇表'), d:900,
+      f: async function(){
+        if (it[1]){ hl('a' + it[1].charAt(0).toUpperCase() + it[1].slice(1)); }
+        showCard(it[0]);
+        log(it[1] || 'arena', it[2]);
+      }};
+  });
+
+  function reset0(){ unAll(); showCard('vocab'); }
+
+  // ================= 场景1: 一拍全程 =================
+  const MEM_MAX = 7;
+  let frameCount = 0;
+  function badge(text, cls){
+    const b = document.createElement('span');
+    b.className = 'badge' + (cls ? ' ' + cls : '');
+    b.textContent = text;
+    $('badges').appendChild(b);
+  }
+  function badgeDead(txt){
+    const bs = $('badges').querySelectorAll('.badge:not(.dead)');
+    if (bs.length) bs[bs.length-1].classList.add('dead');
+    badge(txt, 'dead');
+  }
+  function shelfPush(label){
+    const c = document.createElement('div');
+    c.className = 'chip frame';
+    c.textContent = label;
+    const box = $('shelf');
+    box.appendChild(c);
+    while (box.children.length > MEM_MAX) box.removeChild(box.firstChild);
+    if (box.children.length === MEM_MAX) box.firstChild.classList.add('gone');
+    frameCount++;
+    $('mN').textContent = frameCount;
+  }
+  function lane(name, text){ $(name === 'main' ? 'laneMain' : 'laneHand').textContent = text; }
+  function pend(n){ $('mPend').textContent = n; }
+
+  const FLOW = [
+    { n:'输入', d:1000, f:async()=>{ hl('fInteract'); log('interact','用户输入「讲个笑话」→ mindflow.declare（不锁终端）'); }},
+    { n:'检录', d:1300, f:async()=>{ await tok('fInteract','fMindflow','declare · 即回','purple',900);
+      log('mindflow','服务台登记申报单 text/NOTICE/100/complete → verdict=accepted —— 登记即回, 仲裁在裁判循环拉取时打(原版八窗口塌缩成一张参数化申报单 + fire-and-forget)'); }},
+    { n:'登基', d:1000, f:async()=>{ hl('fMindflow'); badge('链#1 开');
+      log('mindflow','信号线唤醒裁判循环 → rank 群比 → 无现任拳王 → 挑战者直接登基开链'); }},
+    { n:'开帧', d:1500, f:async()=>{ await tok('fMindflow','fGhost','think(percepts)','teal',900); hl('fGhost');
+      $('fNo').textContent = '1'; $('fPrev').textContent = '(首场 · 无上场)'; $('fPer').textContent = 'user:「讲个笑话」';
+      log('ghost','史官摊开战报#1 —— 帧是开拍时开的，不是收拍补写；percepts 按源报名入帧'); }},
+    { n:'喂脑', d:1200, f:async()=>{ await tok('fGhost','fBrain','stream(档案柜视图, system)','amber',900);
+      log('brain','脑子吃的 = 史官递的同一份：滑窗战报 + system 前缀'); }},
+    { n:'字流', d:1400, f:async()=>{ await tok('fBrain','fGhost','<main:say>从前…','amber',900);
+      await tok('fGhost','fShell','chunk','blue',900);
+      log('ghost','字流逐块转身体；字流块边界 = 中止检查点'); }},
+    { n:'入轨', d:1100, f:async()=>{ hl('fShell'); lane('main','say ▶');
+      log('shell','开标签 main:say → 即入 main 轨（实例永远在轨手里）'); }},
+    { n:'第二招', d:1100, f:async()=>{ await tok('fBrain','fGhost','<hand:wave/>','amber',900);
+      log('ghost','自闭合原子标签 = 一个动作'); }},
+    { n:'并行', d:1300, f:async()=>{ await tok('fShell','fChannel','wave','coral',900); lane('hand','▶');
+      log('channel','跨轨并行：hand 不等 main —— 同串异并是全部语义'); }},
+    { n:'收流', d:1200, f:async()=>{ await tok('fGhost','fShell','close','blue',900);
+      log('shell','冲尾 + 处死未决流 + 总账整批 drain —— 不等在途（say/wave 漂着跑完，回执迟到照入账）'); }},
+    { n:'回执', d:1500, f:async()=>{ await tok('fChannel','fShell','trace ×2','coral',1100);
+      await tok('fShell','fGhost','obs ×2','blue',900); pend(2);
+      log('ghost','完成即报账 → pending 回声槽（散场未归档，等下一届首帧缝入）'); }},
+    { n:'logos 落帧', d:1100, f:async()=>{ $('fLogos').textContent = 'say:「从前…」 · wave ✓';
+      log('ghost','战报#1 记上实际动作 —— 只记打出的拳（反幻觉纪律）'); }},
+    { n:'回执不点灯', d:1400, f:async()=>{ hl('fMindflow');
+      log('mindflow','obs 只记账不驱动：回执/错误都不是激活源 —— 指令结果的到达不点燃下一拍'); }},
+    { n:'收链', d:1200, f:async()=>{ badgeDead('链#1 收'); shelfPush('帧#1');
+      log('mindflow','无 next 插队 → 收链：拳王下台，链判死 —— 回执留在 pending，是下一届的底'); }},
+    { n:'泵挂起', d:1400, f:async()=>{ unAll(); hl('fInteract');
+      log('mindflow','idle：无链·队空·无挂账 —— 泵挂起零开销；下一句来时，新链首帧把 pending 缝进缝合缝'); }},
+  ];
+
+  function reset1(){
+    unAll();
+    document.querySelectorAll('#stage1 .tok').forEach(t => t.remove());
+    $('badges').innerHTML = '';
+    $('shelf').innerHTML = '';
+    $('fNo').textContent = '–'; $('fPrev').textContent = '(未开帧)';
+    $('fPer').textContent = '(未开帧)'; $('fLogos').textContent = '(未开帧)';
+    frameCount = 0; $('mN').textContent = '0'; $('mDrop').textContent = '0';
+    $('mEp').textContent = '0'; pend(0);
+    lane('main','·'); lane('hand','·');
+  }
+
+  // ================= 场景2: 史官特写 =================
+  const SEGS = [
+    { t:'idle', w:8,  lb:'泵挂起' },
+    { t:'beat', w:7,  lb:'拍#1 · 4s' },
+    { t:'idle', w:9,  lb:'泵挂起' },
+    { t:'beat', w:14, lb:'拍#2 · 长流 30s' },
+    { t:'idle', w:18, lb:'泵挂起 · 一下午' },
+    { t:'beat', w:6,  lb:'拍#3 · 空拍' },
+    { t:'idle', w:10, lb:'泵挂起' },
+    { t:'beat', w:12, lb:'拍#4 · 9s' },
+    { t:'idle', w:16, lb:'(时间继续…)' },
+  ];
+  let segEls = [], sweepPos = 0, s2frames = 0, s2drop = 0, s2ep = 0;
+
+  function buildTimeband(){
+    const up = $('tUpper'), low = $('tLower');
+    up.innerHTML = ''; low.innerHTML = ''; segEls = [];
+    let x = 0;
+    SEGS.forEach(s => {
+      const su = document.createElement('div');
+      su.className = 'seg ' + (s.t === 'beat' ? 'beat' : 'gap');
+      su.style.left = x + '%'; su.style.width = s.w + '%';
+      su.textContent = s.lb;
+      up.appendChild(su);
+      const lo = document.createElement('div');
+      lo.className = 'seg';
+      lo.style.left = x + '%'; lo.style.width = s.w + '%';
+      const blk = document.createElement('div');
+      blk.className = 'blk ' + (s.t === 'beat' ? 'beatb' : 'gapb');
+      blk.style.left = x + '%'; blk.style.width = s.w + '%';
+      if (s.t !== 'beat') blk.textContent = '∅ 无帧';
+      low.appendChild(blk);
+      segEls.push({ seg:s, blk:blk, start:x, end:x + s.w });
+      x += s.w;
+    });
+    sweepPos = 0;
+    $('nowline').style.left = '0%';
+    $('tCaption').textContent = '';
+  }
+  async function sweepTo(i, durPer){
+    const s = segEls[i];
+    $('nowline').style.left = s.end + '%';
+    await sleep(durPer || 900);
+    s.blk.classList.add('show');
+  }
+  function tcap(text){ $('tCaption').textContent = text; }
+
+  function shelf2Push(label, cls, w){
+    const b = document.createElement('div');
+    b.className = 'sblk' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    b.style.width = (w || (34 + Math.floor(Math.random()*44))) + 'px';
+    const box = $('shelf2');
+    box.appendChild(b);
+    const CAP = 12;
+    if (box.children.length > CAP){
+      box.removeChild(box.firstChild);   // 出窗即忘: 同步移除, 计数不漂
+      s2drop++;
+    }
+    s2frames++;
+    $('sCaps').textContent = capText();
+  }
+  function capText(){
+    const inWin = $('shelf2').children.length;
+    return '柜内 ' + inWin + ' / 12 · 总帧数 ' + s2frames + ' · dropped ' + s2drop + ' · epochs ' + s2ep;
+  }
+  function qshow(title, html){
+    $('qInfo').innerHTML = '';
+    const h = document.createElement('div'); h.className = 'qh'; h.textContent = title;
+    const b = document.createElement('div'); b.innerHTML = html;
+    $('qInfo').appendChild(h); $('qInfo').appendChild(b);
+  }
+
+  const QINFO = {
+    qPrev: ['缝合缝 · 上场交接备忘', '三样东西：① executed_logos —— 上场实际打出的动作；② 回声 —— 散场归档的观测回执（say ✓ wave ✓）；③ stop_reason —— 上场怎么收的（正常收链 / 被打断 / 超时）。<br><b>帧是开拍时开的</b>：pending 回声先攒槽，下一帧开时才缝进来 —— 这就是两张战报之间的针脚。'],
+    qPer: ['percepts · 按源报名单', '本场挑战者的报名单，<b>按源 keyed</b>：user:「再讲一个」、voice:「声音有点哑」—— 多源同拍入场各记各的，不许混写成一张单。非 user 源在脑内转译时加 [源] 前缀。'],
+    qDyn: ['瞬态记分牌 · 不入史', '场边实时记分牌：全场看得见、只显「现在」、同源后到覆盖先到；<b>永不写入战报正文</b>（不入史）。本拍脑子看得到，历史里不留 —— 原版 dynamic_context 同构。'],
+    qLogos: ['logos · 只记打出的拳', '本场拳王实际打出的动作。<b>反幻觉双向纪律</b>：流被打断，已打出的部分照样记（不许漏掉已发生的事）；没打出的一个字不记（不许记没发生的事）。'],
+  };
+  Object.keys(QINFO).forEach(id => {
+    $(id).onclick = () => {
+      document.querySelectorAll('.q').forEach(q => q.classList.remove('hot'));
+      $(id).classList.add('hot');
+      qshow(QINFO[id][0], QINFO[id][1]);
+      log('moments', '战报栏位：' + QINFO[id][0]);
+    };
+  });
+
+  const ARCHIVE = [
+    { n:'缝合缝', d:1200, f:async()=>{ hl('qPrev'); qshow(QINFO.qPrev[0], QINFO.qPrev[1]);
+      tcap(''); log('moments','栏位① 缝合缝：上场交接备忘，开拍时缝'); }},
+    { n:'percepts', d:1100, f:async()=>{ hl('qPer'); qshow(QINFO.qPer[0], QINFO.qPer[1]);
+      log('moments','栏位② percepts：按源 keyed，各记各的'); }},
+    { n:'瞬态槽', d:1100, f:async()=>{ hl('qDyn'); qshow(QINFO.qDyn[0], QINFO.qDyn[1]);
+      log('moments','栏位③ 瞬态：同源覆盖，永不入史'); }},
+    { n:'logos', d:1100, f:async()=>{ hl('qLogos'); qshow(QINFO.qLogos[0], QINFO.qLogos[1]);
+      log('moments','栏位④ logos：只记打出的拳（反幻觉）'); }},
+    { n:'对照带 · 产帧', d:1600, f:async()=>{ unAll();
+      await sweepTo(0, 700); await sweepTo(1, 650); await sweepTo(2, 700); await sweepTo(3, 900);
+      tcap('比赛有长有短 → 帧有宽有窄：拍长是涌现的（0.4s 短答 / 30s 长流），不是定长切片');
+      log('moments','对照带：帧宽度 = 拍长，长短不一 —— 时间片做不到这点'); }},
+    { n:'对照带 · 挂起', d:1600, f:async()=>{
+      await sweepTo(4, 900); await sweepTo(5, 700); await sweepTo(6, 800); await sweepTo(7, 800); await sweepTo(8, 900);
+      tcap('长时间无刺激 = 帧链空白，上轨时间却照走 —— 「什么都没发生的十分钟」在历史里不存在');
+      log('moments','对照带：泵挂起段，时间流逝、帧链空白 —— Moment 按事件切，不按时间切'); }},
+    { n:'滑窗', d:1700, f:async()=>{
+      tcap('档案柜只认比赛：塞满 12（真柜 100）丢最旧');
+      for (let i = 1; i <= 13; i++){ shelf2Push('帧#' + i); await sleep(140); }
+      log('moments','滑窗：第 13 帧入柜，最旧一帧出柜（dropped=1）—— 出窗即忘，只留最近 100 场'); }},
+    { n:'epoch 赛季', d:1500, f:async()=>{
+      const box = $('shelf2');
+      box.querySelectorAll('.sblk').forEach(b => b.classList.add('gone'));
+      await sleep(450);
+      box.innerHTML = ''; s2ep = 1;
+      shelf2Push('recap · 前情提要（上季战报全卷压缩）', 'recap', 300);
+      tcap('赛季更替：战报全卷压缩成 recap 前情提要置顶，柜清空转生 —— 新脑子读到「上季总述 + 本季逐场」');
+      log('moments','epoch：清窗转生，recap 置顶；epoch 也不是时间驱动 —— 触发条件是柜满，不是钟表'); }},
+    { n:'反幻觉特写', d:1500, f:async()=>{
+      qshow('被打断的比赛，史书怎么记', 
+        '流在第 4 块被打断（拉铃 interrupt）：<br><br>' +
+        '① 战报#9（被打断的帧）：percepts user:「急停」· logos say:「已收到急」（<b>已打出的部分照样入史</b>）· stop_reason interrupted<br>' +
+        '② 战报#10（空拍帧，record_only）：percepts 携带拉铃原因入史 · logos ∅ —— <b>停而不答</b>，「停!」不是新话题<br><br>' +
+        '史书不许记没发生的事，也不许漏掉已发生的事。');
+      shelf2Push('帧#9·interrupted', 'interrupted', 120);
+      await sleep(300);
+      shelf2Push('帧#10·空拍', '', 60);
+      tcap('中断留痕 = 尸检报告：怎么断的、断之前说了什么，下一拍的脑子都看得见');
+      log('moments','反幻觉：部分 logos 入史 + 空拍帧留痕不回应'); }},
+  ];
+
+  function reset2(){
+    unAll();
+    buildTimeband();
+    $('shelf2').innerHTML = '';
+    s2frames = 0; s2drop = 0; s2ep = 0;
+    $('sCaps').textContent = capText();
+    qshow('Moment 是什么', '按<b>事件</b>切，不按时间切 —— 拍 = 一场比赛，比赛边界（开拍/拉铃/空拍收链）决定帧界，钟表说了不算。点击左侧战报的四个栏位，看史官的四条记录纪律。');
+  }
+
+  // ================= 通用引擎 =================
+  const SCENES = {
+    S0: { steps: TOUR, reset: reset0, title: '全景解剖 · 部件职能巡礼' },
+    S1: { steps: FLOW, reset: reset1, title: '一拍全程 · 帧结构闭环（回执只记账/档案柜/pending）' },
+    S2: { steps: ARCHIVE, reset: reset2, title: '史官特写 · Moment 帧结构 / 滑窗 / epoch / ≠时间片' },
+  };
+
+  async function play(){
+    const my = ++runId;
+    running = true; stepClicks = 0;
+    const sc = SCENES[cur];
+    sc.reset();
+    clearLog();
+    t0 = performance.now();
+    logHr(sc.title);
+    const steps = sc.steps;
+    for (let i = 0; i < steps.length; i++){
+      if (my !== runId) return;
+      $('stepInfo').textContent = (i+1) + '/' + steps.length + ' · ' + steps[i].n;
+      await steps[i].f();
+      if (my !== runId) return;
+      await sleep(steps[i].d);
+      unAll();
+      await gate();
+    }
+    if (my === runId){
+      $('stepInfo').textContent = '完成 ✓';
+      running = false; paused = true; $('btnPlay').textContent = '▶ 播放';
+    }
+  }
+
+  $('btnPlay').onclick = () => {
+    if (running){
+      paused = !paused;
+      $('btnPlay').textContent = paused ? '▶ 继续' : '⏸ 暂停';
+      if (!paused){ stepClicks = 0; if (nextResolve){ const r = nextResolve; nextResolve = null; r(); } }
+    } else {
+      paused = false; $('btnPlay').textContent = '⏸ 暂停'; play();
+    }
+  };
+  $('btnStep').onclick = () => {
+    if (!running){ paused = true; $('btnPlay').textContent = '▶ 继续'; play(); return; }
+    paused = true; $('btnPlay').textContent = '▶ 继续';
+    if (nextResolve){ const r = nextResolve; nextResolve = null; r(); }
+    else stepClicks++;
+  };
+  $('btnReset').onclick = () => {
+    runId++; running = false; paused = true; stepClicks = 0;
+    $('btnPlay').textContent = '▶ 播放';
+    clearLog(); $('stepInfo').textContent = '待播放';
+    SCENES[cur].reset();
+    t0 = performance.now();
+  };
+  $('btnSpeed').onclick = () => {
+    speed = speed === 1 ? 2 : speed === 2 ? 4 : 1;
+    $('btnSpeed').textContent = '速度 ' + speed + '×';
+  };
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
+    t.classList.add('on');
+    runId++; running = false;
+    document.querySelectorAll('.stage').forEach(s => s.classList.remove('on'));
+    cur = t.dataset.sc;
+    $(cur === 'S0' ? 'stage0' : cur === 'S1' ? 'stage1' : 'stage2').classList.add('on');
+    paused = false; $('btnPlay').textContent = '⏸ 暂停';
+    play();
+  });
+
+  // 场景0 部件点击
+  [['aInteract','interact'],['aMindflow','mindflow'],['aGhost','ghost'],['aMoments','moments'],
+   ['aBrain','brain'],['aShell','shell'],['aChannel','channel'],['aAct','act']].forEach(pair => {
+    $(pair[0]).onclick = () => { unAll(); hl(pair[0]); showCard(pair[1]); log(pair[1], '查看职能卡：' + PARTS[pair[1]].name); };
+  });
+
+  reset0();
+})();
+</script>
+</body>
+</html>

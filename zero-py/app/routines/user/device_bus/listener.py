@@ -12,6 +12,7 @@ PCM/图像帧会淹没事件处理.
 
 帧 = topic 前缀 + JSON 载荷, 单帧无分隔符. 归一化后按域 publish:
   voice.wake       唤醒词命中 {word, ts}          → pubsub 'voice'
+  voice.asr.evt    type=partial/final(引擎层流式)  → pubsub 'voice'
   voice.orch.evt   type=result/aborted/state       → pubsub 'voice'
   vision.cam.evt   相机事件 {action, fps, ...}     → pubsub 'vision'
   vision.pose.evt  姿态事件                       → pubsub 'vision'
@@ -44,6 +45,7 @@ _log = setup_logger('bus.listen')
 # 高频帧/命令面 (mic.frame / *.raw / *.cmd) 一律不订(cmd 走语义化 req).
 _TOPICS: Dict[bytes, Tuple[str, str]] = {
     b'voice.wake': ('voice', 'wake'),
+    b'voice.asr.evt': ('voice', 'asr'),
     b'voice.orch.evt': ('voice', 'orch'),
     b'vision.cam.evt': ('vision', 'cam'),
     b'vision.pose.evt': ('vision', 'pose'),
@@ -321,6 +323,21 @@ class BusListener(Routine):
             # wake 提示音 fire-and-forget: 播放约 1s, await 会把 publish
             # 和 recv 循环一起卡到播完, 订阅者延迟即源于此
             asyncio.create_task(self._wake_beep())
+        elif kind == 'asr':  # voice.asr.evt: 引擎层流式结果
+            etype = str(evt.get('type') or '')
+            if etype == 'partial':
+                frame = {'kind': 'partial', 'text': evt.get('text'),
+                         'engine': evt.get('engine')}
+                _log.info('asr partial: %s', frame.get('text'))
+            elif etype == 'final':
+                # first_s/finish_s 延迟指标原样透传(stale 标定数据)
+                frame = {'kind': 'asr_final', 'text': evt.get('text'),
+                         'engine': evt.get('engine'),
+                         'first_s': evt.get('first_s'),
+                         'finish_s': evt.get('finish_s')}
+                _log.info('asr final(engine): %s', frame.get('text'))
+            else:   # 引擎层未知类型不进 pubsub(低频事件约定)
+                return
         elif kind == 'orch':  # voice.orch.evt 内部按 type 细分
             etype = str(evt.get('type') or '')
             if etype == 'result':

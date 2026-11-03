@@ -1,0 +1,37 @@
+# 测试:人工审批节点(dag_approval 普通 routine,内部 push ask)
+#
+#   draft ──► review(dag_approval) ──► publish
+#
+# review 节点弹出 approve/reject 选框(capture_response=true 允许填批注):
+#   - 批准 → review.output = 'approved' 或批注文本 → publish 执行
+#   - 拒绝 → 追问 on_reject_prompt(最多 max_attempts 次)→ 仍拒绝则 review 失败
+#            → publish 因 trigger_rule=all_success 被 skip
+#   - 超时 → ask 抛错 → review fail-closed(绝不自动放行)
+#
+# 跑:<run_dag dag="approval_dag"/>
+
+name: approval_dag
+description: 演示人工审批节点(human-in-the-loop)
+
+nodes:
+  - id: draft
+    routine: summary_weather
+    inputs:
+      data: "这是一份待审批的草稿内容"
+
+  - id: review
+    routine: dag_approval
+    depends_on: [draft]
+    inputs:
+      message: "请审批以下内容:$draft.output"
+      capture_response: true
+      on_reject_prompt: "已驳回,请补充说明后重新提交"
+      max_attempts: 2
+
+  - id: publish
+    routine: summary_weather
+    depends_on: [review]
+    inputs:
+      data: "已发布(审批批注:$review.output)"
+
+outputs: publish

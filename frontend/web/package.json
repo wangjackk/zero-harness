@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build",
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview",
-    "type-check": "vue-tsc --noEmit"
+    "type-check": "vue-tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.1.3",
     "@vicons/tabler": "^0.13.0",
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/controls": "^1.1.3",
+    "@vue-flow/core": "^1.48.2",
     "marked": "^18.0.4",
     "naive-ui": "^2.44.1",
     "prismjs": "^1.30.0",

@@ -25,6 +25,10 @@ class LlmProvider:
     base_url: str
     api_key: str
     max_context: int = 0
+    # 模型是否吃图片输入 (models.yaml 的 model 级 ``image``, 缺省 false);
+    # 组装侧据此决定附不附图 —— 不支持还发就是 400, 而"支持却没发"只是
+    # 白看一场. 所以缺省落在不发那一侧.
+    supports_images: bool = False
     reasoning: dict = field(default_factory=dict)  # 本地能力声明(不透传 API)
     extra: dict = field(default_factory=dict)      # 纯 API 请求体透传
     builtin_tools: list = field(default_factory=list)
@@ -174,6 +178,7 @@ def make_provider(key: str, cfg: dict, protocol: str | None = None) -> LlmProvid
         base_url=cfg['base_url'],
         api_key=cfg['api_key'],
         max_context=int(cfg.get('max_context', 0)),
+        supports_images=bool(cfg.get('image', False)),
         reasoning=dict(cfg.get('reasoning') or {}),
         extra=dict(cfg.get('extra') or {}),
         builtin_tools=list(cfg.get('tools') or []),

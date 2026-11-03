@@ -73,6 +73,16 @@
         @click="showRunner = !showRunner"
       ><Icon :comp="Bolt" :size="15" /></NButton>
 
+      <!-- DAG 工作流 -->
+      <NButton
+        size="small"
+        :type="showDag ? 'primary' : 'default'"
+        :ghost="showDag"
+        quaternary
+        title="DAG 工作流"
+        @click="showDag = !showDag"
+      ><Icon :comp="Hexagon" :size="15" /></NButton>
+
       <!-- Routine Tree -->
       <NButton
         size="small"
@@ -111,20 +121,45 @@
     </Teleport>
 
     <Teleport to="body">
+      <div v-show="showDag" class="rr-overlay" @click.self="showDag = false">
+        <DagPanel
+          class="dag-float"
+          :run-routine="runRoutine"
+          :on="on"
+          :connected="connected"
+        />
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
       <div v-show="showTree" class="rt-overlay" @click.self="showTree = false">
         <div class="rt-panel">
-          <RoutineTree
-            :nodes="routineTree"
-            :events="lifecycleEvents"
-            :selected="selectedRoutine"
-            class="rt-side"
-            @select="onTreeSelect"
-            @back="selectedRoutine = null"
-          />
-          <RoutineTimeline :events="lifecycleEvents" :root-id="selectedRoutine" class="rt-main" />
+          <div class="rt-tabs">
+            <span class="rt-tabs-live">{{ routineTree.size }} running</span>
+            <span class="rt-tabs-tip">缩进即父子 · 点行看时间轨</span>
+          </div>
+          <div class="rt-body">
+            <RoutineTree
+              :nodes="routineTree"
+              :events="lifecycleEvents"
+              :selected="selectedRoutine"
+              class="rt-side"
+              @select="onTreeSelect"
+              @back="selectedRoutine = null"
+            />
+            <RoutineTimeline :events="lifecycleEvents" :root-id="selectedRoutine" class="rt-main" />
+          </div>
         </div>
       </div>
     </Teleport>
+
+    <!-- 运行中的实例树常驻在角落里：它不是需要打开的面板，是一个状态 -->
+    <RoutineTreeHud
+      :input="routineTreeInput"
+      :selected="selectedRoutine"
+      @select="onTreeSelect"
+      @back="selectedRoutine = null"
+    />
 
     <!-- 模型管理浮窗 -->
     <Teleport to="body">
@@ -294,7 +329,10 @@ import { NConfigProvider, NButton, NBadge, NTag, NCard, NAlert, NPopover, NInput
 import type { GlobalThemeOverrides } from 'naive-ui'
 import AgentPanel from './components/AgentPanel.vue'
 import RoutineRunner from './components/RoutineRunner.vue'
+import DagPanel from './components/DagPanel.vue'
 import RoutineTree from './components/RoutineTree.vue'
+import RoutineTreeHud from './components/RoutineTreeHud.vue'
+import type { TreeInput } from './lib/growth'
 import RoutineTimeline from './components/RoutineTimeline.vue'
 import type { RoutineNode } from './components/RoutineTree.vue'
 import type { LifecycleEvent } from './components/RoutineTimeline.vue'
@@ -303,7 +341,7 @@ import SelectorDialog from './components/SelectorDialog.vue'
 import TableDialog from './components/TableDialog.vue'
 import DateDialog from './components/DateDialog.vue'
 import Icon from './components/Icon.vue'
-import { Notes, Bolt, Sitemap, Settings, CirclePlus, Loader, X, Trash, Components } from '@vicons/tabler'
+import { Notes, Bolt, Hexagon, Sitemap, Settings, CirclePlus, Loader, X, Trash, Components } from '@vicons/tabler'
 import AgentCreateForm from './components/AgentCreateForm.vue'
 import ModelsPanel from './components/ModelsPanel.vue'
 import ModuleTreeEditor from './components/ModuleTreeEditor.vue'
@@ -458,7 +496,11 @@ const routines = ref<RoutineInfo[]>([])
 // ---- routine 树实时状态 (lifecycle 观察流, web_server 直连 watch 广播) ----
 const routineTree = reactive(new Map<string, RoutineNode>())
 const lifecycleEvents = reactive<LifecycleEvent[]>([])
+/* HUD 只有这一个入口；精确视图仍读上面的节点表与事件表，不参与生长状态。 */
+const routineTreeInput = ref<TreeInput>({ kind: 'snapshot', nodes: [] })
 const showTree = ref(false)
+// 实例树常驻在角落（RoutineTreeHud），这里的面板是它的「精确视图」：
+// 缩进列表 + 时间轨。同一份数据、同一个选中态。
 // 点击树节点 → 时间轨只渲染该节点子树; 返回按钮回到上一级
 const selectedRoutine = ref<string | null>(null)
 
@@ -484,20 +526,23 @@ function applyLifecycleFrame(t: unknown, id: unknown, pid: unknown, name: unknow
   }
 }
 
-function pushEvent(t: unknown, id: unknown, pid: unknown, name: unknown, ts?: unknown) {
+function pushEvent(t: unknown, id: unknown, pid: unknown, name: unknown, ts?: unknown): LifecycleEvent | null {
   const ev = String(t ?? '')
-  if (!ev || !id) return
-  lifecycleEvents.push({
+  if (!ev || !id) return null
+  const event: LifecycleEvent = {
     t: typeof ts === 'number' ? ts : Date.now(), ev,
     id: String(id), pid: String(pid ?? '0'), name: String(name ?? id),
-  })
+  }
+  lifecycleEvents.push(event)
   // 历史上限: 防止长会话无限增长 (时间轨只渲染有限窗口)
   if (lifecycleEvents.length > 600) lifecycleEvents.splice(0, lifecycleEvents.length - 600)
+  return event
 }
 
 on('lifecycle', (msg) => {
   applyLifecycleFrame(msg.event_type, msg.id, msg.parent_id, msg.name)
-  pushEvent(msg.event_type, msg.id, msg.parent_id, msg.name)
+  const event = pushEvent(msg.event_type, msg.id, msg.parent_id, msg.name)
+  if (event) routineTreeInput.value = { kind: 'event', event }
 })
 
 // 连接/重连时的全量基线: 服务端缓存的事件历史(真实时间戳)先回放,
@@ -518,6 +563,9 @@ on('lifecycle_snapshot', (msg) => {
     applyLifecycleFrame(ev, rid, r.parent_id, r.name)
     if (!seen.has(rid)) pushEvent(ev, rid, r.parent_id, r.name)
   }
+  /* 重连只提交一次基线。运行时会保留仍在树上的线的进度，
+     不把历史事件时间当成动画起点，也不让整棵树重新闪一遍。 */
+  routineTreeInput.value = { kind: 'snapshot', nodes: [...routineTree.values()] }
 })
 
 // routines 走 HTTP /run_routine (user_agent 通道):WS 不再有 routines 推送通道.
@@ -649,12 +697,9 @@ on('session_changed', (msg) => {
 
 function sendInput(text: string, agentId: string, images?: string[]) {
   if (!agentId) return
-  ensurePanel(agentId)
-  const msg: PanelMessage = { id: `user-${Date.now()}`, role: 'user', text, final: true }
-  if (images?.length) msg.images = images
-  panels[agentId].push(msg)
+  // 不在本地补气泡: 接收方 agent 收到就播报 incoming_message, 前端只据此
+  // 渲染 ---- 单一真源, 不存在"本地一条 + 回声一条"的去重问题.
   // user 与 agent 平等: WS run_routine 调 send_message (user agent 身份).
-  // send_message routine 内部 req 目标 agent 的 chat_message, 触发 react.
   // content 数组: text 与 image 平权 (统一消息协议).
   const content: Record<string, unknown>[] = []
   if (text) content.push({ type: 'text', text })
@@ -662,10 +707,17 @@ function sendInput(text: string, agentId: string, images?: string[]) {
   runRoutine('send_message', { to: agentId, content }, 15000)
     .then((r: any) => {
       // result 双层: {ok, result: {ok, error|epoch}} ---- 内层才是 send_message 的返回
-      if (r?.result?.ok === false) console.error('send_message failed:', r.result.error)
-      else if (r && r.ok === false) console.error('send_message failed:', r.error)
+      const inner = r?.result
+      const err = inner?.ok === false ? inner.error : (r?.ok === false ? r.error : '')
+      if (err) {
+        console.error('send_message failed:', err)
+        toast(`发送失败: ${err || '内核不可用'}`)
+      }
     })
-    .catch((err) => console.error('send_message failed:', err))
+    .catch((err) => {
+      console.error('send_message failed:', err)
+      toast(`发送失败: ${typeof err === 'string' ? err : '内核不可用'}`)
+    })
 }
 
 function setEffort(agentId: string, effort: string) {
@@ -700,6 +752,8 @@ const agentStatusTimers = new Map<string, ReturnType<typeof setTimeout>>()
 // final)直接丢弃, 不再当新消息渲染(否则同一段输出显示两条)
 const finalizedMsgIds = new Set<string>()
 const showRunner = ref(false)
+// DAG 工作流浮窗 (dag/list、dag/spec、run_dag 全走 run_routine)
+const showDag = ref(false)
 // 模型管理浮窗 (provider/model 配置增删改, models/* routine 通道)
 const showModels = ref(false)
 // 模块树编辑浮窗 (tree.json 静态定义读写)
@@ -1079,20 +1133,24 @@ on('agent_status', (msg) => {
   }
 })
 
-// 收到入站 agent 消息 (send_message 投递, 实时渲染到接收方 panel)
+// 收到 agent 发来的入站消息 (send_message 投递, 实时渲染到接收方 panel).
+// user 自己发的消息不走这: 发送方本地就出了气泡, 服务端不再回声.
 on('incoming_message', (msg) => {
   const agent_id = (msg.agent_id as string | undefined) ?? ''
   if (!agent_id) return
   const text = String(msg.text ?? '')
   const from_ = (msg.from as string | undefined) ?? ''
+  const images = Array.isArray(msg.images) ? (msg.images as string[]).map(String) : undefined
   ensurePanel(agent_id)
-  panels[agent_id].push({
-    id: `incoming-${Date.now()}`,
+  const bubble: PanelMessage = {
+    id: `incoming-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     role: 'user',
     text,
     final: true,
-    from: from_ || undefined,
-  })
+  }
+  if (from_ && from_ !== 'user') bubble.from = from_
+  if (images?.length) bubble.images = images
+  panels[agent_id].push(bubble)
   if (agent_id !== activeId.value) {
     unread[agent_id] = (unread[agent_id] ?? 0) + 1
   }
@@ -1278,6 +1336,8 @@ async function onRun(
       onError(data.error)
       return
     }
+    // send_message 的结果不用在这里补气泡: 接收方 agent 收到就会播报
+    // incoming_message (与来源无关), 前端统一按事件渲染.
     onResult([{ name: payload.name, result: data.result }])
   } catch (e) {
     onError((e as Error).message)
@@ -1295,6 +1355,7 @@ watch(activeId, (id) => {
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     showRunner.value = false
+    showDag.value = false
     showModels.value = false
     showModuleTree.value = false
     if (viewMode.value === 'create') viewMode.value = 'chat'
@@ -1373,6 +1434,17 @@ body {
   border: 1px solid #3d4270;
 }
 
+.dag-float {
+  width: 88vw;
+  height: 78vh;
+  min-width: 760px;
+  min-height: 520px;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  border: 1px solid #3d4270;
+}
+
 /* 模型管理浮窗 (同 Routine Runner 的居中 overlay) */
 .mp-overlay {
   position: fixed;
@@ -1407,10 +1479,45 @@ body {
 
 .rt-panel {
   display: flex;
-  align-items: stretch;
+  flex-direction: column;
   width: 82vw;
   height: 70vh;
   min-width: 720px;
+}
+
+/* 面板只是实例树的精确视图（缩进 + 时间轨），树本身常驻在角落 */
+.rt-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #1e2130;
+  border: 1px solid #3d4270;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+}
+
+.rt-tabs-live {
+  font-size: 11px;
+  color: #4ade80;
+  background: #1d2e28;
+  border-radius: 8px;
+  padding: 1px 8px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.rt-tabs-tip {
+  margin-left: auto;
+  font-size: 11px;
+  color: #565d75;
+}
+
+.rt-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
 }
 
 .app-body {

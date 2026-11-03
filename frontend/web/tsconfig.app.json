@@ -1,8 +1,14 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*",
+    "../../routine-atlas/src/lib/tree.ts",
+    "../../routine-atlas/src/lib/treeArt.ts",
+    "../../routine-atlas/src/lib/skeleton.ts",
+    "../../routine-atlas/src/lib/growth.ts",
+    "../../routine-atlas/src/lib/runtime.ts"
+  ],
   "compilerOptions": {
-    "composite": true,
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {

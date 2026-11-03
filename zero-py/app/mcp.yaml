@@ -1,0 +1,48 @@
+# mcp.yaml ---- MCP server 清单: 外部能力源的配置事实源.
+#
+# 与 routines.yaml 的分工:
+#   routines.yaml  系统由哪些单元构成
+#   mcp.yaml       系统外有哪些能力源
+#
+# MCP server 不是 routine (同 ros_bridge 背后的 ROS、bus_listener 背后的设备
+# 总线): 由常驻 `mcp` 持有会话, 再由 `mcp/call` `mcp/doc` 两个单元对外提供.
+# 连接惰性建立 ---- 列在这里不代表启动时就连, 第一次用到某个 server 才握手.
+#
+# 工具白名单: 不写 tools 表示放行该 server 全部工具; 写了就只放行列出的,
+# 避免一个工具巨多的 server 把 mcp/doc 清单撑爆.
+#
+# 占位符 ${ENV} 在加载时展开; 未定义的变量原样保留 (留到建连时报错, 不静默清空).
+
+servers:
+  - name: probe
+    transport: http
+    url: http://127.0.0.1:8765/mcp
+    timeout: 30
+
+
+# 示例 (取消注释并按需改):
+#
+# servers:
+#   # stdio: 本机子进程. 命令数组优先, 也可写成单行字符串 (Windows 盘符路径同样可用).
+#   # Windows 注意: .cmd/.bat (npx、npm 等) 不能直接 exec, 要经 cmd /c 起.
+#   - name: fs
+#     transport: stdio
+#     command: [cmd, /c, npx, -y, '@modelcontextprotocol/server-filesystem', E:/work]
+#     timeout: 120
+#     tools: [read_file, write_file, list_directory]   # 省略 = 全部
+#
+#   # 纯 python 的 server 直接给解释器, 少一层 shell
+#   - name: local
+#     transport: stdio
+#     command: [python, E:/mcp/my_server.py]
+#
+#   # http: Streamable HTTP endpoint, 鉴权放 headers
+#   # 本机与内网地址(127.0.0.1 / 192.168.x / *.local ...)自动绕过环境代理,
+#   # 不必为它配 NO_PROXY; 公网地址照旧读 HTTP(S)_PROXY, 公司网里访问远程
+#   # server 不用另配.
+#   - name: github
+#     transport: http
+#     url: https://api.githubcopilot.com/mcp/
+#     headers:
+#       Authorization: Bearer ${GITHUB_TOKEN}
+#     timeout: 60

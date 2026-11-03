@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>黑板 · 手写演示</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #121c17;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  #board { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+  #stage { display: block; width: 100%; height: 100%; }
+
+  #board::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+    background:
+      radial-gradient(ellipse at 50% 42%, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 100%);
+  }
+  #board::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 3; opacity: 0.5;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.16'/></svg>");
+    mix-blend-mode: overlay; opacity: 0.38;
+  }
+
+  #hud {
+    position: absolute; right: 26px; bottom: 22px; z-index: 10;
+    display: flex; gap: 10px; align-items: center;
+    opacity: 0.22; transition: opacity .25s ease;
+  }
+  #hud:hover { opacity: 1; }
+  #hud button {
+    font: 13px/1 "Segoe UI", system-ui, sans-serif;
+    color: #cfd6cf; background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.16); border-radius: 7px;
+    padding: 8px 13px; cursor: pointer; backdrop-filter: blur(6px);
+  }
+  #hud button:hover { background: rgba(255,255,255,0.14); }
+  #hud .hint { font-size: 12px; color: #7f8a80; letter-spacing: .02em; }
+</style>
+</head>
+<body>
+<div id="board">
+  <svg id="stage" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+    <defs id="defs"></defs>
+    <rect x="0" y="0" width="1600" height="900" fill="#16241d"/>
+    <rect x="0" y="0" width="1600" height="900" fill="url(#smudge)" opacity="0.5"/>
+    <g id="layer"></g>
+  </svg>
+  <div id="hud">
+    <span class="hint">空格 / 点击重播</span>
+    <button id="replay">重播</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 1600, H = 900;
+  const INK = "#f2efe2";
+
+  // ---------- 噪声与形状 ----------
+  const fract = x => x - Math.floor(x);
+  const rnd = s => fract(Math.sin(s * 127.1 + 311.7) * 43758.5453);
+  function noise1(s, seed) {
+    return Math.sin(s * 1.7 + seed * 3.1) * 0.55
+         + Math.sin(s * 4.3 + seed * 7.7) * 0.30
+         + Math.sin(s * 9.1 + seed * 13.3) * 0.15;
+  }
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+  const easeInOutSine = p => -(Math.cos(Math.PI * p) - 1) / 2;
+
+  function sampleLine(x1, y1, x2, y2, n) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const s = i / n;
+      pts.push([x1 + (x2 - x1) * s, y1 + (y2 - y1) * s]);
+    }
+    return pts;
+  }
+
+  function sampleArc(cx, cy, rx, ry, a0, a1, n, seed) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const s = i / n;
+      const a = a0 + (a1 - a0) * s;
+      const wob = 1 + noise1(s * 5, seed) * 0.018;
+      pts.push([cx + Math.cos(a) * rx * wob, cy + Math.sin(a) * ry * wob]);
+    }
+    return pts;
+  }
+
+  // 沿法线加抖动：起落笔处收敛，中段最明显
+  function roughen(pts, amp, seed) {
+    const out = [];
+    const last = pts.length - 1;
+    for (let i = 0; i <= last; i++) {
+      const s = i / last;
+      const a = pts[Math.max(0, i - 1)];
+      const b = pts[Math.min(last, i + 1)];
+      let dx = b[0] - a[0], dy = b[1] - a[1];
+      const L = Math.hypot(dx, dy) || 1;
+      dx /= L; dy /= L;
+      const taper = Math.min(1, Math.sin(Math.PI * s) * 3.2);
+      const o = noise1(s * 7, seed) * amp * taper;
+      out.push([
+        pts[i][0] - dy * o + noise1(s * 3.2, seed + 5) * 0.5,
+        pts[i][1] + dx * o + noise1(s * 2.4, seed + 9) * 0.5
+      ]);
+    }
+    return out;
+  }
+
+  const toPath = pts => pts
+    .map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1))
+    .join(" ");
+
+  // ---------- 板书脚本 ----------
+  const TITLE_X = 140, TITLE_Y = 222, TITLE_SIZE = 88;
+
+  const SCRIPT = [
+    { id: "title", type: "text", text: "斜率就是变化率",
+      x: TITLE_X, y: TITLE_Y, size: TITLE_SIZE, start: 0.20, dur: 2.20, tilt: -0.55 },
+
+    { id: "ab", type: "stroke", w: 5.2, start: 2.90, dur: 0.62,
+      d: toPath(roughen(sampleLine(300, 760, 1180, 400, 74), 2.4, 3)) },
+
+    { id: "ac", type: "stroke", w: 4.4, start: 3.62, dur: 0.46,
+      d: toPath(roughen(sampleLine(300, 760, 1180, 760, 52), 2.0, 11)) },
+
+    { id: "cb", type: "stroke", w: 4.4, start: 4.16, dur: 0.46,
+      d: toPath(roughen(sampleLine(1180, 760, 1180, 400, 40), 2.0, 17)) },
+
+    { id: "dotA", type: "dot", cx: 300, cy: 760, r: 8, start: 4.70, dur: 0.22 },
+    { id: "dotB", type: "dot", cx: 1180, cy: 400, r: 8, start: 4.86, dur: 0.22 },
+
+    { id: "lblA", type: "text", text: "A", x: 244, y: 838, size: 58,
+      start: 5.06, dur: 0.42, tilt: -1.2 },
+    { id: "lblB", type: "text", text: "B", x: 1212, y: 366, size: 58,
+      start: 5.22, dur: 0.42, tilt: 0.9 },
+
+    { id: "dx", type: "text", text: "Δx", x: 700, y: 848, size: 62,
+      start: 5.86, dur: 0.52, tilt: -0.8 },
+    { id: "dy", type: "text", text: "Δy", x: 1018, y: 606, size: 62,
+      start: 6.42, dur: 0.52, tilt: 1.1 },
+
+    { id: "ring", type: "stroke", w: 4.6, start: 7.14, dur: 0.72,
+      d: toPath(roughen(sampleArc(624, 188, 162, 74, -Math.PI * 0.66, -Math.PI * 0.66 + Math.PI * 1.88, 170, 23), 2.6, 29)) },
+
+    { id: "formula", type: "text", text: "Δy / Δx", x: 1146, y: 292, size: 74,
+      start: 8.02, dur: 0.86, tilt: -0.4 }
+  ];
+
+  const TOTAL = SCRIPT.reduce((m, it) => Math.max(m, it.start + it.dur), 0) + 1.6;
+
+  // ---------- 建场景 ----------
+  const defs = document.getElementById("defs");
+  const layer = document.getElementById("layer");
+
+  // 黑板擦痕
+  const smudge = document.createElementNS(NS, "radialGradient");
+  smudge.setAttribute("id", "smudge");
+  smudge.setAttribute("cx", "22%"); smudge.setAttribute("cy", "78%");
+  smudge.setAttribute("r", "70%");
+  smudge.innerHTML = '<stop offset="0" stop-color="#ffffff" stop-opacity="0.035"/>'
+                   + '<stop offset="1" stop-color="#ffffff" stop-opacity="0"/>';
+  defs.appendChild(smudge);
+
+  const nodes = [];
+
+  function makeText(item) {
+    const maskId = "m-" + item.id;
+    const mask = document.createElementNS(NS, "mask");
+    mask.setAttribute("id", maskId);
+    mask.setAttribute("maskUnits", "userSpaceOnUse");
+    mask.setAttribute("x", "0"); mask.setAttribute("y", "0");
+    mask.setAttribute("width", String(W)); mask.setAttribute("height", String(H));
+
+    const wipe = document.createElementNS(NS, "rect");
+    wipe.setAttribute("x", String(item.x - 26));
+    wipe.setAttribute("y", String(item.y - item.size * 1.45));
+    wipe.setAttribute("width", "0");
+    wipe.setAttribute("height", String(item.size * 2.1));
+    wipe.setAttribute("fill", "#fff");
+    mask.appendChild(wipe);
+    defs.appendChild(mask);
+
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("x", String(item.x));
+    t.setAttribute("y", String(item.y));
+    t.setAttribute("font-size", String(item.size));
+    t.setAttribute("font-family", '"KaiTi","STKaiti","Kaiti SC","楷体",serif');
+    t.setAttribute("fill", INK);
+    t.setAttribute("opacity", "0.96");
+    t.setAttribute("transform", `rotate(${item.tilt} ${item.x} ${item.y})`);
+    t.setAttribute("mask", `url(#${maskId})`);
+    t.textContent = item.text;
+    layer.appendChild(t);
+
+    return { item, el: t, wipe, width: 0 };
+  }
+
+  function makeStroke(item) {
+    // 三层叠加：主体 + 硬芯 + 粉尘，做出粉笔毛边
+    const layers = [
+      { k: 1.00, o: 0.90, dx: 0,    dy: 0 },
+      { k: 0.42, o: 0.38, dx: 0.9,  dy: 0.5 },
+      { k: 1.75, o: 0.10, dx: -1.1, dy: -0.7 }
+    ];
+    const paths = layers.map(L => {
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", item.d);
+      p.setAttribute("fill", "none");
+      p.setAttribute("stroke", INK);
+      p.setAttribute("stroke-width", String(item.w * L.k));
+      p.setAttribute("stroke-linecap", "round");
+      p.setAttribute("stroke-linejoin", "round");
+      p.setAttribute("opacity", String(L.o));
+      p.setAttribute("pathLength", "1");
+      p.setAttribute("stroke-dasharray", "1 2");
+      p.setAttribute("stroke-dashoffset", "1");
+      if (L.dx || L.dy) {
+        p.setAttribute("transform", `translate(${L.dx} ${L.dy})`);
+      }
+      layer.appendChild(p);
+      return p;
+    });
+    return { item, els: paths };
+  }
+
+  function makeDot(item) {
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", String(item.cx));
+    c.setAttribute("cy", String(item.cy));
+    c.setAttribute("r", "0");
+    c.setAttribute("fill", INK);
+    c.setAttribute("opacity", "0.9");
+    layer.appendChild(c);
+    return { item, el: c };
+  }
+
+  for (const item of SCRIPT) {
+    if (item.type === "text") nodes.push(makeText(item));
+    else if (item.type === "stroke") nodes.push(makeStroke(item));
+    else if (item.type === "dot") nodes.push(makeDot(item));
+  }
+
+  // 量一次文字宽度（字体就绪后再校准）
+  function measure() {
+    for (const n of nodes) {
+      if (n.item.type !== "text") continue;
+      let w = 0;
+      try { w = n.el.getComputedTextLength(); } catch (e) { w = 0; }
+      n.width = w > 0 ? w : n.item.text.length * n.item.size * 0.98;
+    }
+  }
+  measure();
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(measure);
+  }
+  window.addEventListener("resize", measure);
+
+  // ---------- 时间轴 ----------
+  let t0 = performance.now();
+  let elapsed = 0;
+
+  function draw(t) {
+    for (const n of nodes) {
+      const it = n.item;
+      const raw = clamp01((t - it.start) / it.dur);
+      const p = easeInOutSine(raw);
+
+      if (it.type === "text") {
+        n.wipe.setAttribute("width", String((n.width + 52) * p));
+        n.el.setAttribute("opacity", raw > 0 ? "0.96" : "0");
+      } else if (it.type === "stroke") {
+        const off = String(1 - p);
+        for (const el of n.els) el.setAttribute("stroke-dashoffset", off);
+      } else if (it.type === "dot") {
+        n.el.setAttribute("r", String(it.r * p));
+      }
+    }
+  }
+
+  function loop(now) {
+    elapsed = ((now - t0) / 1000) % (TOTAL + 0.01);
+    draw(elapsed);
+    requestAnimationFrame(loop);
+  }
+
+  function replay() {
+    measure();
+    t0 = performance.now();
+    draw(0);
+  }
+
+  document.getElementById("replay").addEventListener("click", e => {
+    e.stopPropagation();
+    replay();
+  });
+  window.addEventListener("keydown", e => {
+    if (e.code === "Space") { e.preventDefault(); replay(); }
+  });
+  document.getElementById("board").addEventListener("click", replay);
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

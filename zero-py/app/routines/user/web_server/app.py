@@ -7,13 +7,21 @@
 instance stop 即 server 优雅关闭, 路由不会 outlive instance).
 
 HTTP 面最小化: 所有 routine 能力统一走 /run_routine (routine 本身就是
-HTTP 与业务间的唯一契约), 专用路由只保留基础设施 (健康/文件传输).
+HTTP 与业务间的唯一契约), 专用路由只保留基础设施:
+
+  /health                   健康检查
+  /files/upload             通用文件上传 (raw body, ?name=)
+  /files/download/{name}    强制附件下载
+  /files/{name}             inline 读取 (图片/附件回显)
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 from typing import Any, Dict
+from uuid import uuid4
 
 from fastapi import Body, FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,39 +51,106 @@ def build_app(inst) -> FastAPI:
     async def _health():
         return _Json({'ok': True})
 
-    @app.post('/upload')
-    async def _upload(request: Request):
-        """图片上传: 原始 body 直读 (multipart 解析留给前端 FormData 不做,
-        直接收二进制 + content-type 定扩展), 落盘 runtime/uploads/.
-        返回 {'ok', path, url}: path 是 '/files/<name>', 消息里引用它."""
+    @app.post('/files/upload')
+    async def _files_upload(request: Request, name: str = ''):
+        """统一文件上传: raw body + ``?name=foo.apk``, 流式落盘 runtime/uploads。
+
+        不限类型 (图片/APK/日志/导出包同一通道), 上限 ``MAX_FILE_BYTES``,
+        边写边算 sha256, 不把整个 body 读进内存。返回的 ``url`` 是 inline
+        读取路径 (图片 ``<img src>`` 直接用), ``download`` 强制附件下载。
+        """
         from app.routines.user.agents._core.uploads import (
-            ext_from_mime, save_image,
+            MAX_FILE_BYTES, UPLOADS_DIR, stored_name,
         )
-        body = await request.body()
-        if not body:
-            return _Json({'ok': False, 'error': 'empty body'})
-        ext = ext_from_mime(request.headers.get('content-type', ''))
-        if not ext:
-            name = request.query_params.get('name', '')
-            if '.' in name:
-                ext = name.rsplit('.', 1)[1].lower()
+
+        content_length = request.headers.get('content-length')
+        if content_length:
+            try:
+                if int(content_length) > MAX_FILE_BYTES:
+                    return _Json({'ok': False, 'error': 'file too large'}, status_code=413)
+            except ValueError:
+                return _Json({'ok': False, 'error': 'invalid content-length'}, status_code=400)
+
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = UPLOADS_DIR / f'.upload-{uuid4().hex}.part'
+        digest = hashlib.sha256()
+        size = 0
         try:
-            path = save_image(body, ext or 'png')
-        except ValueError as exc:
-            return _Json({'ok': False, 'error': str(exc)})
-        return _Json({'ok': True, 'path': path, 'url': path})
+            with tmp.open('wb') as f:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > MAX_FILE_BYTES:
+                        return _Json({'ok': False, 'error': 'file too large'}, status_code=413)
+                    f.write(chunk)
+                    digest.update(chunk)
+            if size == 0:
+                return _Json({'ok': False, 'error': 'empty body'}, status_code=400)
+            # 内容寻址: 前缀用 sha256 前 12 位, 同内容重复上传落到同一个名字
+            # (截图重放 / 幂等重传不堆文件), 不同内容同名文件也不会互相覆盖。
+            stored = stored_name(
+                name or request.query_params.get('name', ''),
+                request.headers.get('content-type', ''),
+                digest.hexdigest(),
+            )
+            target = UPLOADS_DIR / stored
+            if target.is_file():
+                tmp.unlink(missing_ok=True)
+            else:
+                os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+        return _Json({
+            'ok': True,
+            'name': stored,
+            'size': size,
+            'sha256': digest.hexdigest(),
+            # 服务端绝对路径: 本机调用方 (ipython kernel 里的 routine_bridge)
+            # 要拿它当本地文件引用 (read_image / 归档), 前端用不到。
+            'path': str(UPLOADS_DIR / stored),
+            'url': f'/files/{stored}',
+            'download': f'/files/download/{stored}',
+        })
+
+    @app.get('/files/download/{name}')
+    async def _files_download(name: str):
+        """强制附件下载 (Content-Disposition: attachment), MIME 按扩展名。"""
+        from app.routines.user.agents._core.uploads import (
+            UPLOADS_DIR, file_mime, safe_existing_name,
+        )
+
+        safe = safe_existing_name(name)
+        if safe is None:
+            return _Json({'ok': False, 'error': 'invalid file name'}, status_code=400)
+        file = UPLOADS_DIR / safe
+        if not file.is_file():
+            return _Json({'ok': False, 'error': 'not found'}, status_code=404)
+        return FileResponse(
+            file,
+            media_type=file_mime(safe),
+            filename=safe,
+            headers={'Cache-Control': 'no-store'},
+        )
 
     @app.get('/files/{name}')
     async def _files(name: str):
-        """访问上传的图片资源 (消息里的 images 路径渲染用)."""
-        from app.routines.user.agents._core.uploads import UPLOADS_DIR, _MIME_BY_EXT
-        if '/' in name or '\\' in name or '..' in name:
-            return _Json({'ok': False, 'error': 'invalid file name'})
-        file = UPLOADS_DIR / name
+        """inline 读取上传的文件 (图片消息 / agent 附件回显用)。
+
+        消息里存的就是这个 ``/files/<name>`` 相对路径, 与 download 分开是
+        因为 ``<img src>`` 需要 inline 语义, 而下载需要 attachment。
+        """
+        from app.routines.user.agents._core.uploads import (
+            UPLOADS_DIR, file_mime, safe_existing_name,
+        )
+        safe = safe_existing_name(name)
+        if safe is None:
+            return _Json({'ok': False, 'error': 'invalid file name'}, status_code=400)
+        file = UPLOADS_DIR / safe
         if not file.is_file():
-            return _Json({'ok': False, 'error': 'not found'})
-        ext = file.suffix.lstrip('.').lower()
-        return FileResponse(file, media_type=_MIME_BY_EXT.get(ext, 'application/octet-stream'))
+            return _Json({'ok': False, 'error': 'not found'}, status_code=404)
+        return FileResponse(file, media_type=file_mime(safe))
 
     async def _execute_routine(name: str, kwargs: Dict[str, Any],
                                 agent_id: str) -> _Json:

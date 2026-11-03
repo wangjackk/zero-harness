@@ -76,15 +76,16 @@ export class Command {
   }
 
   /** 打断 body:唤醒 kill + 触发 onInterrupt(发 lifecycle.stop)+ 等 body 退出
-   * (STOP_TIMEOUT 超时放弃).idempotent. */
-  async stop(): Promise<void> {
+   * (超时放弃).idempotent.
+   * timeoutSec 缺省用 STOP_TIMEOUT; 退出语境(kernel.stop)传更短的耐心. */
+  async stop(timeoutSec = Command.STOP_TIMEOUT): Promise<void> {
     if (![State.STARTING, State.RUNNING, State.STOPPING].includes(this._state)) return
     this._state = State.STOPPING
     this.kill.resolve()
     try { this.onInterrupt?.() } catch (e) { log.error(`command ${this} onInterrupt failed: ${e}`) }
     if (this._task) {
-      try { await withTimeout(this._task, Command.STOP_TIMEOUT * 1000, `command ${this} stop`) }
-      catch (e) { log.warning(`command ${this} body did not exit within ${Command.STOP_TIMEOUT}s; giving up (modules may leak)`) }
+      try { await withTimeout(this._task, timeoutSec * 1000, `command ${this} stop`) }
+      catch (e) { log.warning(`command ${this} body did not exit within ${timeoutSec}s; giving up (modules may leak)`) }
     }
     this._state = State.STOPPED
   }

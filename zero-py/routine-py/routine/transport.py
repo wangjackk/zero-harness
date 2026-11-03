@@ -40,7 +40,7 @@ class Transport:
     async def start(self) -> None:
         raise NotImplementedError
 
-    async def stop(self) -> None:
+    async def close(self) -> None:
         raise NotImplementedError
 
     # --- 出站 ---

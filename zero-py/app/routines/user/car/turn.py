@@ -41,7 +41,5 @@ class CarTurn(MotionRoutine):
     async def run(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         inp = CarTurnInput.model_validate(kwargs)
         command = f'turn rate={inp.turn_rate:g} dur={inp.duration:g}s'
-        return {
-            'result': await self._execute(0.0, 0.0, inp.turn_rate, inp.duration, command),
-            'content': None
-        }
+        return await self._execute(0.0, 0.0, inp.turn_rate, inp.duration,
+                                   command)
