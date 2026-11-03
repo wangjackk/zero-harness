@@ -1,4 +1,4 @@
-# zero 网络配置 ---- 唯一事实源.
+# zero 网络配置样例 ---- 复制为 config.yaml 后按本机环境改 (config.yaml 不入库).
 # 消费者: main.py (grpc) / web_server / flow hub; 改动重启进程生效
 # (watcher 只监听 routines.yaml 与源码, 不监听本文件).
 # 前端默认连接地址 (顶栏可切换) 需与 web_server 保持一致.
@@ -23,7 +23,7 @@ network:
   # 总线发布端 (XSUB): vision 即开即关门控 cmd (cam/pose)
   device_bus_pub: tcp://192.168.1.100:6666
 
-  # 幻尔小车 rosbridge WS (ros_client 单例: 常驻连接, 感知订阅 + 车控发布)
+  # 机器人 rosbridge WS (ros_client 单例: 常驻连接, 感知订阅 + 车控发布)
   ros_bridge: ws://192.168.1.100:9090
   # rosbridge 连不上时自动拉起(SSH 免密, 冷却 60s):
   # slam-control = 车基座全套 bringup(roscore/底盘/rosbridge, 串行防

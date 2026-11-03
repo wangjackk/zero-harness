@@ -6,6 +6,7 @@ main.py (grpc) / web_server / flow hub 从此取默认值, 不再各自硬编码
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,23 @@ import yaml
 from pydantic import BaseModel, Field
 
 _HERE = Path(__file__).resolve().parent
+
+
+def load_env() -> None:
+    """读 zero-py/.env (LLM/TTS key 等; gitignored, 应用自包含不外借
+    兄弟项目). 已有进程 env 不覆盖; 须先于读 $ENV 的项目 import 执行
+    (如 flow.llm 的 import 期 _load_models)."""
+    env_file = _HERE.parent / '.env'
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding='utf-8-sig').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 class _Net(BaseModel):
@@ -26,7 +44,7 @@ class _Net(BaseModel):
 class _RosBridgeStart(BaseModel):
     """rosbridge 自动拉起: WS 连不上时 ros_client 经 SSH 执行 cmd."""
 
-    ssh: str = 'robot'   # ~/.ssh/config 主机别名(免密)
+    ssh: str = 'robot'   # ~/.ssh/config 主机别名(免密), 按本机自填
     cmd: str = 'sudo systemctl restart start_app_node.service'
 
 
@@ -47,7 +65,7 @@ class Network(BaseModel):
     # 总线发布端 (XSUB): vision 即开即关门控 cmd (cam/pose) 发往这里
     device_bus_pub: str = 'tcp://127.0.0.1:6666'
     # 幻尔小车 rosbridge WS (ros_client 单例: 感知订阅 + 车控发布)
-    ros_bridge: str = 'ws://192.168.1.100:9090'
+    ros_bridge: str = 'ws://127.0.0.1:9090'
     # rosbridge 不在线时自动拉起(冷却 60s); 省略 = 不拉起只重连
     ros_bridge_start: Optional[_RosBridgeStart] = None
 
@@ -56,8 +74,12 @@ class Network(BaseModel):
 def network() -> Network:
     """读 app/config.yaml 的 network 段.
 
-    文件必须存在 (随仓库发布); 段内缺省字段由 pydantic 默认补齐.
+    config.yaml 是**本地**配置(含内网地址), 不入库: 缺失时整段走默认值
+    (全部 127.0.0.1), 要覆盖就照 config.example.yaml 复制一份.
+    段内缺省字段由 pydantic 默认补齐.
     """
     path = _HERE / 'config.yaml'
+    if not path.exists():
+        return Network()
     data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     return Network.model_validate(data.get('network') or {})

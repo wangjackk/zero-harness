@@ -89,14 +89,14 @@ def _make_agent() -> Ssh:
 
 
 def test_shared_helpers() -> None:
-    host, username = shared_module.parse_target('root@192.168.1.100')
-    assert host == '192.168.1.100'
+    host, username = shared_module.parse_target('root@192.0.2.10')
+    assert host == '192.0.2.10'
     assert username == 'root'
     assert shared_module.compose_command_with_cwd(command='pwd', cwd='/opt/zero') == "cd /opt/zero && pwd"
     assert shared_module.make_command_non_interactive('sudo du -h /') == 'sudo -n du -h /'
     assert shared_module.make_command_non_interactive('sudo -n du -h /') == 'sudo -n du -h /'
     kwargs = shared_module.build_connect_kwargs(
-        host='192.168.1.100',
+        host='192.0.2.10',
         username='root',
         port=22,
         identity_file=None,
@@ -169,7 +169,7 @@ async def test_connect_initializes_shell() -> None:
     ssh_tool_module.run_shell_command = fake_run_shell_command  # type: ignore[assignment]
     try:
         result = await agent._connect(
-            SshInput(action='connect', alias='robot', target='root@192.168.1.100', cwd='/opt/zero', timeout=5, password='test-pass'),
+            SshInput(action='connect', alias='robot', target='root@192.0.2.10', cwd='/opt/zero', timeout=5, password='test-pass'),
             project_root=None,
             session_id='test_session',
         )

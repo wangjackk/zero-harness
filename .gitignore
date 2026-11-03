@@ -52,3 +52,28 @@ runtime/
 # 实验杂物 (不进仓库)
 others/
 image_filesapi/
+
+# 私有数据 (个人记忆/简历/截图/本地工具产物 ---- 绝不入库)
+.workbuddy/
+resume/
+.shots/
+.vite/
+.trae-html-share-packages/
+innerWidth*
+
+# 本地配置 (含内网拓扑与设备地址, 只提交 *.example)
+zero-py/app/config.yaml
+*.yaml.bak
+*.bak
+
+# 构建缓存 / 杂项产物
+*.tsbuildinfo
+target-nocompat/
+zero-py/cache/
+_mcp_probe/
+.edge-*
+
+# 站点截图与预览产物 (体积大, 本地保留)
+routine-atlas/preview/
+routine-atlas/dist/
+
