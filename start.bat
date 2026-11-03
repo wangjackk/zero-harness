@@ -33,14 +33,22 @@ if not exist "%ROOT%frontend\web\node_modules" (
     popd
 )
 
+rem -- models.yaml is required (agent layer reads it at import); seed from the
+rem    template so a fresh clone at least boots, then tell the user to fill keys --
+if not exist "%ROOT%zero-py\app\models.yaml" (
+    copy /y "%ROOT%zero-py\app\models.yaml.example" "%ROOT%zero-py\app\models.yaml" >nul
+    echo [init] created zero-py\app\models.yaml from the example.
+    echo [init] fill in your api_key there ^(or in zero-py\.env^), otherwise LLM calls fail.
+)
+
 rem -- kill previous instances (repeat-run = restart) --
 rem 1) command-line kill: each launcher cmd below carries a "[zero-harness xxx]"
 rem    marker; matching cmd.exe + taskkill /T takes down the whole tree
 rem    (cmd -> uv/bun -> python/node) without touching the WT host
-rem 2) port 7781/5173: clean up orphan listeners whose window is gone
+rem 2) port 7781/5250: clean up orphan listeners whose window is gone
 echo [cleanup] stopping previous instances...
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -match '\[zero-harness (server|web)\]' } | ForEach-Object { taskkill /T /F /PID $_.ProcessId }" >nul 2>&1
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 7781,5173 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 7781,5250 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 
 echo [start] zero server (kernel embedded)...
 start "zero-server" /D "%ROOT%zero-py" cmd /k "echo [zero-harness server] && uv run python -m app.main"
@@ -49,5 +57,5 @@ timeout /t 3 /nobreak >nul
 echo [start] frontend (%PKG%)...
 start "zero-web" /D "%ROOT%frontend\web" cmd /k "echo [zero-harness web] && %PKG% run dev"
 
-echo [done] server=7781 (kernel embedded, routines.yaml)  web=http://localhost:5173
+echo [done] server=7781 (kernel embedded, routines.yaml)  web=http://localhost:5250
 endlocal

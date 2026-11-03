@@ -82,6 +82,13 @@ async def main(routines: str | None = None) -> None:
     except (OSError, ValueError) as exc:
         print(f'routines 清单不可用: {exc}', file=sys.stderr)
         raise SystemExit(2)
+    # models.yaml 是 agent 层的硬依赖: 缺了它 web_server / agents 在 import 期
+    # 就抛 FileNotFoundError, 而 loader 只把整批注册记成一条 ERROR ---- 进程
+    # 活着、端口也没开, 比启动失败更难查. 与清单一样在 kernel 之前挡掉.
+    if not (_HERE / 'models.yaml').is_file():
+        print('缺少 app/models.yaml: 复制 app/models.yaml.example 并填入 api_key'
+              ' (模板用 $VAR 引用时把 key 写进 zero-py/.env)', file=sys.stderr)
+        raise SystemExit(2)
     print(f'--- routines: {path} ({len(entries)} 条) ---')
     net = network()
     # 模块树: 清单声明了就用自己的, 否则用 app 的

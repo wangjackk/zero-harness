@@ -178,13 +178,24 @@ class RoutinesWatcher(Routine):
                 m = await loop.run_in_executor(self._executor, _mtime, self._yaml)
                 if m != self._yaml_mtime:
                     self._yaml_mtime = m
-                    await self._apply_yaml_change()
+                    try:
+                        await self._apply_yaml_change()
+                    except yaml.YAMLError as exc:
+                        # 清单语法坏了(编辑中间态): 保留当前注册, 等下次保存.
+                        # 必须顺手刷新 mtime 快照 ---- 否则清单会被当成"变更
+                        # 源码"反复喂给 _reload_sources, 变成一个刷屏的
+                        # ModuleNotFoundError: app.routines.yaml 死循环.
+                        _log.warning('清单解析失败, 保留当前注册: %s', exc)
+                        self._mtimes = await loop.run_in_executor(
+                            self._executor, self._snapshot)
                     continue
 
+                # 只有 .py 才是"源码变更": 清单本身由上面那条分支管, 文件里
+                # 随时可能存在别的附属文件(资源/说明), 一律不进模块重载.
                 changed = await loop.run_in_executor(
                     self._executor,
                     lambda: [p for p, old in self._mtimes.items()
-                             if _mtime(p) != old])
+                             if p.suffix == '.py' and _mtime(p) != old])
                 if changed:
                     await asyncio.sleep(_DEBOUNCE)
                     await self._reload_sources(changed)

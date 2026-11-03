@@ -19,10 +19,13 @@ kernel 内嵌于 Python 主进程（`routine-py` 自带 asyncio 实现，无需�
 
 前置：[uv](https://docs.astral.sh/uv/getting-started/installation/)、bun 或 node（任一）。
 
-1. 复制 `zero-py/app/models.yaml.example` 为 `zero-py/app/models.yaml`，填入你的 api_key。
+1. 复制 `zero-py/app/models.yaml.example` 为 `zero-py/app/models.yaml`，填入你的 api_key
+   （也可以保留其中的 `$VAR` 引用，把 key 写进 `zero-py/.env`）。`models.yaml` 是必需的——
+   缺了它服务不会注册任何 routine，会直接退出并给出提示。
 2. 双击根目录 `start.bat`。
 
-浏览器打开 <http://localhost:5173>。
+浏览器打开 <http://localhost:5250>（前端 dev 端口见 `frontend/web/vite.config.ts`，
+`start.bat` 结束时也会打印）。
 
 可选：网络配置（监听地址、设备总线、rosbridge）在 `zero-py/app/config.yaml`，
 复制 `config.example.yaml` 覆盖即可；不建该文件时走默认值（全部 `127.0.0.1`），
@@ -36,6 +39,9 @@ kernel 内嵌于 Python 主进程（`routine-py` 自带 asyncio 实现，无需�
 from typing import Any, Dict
 from routine import Routine
 
+__all__ = ['Hello']          # 注册表只认 __all__ 导出的类, 漏了不会注册
+
+
 class Hello(Routine):
     name = 'hello'
     meta = {'description': '向某人打招呼'}
@@ -44,10 +50,12 @@ class Hello(Routine):
         return f"Hello, {kwargs.get('name', 'World')}!"
 ```
 
-在 `zero-py/app/routines.yaml` 加一行（热重载自动生效）：
+在 `zero-py/app/routines.yaml` 的 `routines:` 列表里加一行（缩进两格，热重载自动生效）：
 
 ```yaml
-- routines/user/hello.py
+routines:
+  # ...
+  - routines/user/hello.py
 ```
 
 调用：

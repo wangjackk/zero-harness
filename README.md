@@ -23,10 +23,13 @@ disable); hot reload applies automatically.
 
 Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/installation/), bun or node.
 
-1. Copy `zero-py/app/models.yaml.example` to `zero-py/app/models.yaml` and fill in your api_key.
+1. Copy `zero-py/app/models.yaml.example` to `zero-py/app/models.yaml` and fill in your api_key
+   (or keep the `$VAR` references and put the keys in `zero-py/.env`). `models.yaml` is
+   required — without it the server registers nothing and exits with a hint.
 2. Double-click `start.bat` in the repo root.
 
-Open <http://localhost:5173> in your browser.
+Open <http://localhost:5250> in your browser (the dev server port in
+`frontend/web/vite.config.ts`; `start.bat` prints it too).
 
 Optional: network config (listen addresses, robot device bus, rosbridge) lives in
 `zero-py/app/config.yaml` — copy `config.example.yaml` to override. Without it the
@@ -40,6 +43,9 @@ Create `zero-py/app/routines/user/hello.py`:
 from typing import Any, Dict
 from routine import Routine
 
+__all__ = ['Hello']          # 注册表只认 __all__ 导出的类, 漏了不会注册
+
+
 class Hello(Routine):
     name = 'hello'
     meta = {'description': 'Say hello to someone'}
@@ -48,10 +54,13 @@ class Hello(Routine):
         return f"Hello, {kwargs.get('name', 'World')}!"
 ```
 
-Add one line to `zero-py/app/routines.yaml` (hot reload applies it automatically):
+Add one line to `zero-py/app/routines.yaml` — inside the existing `routines:` list, so keep
+the two-space indent (hot reload applies it automatically):
 
 ```yaml
-- routines/user/hello.py
+routines:
+  # ...
+  - routines/user/hello.py
 ```
 
 Call it:
